@@ -2,6 +2,127 @@
 
 > 本文件指导 Claude Code、OpenClaw 等 AI Agent 如何使用 llm-wiki。
 
+## 文件类型处理策略
+
+> **关键原则**：不同文件类型需要不同的读取策略，避免直接使用 Read 工具处理二进制文件。
+
+### 决策树
+
+```
+文件类型识别
+    │
+    ├─ 文本文件 (.md, .txt, .json, .yaml, .py, .js 等)
+    │     └─▶ 直接使用 Read 工具读取
+    │
+    ├─ PDF 文件 (.pdf)
+    │     ├─ 检查依赖：pdfplumber>=0.11.8 是否安装？
+    │     │     ├─ 已安装 → 使用 Python 脚本读取
+    │     │     └─ 未安装 → 先安装依赖，再读取
+    │     └─▶ 通过 scripts/read_pdf.py 或 Python 代码处理
+    │
+    ├─ 图片文件 (.png, .jpg, .jpeg, .gif 等)
+    │     └─▶ 使用 Read 工具（支持视觉模型）
+    │
+    ├─ Office 文档 (.docx, .xlsx, .pptx)
+    │     └─▶ 需要安装 python-docx/openpyxl 等库
+    │
+    └─ 其他二进制格式
+          └─▶ 查找或创建相应的 Python 处理脚本
+```
+
+### PDF 文件处理详细流程
+
+**步骤 1：检查依赖**
+
+```bash
+# 检查 pdfplumber 是否已安装
+python -c "import pdfplumber; print(pdfplumber.__version__)"
+```
+
+如果失败，需要先安装：
+
+```bash
+# 安全版本（已修复 CVE-2025-64512）
+pip install pdfplumber>=0.11.8 pdfminer.six>=20251107
+```
+
+**步骤 2：读取 PDF 内容**
+
+**方法 A：使用现有脚本**
+
+```bash
+# 读取全部页面
+python scripts/read_pdf.py sources/paper.pdf
+
+# 读取指定页面范围
+python scripts/read_pdf.py sources/paper.pdf 1-10
+```
+
+**方法 B：使用 Python 代码**
+
+```python
+import pdfplumber
+
+with pdfplumber.open("sources/paper.pdf") as pdf:
+    # 读取第 1-10 页
+    for i in range(min(10, len(pdf.pages))):
+        page = pdf.pages[i]
+        text = page.extract_text()
+        print(f"Page {i+1}:\n{text}\n")
+```
+
+**重要安全提示**：
+- **必须使用安全版本**：pdfplumber >= 0.11.8，pdfminer.six >= 20251107
+- **原因**：CVE-2025-64512 漏洞可导致任意代码执行
+- **避免**：直接使用 Read 工具读取 PDF（会触发 pdftoppm 依赖错误）
+
+### 文本文件处理
+
+直接使用 Read 工具：
+
+```python
+# 直接读取 Markdown、文本、代码文件
+Read("sources/notes.md")
+Read("sources/config.yaml")
+Read("sources/script.py")
+```
+
+### 图片文件处理
+
+Read 工具支持视觉模型：
+
+```python
+# Read 工具可以处理图片并返回视觉内容
+Read("sources/diagram.png")
+Read("sources/screenshot.jpg")
+```
+
+### 依赖管理
+
+**依赖文件位置**：`src/requirements.txt`
+
+**包含的依赖**：
+- `click>=8.0.0` - CLI 框架
+- `pyyaml>=6.0` - YAML 解析
+- `pdfplumber>=0.11.8` - PDF 处理（安全版本）
+- `pdfminer.six>=20251107` - PDF 处理底层库（安全版本）
+
+**安装命令**：
+
+```bash
+# 使用 conda（推荐）
+conda activate llm-wiki
+pip install -r src/requirements.txt
+
+# 使用 pip
+pip install -r src/requirements.txt
+
+# 使用 uv（如果你有）
+uv pip install -r src/requirements.txt
+```
+
+---
+
 ## 你有两种工作模式
 
 ### 模式 A：协议模式（推荐）
@@ -10,8 +131,9 @@
 
 **你的行为**：
 1. 阅读 `CLAUDE.md` 了解协议
-2. 直接操作文件（读取、写入、编辑）
-3. 按照 Ingest/Query/Lint 工作流执行
+2. **根据文件类型选择正确的读取策略**（见上方"文件类型处理策略"）
+3. 直接操作文件（读取、写入、编辑）
+4. 按照 Ingest/Query/Lint 工作流执行
 
 **不需要**：调用任何 CLI 命令
 

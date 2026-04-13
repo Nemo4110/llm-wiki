@@ -6,10 +6,26 @@
 
 - Markdown (.md)
 - 文本文件 (.txt)
-- PDF (.pdf) — 需要 OCR 或文本提取
+- PDF (.pdf) — **需要安装安全版本的 pdfplumber>=0.11.8 和 pdfminer.six>=20251107**
 - 代码文件 (.py, .js, etc.)
 - 图片 (.png, .jpg) — 需要 vision 能力
 - 网页链接 (.url 或粘贴内容)
+
+### PDF 处理注意事项
+
+**安全要求**：
+- 必须使用安全版本：pdfplumber >= 0.11.8，pdfminer.six >= 20251107
+- **原因**：CVE-2025-64512 漏洞可导致任意代码执行
+- **避免**：直接使用系统工具（如 pdftoppm）读取 PDF，这会触发依赖错误
+
+**依赖安装**：
+
+```bash
+# 安装安全版本的 PDF 处理库
+pip install pdfplumber>=0.11.8 pdfminer.six>=20251107
+```
+
+这些依赖已在 `src/requirements.txt` 中定义，安装项目依赖时会自动安装。
 
 ## 使用流程
 
