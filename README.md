@@ -33,12 +33,25 @@ CLI 工具需要 Python 3.8+。根据你的工具选择安装方式：
 ```bash
 # 创建虚拟环境并安装依赖
 uv venv
-uv pip install -r skills/requirements.txt --python .venv/Scripts/python.exe
+uv pip install -r src/requirements.txt --python .venv/Scripts/python.exe
 
 # 激活环境（Windows）
 .venv\Scripts\activate
 # 或 Linux/macOS
 source .venv/bin/activate
+```
+
+#### 使用 conda
+
+```bash
+# 创建环境
+conda create -n llm-wiki python=3.11
+
+# 激活环境
+conda activate llm-wiki
+
+# 安装依赖
+pip install -r src/requirements.txt
 ```
 
 #### 使用 pip
@@ -52,13 +65,13 @@ source .venv/bin/activate  # Linux/macOS
 .venv\Scripts\activate     # Windows
 
 # 安装依赖
-pip install -r skills/requirements.txt
+pip install -r src/requirements.txt
 ```
 
 #### 验证安装
 
 ```bash
-python -c "from skills.llm_wiki.core import WikiManager; print('✓ 安装成功')"
+python -c "from src.llm_wiki.core import WikiManager; print('✓ 安装成功')"
 ```
 
 **纯协议模式**：如果你只想用 Claude Code 的自然语言指令（如"请摄入资料"），**不需要安装任何依赖**。直接跳到第 3 步。
@@ -132,8 +145,10 @@ llm-wiki/
 ├── schema/             # 配置和模板
 │   ├── page_template.md
 │   └── ingest_rules.md
-├── skills/             # SKILL 实现（可选，用于 CLI）
-│   └── llm_wiki/
+├── src/                # SKILL 实现（可选，用于 CLI）
+│   ├── llm_wiki/
+│   └── requirements.txt
+├── SKILL.md            # 规范格式的技能描述
 └── examples/           # 示例 wiki
 ```
 

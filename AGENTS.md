@@ -34,15 +34,15 @@
 ls -la .venv/  # 或 venv/
 
 # 如果有，使用虚拟环境的 Python
-.venv/Scripts/python -c "from skills.llm_wiki.core import WikiManager; print('OK')"  # Windows
-.venv/bin/python -c "from skills.llm_wiki.core import WikiManager; print('OK')"      # Linux/macOS
+.venv/Scripts/python -c "from src.llm_wiki.core import WikiManager; print('OK')"  # Windows
+.venv/bin/python -c "from src.llm_wiki.core import WikiManager; print('OK')"      # Linux/macOS
 ```
 
 ### 检查 CLI 可用性
 
 ```bash
 # 使用虚拟环境的 Python（优先）
-.venv/Scripts/python -c "from skills.llm_wiki.core import WikiManager; print('OK')"
+.venv/Scripts/python -c "from src.llm_wiki.core import WikiManager; print('OK')"
 
 # 或使用系统 Python
 python -c "from skills.llm_wiki.core import WikiManager; print('OK')"
@@ -69,10 +69,10 @@ PY=".venv/Scripts/python"  # Windows
 PY=".venv/bin/python"      # Linux/macOS
 
 # 1. 先检查 wiki 状态
-$PY -c "from skills.llm_wiki.core import WikiManager; from pathlib import Path; w = WikiManager(Path('wiki')); print(f'Pages: {len(w.list_pages())}')"
+$PY -c "from src.llm_wiki.core import WikiManager; from pathlib import Path; w = WikiManager(Path('wiki')); print(f'Pages: {len(w.list_pages())}')"
 
 # 2. 运行 lint 检查问题
-$PY -c "from skills.llm_wiki.core import WikiManager, find_wiki_root; w = WikiManager(find_wiki_root()/'wiki'); print(w.lint())"
+$PY -c "from src.llm_wiki.core import WikiManager, find_wiki_root; w = WikiManager(find_wiki_root()/'wiki'); print(w.lint())"
 
 # 3. 用户要求摄入新资料，你（Agent）直接处理：
 #    - 读取 sources/new-paper.pdf
@@ -145,13 +145,26 @@ $PY -c "from skills.llm_wiki.core import WikiManager, find_wiki_root; w = WikiMa
 回复：wiki 目前有 15 个页面，最近活动是...
 ```
 
-### 场景 4：CLI 依赖未安装
+### 场景 4：使用 conda 环境
+
+```
+用户：检查 wiki 状态
+
+你：检测到 CONDA_PREFIX 环境变量，使用 conda 环境
+    $CONDA_PREFIX/bin/python -c "from src.llm_wiki.core import ..."
+    → 成功获取信息
+
+回复：wiki 目前有 15 个页面，最近活动是...
+（使用 conda 环境：llm-wiki）
+```
+
+### 场景 5：CLI 依赖未安装（协议模式降级）
 
 ```
 用户：运行 wiki lint
 
 你：尝试执行
-    .venv/Scripts/python -c "from skills.llm_wiki.core import WikiManager"
+    .venv/Scripts/python -c "from src.llm_wiki.core import WikiManager"
     → 失败（ModuleNotFoundError: .venv 不存在或未安装依赖）
 
 你：切换到协议模式，直接读取文件
@@ -167,13 +180,13 @@ $PY -c "from skills.llm_wiki.core import WikiManager, find_wiki_root; w = WikiMa
 
 ### CLI 入口点
 
-- **模块**：`skills.llm_wiki`
-- **主文件**：`skills/llm_wiki/commands.py`
-- **核心逻辑**：`skills/llm_wiki/core.py`
+- **模块**：`src.llm_wiki`
+- **主文件**：`src/llm_wiki/commands.py`
+- **核心逻辑**：`src/llm_wiki/core.py`
 
 ### 依赖和虚拟环境
 
-依赖文件：`skills/requirements.txt`
+依赖文件：`src/requirements.txt`
 - `click` - 命令行框架
 - `pyyaml` - YAML 解析
 
@@ -185,32 +198,38 @@ from pathlib import Path
 import subprocess
 import sys
 
-# 1. 检测虚拟环境
+# 1. 检测虚拟环境（uv/venv 或 conda）
 venv_paths = [
     Path(".venv"),           # uv / modern tools
     Path("venv"),            # traditional
 ]
+# 检测 conda 环境
+conda_env = Path(os.environ.get("CONDA_PREFIX", ""))
+if conda_env.exists():
+    venv_python = conda_env / "python.exe" if sys.platform == "win32" else conda_env / "bin" / "python"
+else:
+    for venv in venv_paths:
 venv_python = None
 for venv in venv_paths:
     if venv.exists():
         venv_python = venv / "Scripts" / "python.exe" if sys.platform == "win32" else venv / "bin" / "python"
         break
 
+# 决策路径
+if venv_python and check_dep("src.llm_wiki", venv_python):
+    print(f"使用虚拟环境: {venv_python}")
+    python_cmd = str(venv_python)
+elif check_dep("src.llm_wiki"):
+    print("使用系统 Python")
+    python_cmd = "python"
+else:
+    print("依赖未安装，使用协议模式")
+
 # 2. 检查依赖是否可用
 def check_dep(module_name, python_path=None):
     py = python_path or sys.executable
     result = subprocess.run([py, "-c", f"import {module_name}"], capture_output=True)
     return result.returncode == 0
-
-# 决策
-if venv_python and check_dep("skills.llm_wiki", venv_python):
-    print(f"使用虚拟环境: {venv_python}")
-    python_cmd = str(venv_python)
-elif check_dep("skills.llm_wiki"):
-    print("使用系统 Python")
-    python_cmd = "python"
-else:
-    print("依赖未安装，使用协议模式")
 ```
 
 ### 与 CLAUDE.md 的关系
