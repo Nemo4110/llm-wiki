@@ -26,18 +26,39 @@ cd llm-wiki
 
 ### 2. 安装依赖（可选）
 
-CLI 工具需要 Python 3.8+ 和依赖：
+CLI 工具需要 Python 3.8+。根据你的工具选择安装方式：
+
+#### 使用 uv（推荐，如果你有 uv）
 
 ```bash
-# 创建虚拟环境（推荐）
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+# 创建虚拟环境并安装依赖
+uv venv
+uv pip install -r skills/requirements.txt --python .venv/Scripts/python.exe
+
+# 激活环境（Windows）
+.venv\Scripts\activate
+# 或 Linux/macOS
+source .venv/bin/activate
+```
+
+#### 使用 pip
+
+```bash
+# 创建虚拟环境
+python -m venv .venv
+
+# 激活环境
+source .venv/bin/activate  # Linux/macOS
+.venv\Scripts\activate     # Windows
 
 # 安装依赖
 pip install -r skills/requirements.txt
+```
 
-# 安装 CLI 工具（开发模式）
-pip install -e skills/
+#### 验证安装
+
+```bash
+python -c "from skills.llm_wiki.core import WikiManager; print('✓ 安装成功')"
 ```
 
 **纯协议模式**：如果你只想用 Claude Code 的自然语言指令（如"请摄入资料"），**不需要安装任何依赖**。直接跳到第 3 步。

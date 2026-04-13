@@ -25,14 +25,30 @@
 
 ## CLI 工具参考
 
+### 检查依赖和虚拟环境
+
+项目可能已安装虚拟环境，优先检查：
+
+```bash
+# 检查项目目录是否有虚拟环境
+ls -la .venv/  # 或 venv/
+
+# 如果有，使用虚拟环境的 Python
+.venv/Scripts/python -c "from skills.llm_wiki.core import WikiManager; print('OK')"  # Windows
+.venv/bin/python -c "from skills.llm_wiki.core import WikiManager; print('OK')"      # Linux/macOS
+```
+
 ### 检查 CLI 可用性
 
 ```bash
-# 检查是否能导入
+# 使用虚拟环境的 Python（优先）
+.venv/Scripts/python -c "from skills.llm_wiki.core import WikiManager; print('OK')"
+
+# 或使用系统 Python
 python -c "from skills.llm_wiki.core import WikiManager; print('OK')"
 
-# 或使用命令行
-python -m skills.llm_wiki --help
+# 命令行入口（暂未实现 __main__，推荐用协议模式）
+# python -m skills.llm_wiki --help
 ```
 
 ### 可用命令
@@ -48,11 +64,15 @@ python -m skills.llm_wiki --help
 ### CLI 辅助工作流示例
 
 ```bash
-# 1. 先检查 wiki 状态
-python -m skills.llm_wiki status
+# 使用虚拟环境（推荐）
+PY=".venv/Scripts/python"  # Windows
+PY=".venv/bin/python"      # Linux/macOS
 
-# 2. 发现资料有问题，运行 lint
-python -m skills.llm_wiki lint
+# 1. 先检查 wiki 状态
+$PY -c "from skills.llm_wiki.core import WikiManager; from pathlib import Path; w = WikiManager(Path('wiki')); print(f'Pages: {len(w.list_pages())}')"
+
+# 2. 运行 lint 检查问题
+$PY -c "from skills.llm_wiki.core import WikiManager, find_wiki_root; w = WikiManager(find_wiki_root()/'wiki'); print(w.lint())"
 
 # 3. 用户要求摄入新资料，你（Agent）直接处理：
 #    - 读取 sources/new-paper.pdf
@@ -113,20 +133,34 @@ python -m skills.llm_wiki lint
 回复：发现 3 个孤儿页面：[[PageA]]、[[PageB]]...
 ```
 
-### 场景 3：CLI 不可用
+### 场景 3：使用虚拟环境
 
 ```
-用户：运行 wiki status
+用户：检查 wiki 状态
 
-你：尝试执行 python -m skills.llm_wiki status
-    → 失败（ModuleNotFoundError）
+你：发现项目有 .venv/ 目录，使用虚拟环境
+    .venv/Scripts/python -c "from skills.llm_wiki.core import ..."
+    → 成功获取信息
+
+回复：wiki 目前有 15 个页面，最近活动是...
+```
+
+### 场景 4：CLI 依赖未安装
+
+```
+用户：运行 wiki lint
+
+你：尝试执行
+    .venv/Scripts/python -c "from skills.llm_wiki.core import WikiManager"
+    → 失败（ModuleNotFoundError: .venv 不存在或未安装依赖）
 
 你：切换到协议模式，直接读取文件
     - 读取 wiki/ 统计页面数量
     - 读取 log.md 获取最近活动
+    - 手动执行 lint 逻辑
 
-回复：wiki 目前有 15 个页面，最近活动是...
-（注：CLI 工具未安装，我直接读取文件获取的信息）
+回复：wiki 目前有 15 个页面，发现 3 个孤儿页面：[[PageA]]...
+（注：CLI 依赖未安装，我直接读取文件获取的信息）
 ```
 
 ## 技术细节
@@ -137,18 +171,46 @@ python -m skills.llm_wiki lint
 - **主文件**：`skills/llm_wiki/commands.py`
 - **核心逻辑**：`skills/llm_wiki/core.py`
 
-### 依赖
+### 依赖和虚拟环境
 
-CLI 需要：
+依赖文件：`skills/requirements.txt`
 - `click` - 命令行框架
 - `pyyaml` - YAML 解析
 
-检查方式：
+#### 检查依赖（含虚拟环境检测）
+
 ```python
 import importlib.util
-spec = importlib.util.find_spec("click")
-if spec is None:
-    print("CLI 依赖未安装，使用协议模式")
+from pathlib import Path
+import subprocess
+import sys
+
+# 1. 检测虚拟环境
+venv_paths = [
+    Path(".venv"),           # uv / modern tools
+    Path("venv"),            # traditional
+]
+venv_python = None
+for venv in venv_paths:
+    if venv.exists():
+        venv_python = venv / "Scripts" / "python.exe" if sys.platform == "win32" else venv / "bin" / "python"
+        break
+
+# 2. 检查依赖是否可用
+def check_dep(module_name, python_path=None):
+    py = python_path or sys.executable
+    result = subprocess.run([py, "-c", f"import {module_name}"], capture_output=True)
+    return result.returncode == 0
+
+# 决策
+if venv_python and check_dep("skills.llm_wiki", venv_python):
+    print(f"使用虚拟环境: {venv_python}")
+    python_cmd = str(venv_python)
+elif check_dep("skills.llm_wiki"):
+    print("使用系统 Python")
+    python_cmd = "python"
+else:
+    print("依赖未安装，使用协议模式")
 ```
 
 ### 与 CLAUDE.md 的关系
