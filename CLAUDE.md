@@ -190,7 +190,14 @@ status: "active"  # active | draft | archived
 - 不要创建没有链接的孤立页面
 - 不要在正文中重复 frontmatter 信息
 
+## 相关文件
+
+- `AGENTS.md` — 给 Claude Code / OpenClaw 等 Agent 的实现指南
+  - CLI 工具使用说明
+  - 协议模式 vs CLI 模式决策树
+  - 故障处理参考
+
 ## 版本
 
 Protocol: v1.0.0
-Last Updated: 2026-04-10
+Last Updated: 2026-04-13

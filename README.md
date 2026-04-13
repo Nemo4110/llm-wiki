@@ -24,7 +24,25 @@ git clone https://github.com/yourname/llm-wiki.git
 cd llm-wiki
 ```
 
-### 2. 放入你的第一个资料
+### 2. 安装依赖（可选）
+
+CLI 工具需要 Python 3.8+ 和依赖：
+
+```bash
+# 创建虚拟环境（推荐）
+python -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+
+# 安装依赖
+pip install -r skills/requirements.txt
+
+# 安装 CLI 工具（开发模式）
+pip install -e skills/
+```
+
+**纯协议模式**：如果你只想用 Claude Code 的自然语言指令（如"请摄入资料"），**不需要安装任何依赖**。直接跳到第 3 步。
+
+### 3. 放入你的第一个资料
 
 ```bash
 # 复制任何文件到 sources/
@@ -82,6 +100,7 @@ Claude 会：
 ```text
 llm-wiki/
 ├── CLAUDE.md           # ⭐ 核心协议：Agent 的行为准则
+├── AGENTS.md           # Agent 实现指南（CLI 使用说明）
 ├── README.md           # 本文件
 ├── log.md              # 时间线日志（追加式）
 ├── sources/            # 原始资料（用户管理，Agent 只读，默认不进 git）
