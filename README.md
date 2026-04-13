@@ -84,7 +84,7 @@ llm-wiki/
 ├── CLAUDE.md           # ⭐ 核心协议：Agent 的行为准则
 ├── README.md           # 本文件
 ├── log.md              # 时间线日志（追加式）
-├── sources/            # 原始资料（用户管理，Agent 只读）
+├── sources/            # 原始资料（用户管理，Agent 只读，默认不进 git）
 │   └── README.md
 ├── wiki/               # 生成的知识页面（Agent 管理）
 │   ├── index.md        # 入口索引
@@ -96,6 +96,8 @@ llm-wiki/
 │   └── llm_wiki/
 └── examples/           # 示例 wiki
 ```
+
+**关于 `sources/`**：默认被 `.gitignore` 排除，避免仓库臃肿。wiki 只保留提取的知识，原始文件由你另行管理（网盘、Zotero 等）。如需追踪特定文件，见 `sources/README.md`。
 
 ## 工作原理
 

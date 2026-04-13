@@ -30,7 +30,34 @@ YYYY-MM-DD-描述.扩展名
 2026-04-09-transformer-paper.pdf
 ```
 
-## 注意
+## Git 管理说明
+
+**默认情况下，`sources/` 中的文件不会被 Git 追踪**（已加入 `.gitignore`）。
+
+原因：
+- 原始资料通常很大（PDF、视频、归档文件）
+- wiki 已经提取了关键信息到 `wiki/` 目录
+- 原始文件可通过其他方式管理（网盘、Zotero、云存储）
+
+### 如果你想追踪某些文件
+
+编辑 `.gitignore`，添加例外规则：
+
+```gitignore
+# 追踪 Markdown 笔记
+!sources/*.md
+
+# 追踪特定重要文件
+!sources/2026-04-10-key-paper.pdf
+```
+
+或使用 `git add -f` 强制添加：
+
+```bash
+git add -f sources/important-notes.md
+```
+
+## 使用注意
 
 - 此目录只由**用户管理**（添加、删除、重命名）
 - Agent **只读**，不会修改或删除这里的文件
