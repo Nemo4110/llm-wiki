@@ -142,12 +142,14 @@ llm-wiki/
 ├── wiki/               # 生成的知识页面（Agent 管理）
 │   ├── index.md        # 入口索引
 │   └── *.md            # 主题页面
-├── schema/             # 配置和模板
+├── assets/             # 模板和配置
 │   ├── page_template.md
 │   └── ingest_rules.md
 ├── src/                # SKILL 实现（可选，用于 CLI）
 │   ├── llm_wiki/
 │   └── requirements.txt
+├── scripts/            # 辅助脚本
+├── hooks/              # 平台钩子（可选）
 ├── SKILL.md            # 规范格式的技能描述
 └── examples/           # 示例 wiki
 ```

@@ -1,150 +1,162 @@
-# LLM-Wiki SKILL Specification
+---
+name: llm-wiki
+description: "Karpathy's llm-wiki pattern implementation — cumulative knowledge management for AI agents"
+version: 1.0.0
+author: "@yourname"
+license: MIT
+repository: "https://github.com/yourname/llm-wiki"
 
-> 规范格式的技能描述文件，供 Claude Code、OpenClaw 等 Agent 平台解析。
+# Supported platforms
+platforms:
+  - claude-code
+  - openclaw
+  - generic-llm-agent
 
-## Metadata
+# Required capabilities from host agent
+capabilities:
+  - filesystem-read
+  - filesystem-write
+  - llm-completion
 
-| Field | Value |
-|-------|-------|
-| **Name** | llm-wiki |
-| **Version** | 1.0.0 |
-| **Description** | Karpathy 的 llm-wiki 模式实现 —— 累积式知识管理 |
-| **Author** | @yourname |
-| **License** | MIT |
-| **Repository** | https://github.com/yourname/llm-wiki |
+# Entry points for different modes
+entryPoints:
+  protocol: "CLAUDE.md"
+  agent-guide: "AGENTS.md"
+  cli: "src/llm_wiki/commands.py"
 
-## Capabilities
+# Hooks (optional integration)
+hooks:
+  available: false
+  note: "Protocol mode requires no hooks. CLI mode available for scripting."
 
-### Core Functions
+# Dependencies
+dependencies:
+  required: []
+  optional:
+    - name: python
+      version: ">=3.8"
+      reason: "CLI mode only"
+    - name: click
+      version: ">=8.0.0"
+      reason: "CLI framework"
+    - name: pyyaml
+      version: ">=6.0"
+      reason: "YAML parsing"
 
-| Function | Trigger | Description |
-|----------|---------|-------------|
-| `ingest` | "请摄入资料" / `/wiki-ingest <path>` | 将原始资料转换为 wiki 页面 |
-| `query` | "查询 wiki" / `/wiki-query <question>` | 从 wiki 中检索并综合回答 |
-| `lint` | "检查 wiki 健康" / `/wiki-lint` | 检查孤儿页面、死链、陈旧内容 |
+# Installation methods
+installation:
+  - method: uv
+    command: "uv venv && uv pip install -r src/requirements.txt --python .venv/Scripts/python.exe"
+    note: "Fastest, recommended if uv available"
+  - method: conda
+    command: "conda create -n llm-wiki python=3.11 && pip install -r src/requirements.txt"
+    note: "For data science environments"
+  - method: pip
+    command: "python -m venv .venv && pip install -r src/requirements.txt"
+    note: "Standard Python"
+  - method: none
+    command: null
+    note: "Protocol mode requires no installation"
 
-### Supported Inputs
+# Core functions exposed to agent
+functions:
+  ingest:
+    description: "Ingest source material into wiki"
+    trigger: "请摄入资料"
+    inputs:
+      - name: source_path
+        type: string
+        description: "Path to source file in sources/"
+    workflow:
+      - Read source content
+      - Extract key insights
+      - Identify/create affected wiki pages
+      - Update cross-references
+      - Append to log.md
 
-- **Documents**: PDF, Markdown, TXT, DOCX (via extraction)
-- **Images**: PNG, JPG (via vision)
-- **Code files**: Python, JavaScript, etc.
-- **Web links**: URLs or pasted content
+  query:
+    description: "Query wiki knowledge base"
+    trigger: "查询 wiki"
+    inputs:
+      - name: question
+        type: string
+        description: "User question about wiki content"
+    workflow:
+      - Read wiki/index.md
+      - Navigate through [[links]]
+      - Synthesize answer with citations
+      - Optional: archive response
 
-### Output Format
+  lint:
+    description: "Health check for wiki"
+    trigger: "检查 wiki 健康"
+    checks:
+      - orphan pages
+      - dead links
+      - stale pages
+      - draft pages
+      - contradictions
 
-- Markdown pages with YAML frontmatter
-- Wiki-style cross-references: `[[PageName]]`
-- Chronological log: `log.md`
+# File structure
+structure:
+  protocol: "CLAUDE.md"
+  agent-guide: "AGENTS.md"
+  specification: "SKILL.md"
+  changelog: "log.md"
+  sources: "sources/"
+  wiki: "wiki/"
+  assets: "assets/"
+  scripts: "scripts/"
+  src: "src/"
+  examples: "examples/"
 
-## Protocol
+# Related resources
+related:
+  - name: "Karpathy's llm-wiki gist"
+    url: "https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f"
+  - name: "Sage-Wiki"
+    url: "https://github.com/xoai/sage-wiki"
+    note: "Alternative full-featured implementation"
+---
 
-### Ingest Workflow
+# LLM-Wiki SKILL
 
-1. **Read** source material from `sources/`
-2. **Extract** key insights using LLM
-3. **Identify** affected wiki pages (create or update)
-4. **Update** pages with merged information
-5. **Maintain** cross-references using `[[Link]]` syntax
-6. **Log** activity to `log.md`
+Cumulative knowledge management system based on [Karpathy's llm-wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f).
 
-### Query Workflow
+## Philosophy
 
-1. **Read** `wiki/index.md` to locate relevant topics
-2. **Navigate** through `[[links]]` to discover related pages
-3. **Synthesize** answer with citations: `[[PageName]]`
-4. **Archive** valuable responses back to wiki (optional)
+- **LLM as programmer, Wiki as codebase**
+- **User curates sources, asks questions**
+- **Agent handles summarizing, cross-referencing, filing**
+- **Accumulation over retrieval**: every interaction leaves lasting value
 
-### Lint Workflow
-
-1. **Scan** all pages in `wiki/`
-2. **Detect** issues: orphans, dead links, stale pages, drafts
-3. **Report** findings with fix suggestions
-
-## File Structure
-
-```
-llm-wiki/
-├── CLAUDE.md           # User-facing protocol (REQUIRED READ)
-├── AGENTS.md           # Agent implementation guide
-├── SKILL.md            # This file
-├── log.md              # Activity log
-├── sources/            # Raw materials (user-managed)
-├── wiki/               # Generated knowledge pages
-│   ├── index.md        # Entry point
-│   └── *.md            # Topic pages
-├── schema/             # Templates and rules
-└── src/                # CLI implementation (optional)
-```
-
-## Dependencies
-
-### Required (Protocol Mode)
-- None. Operates on pure Markdown files.
-
-### Optional (CLI Mode)
-- Python 3.8+
-- `click>=8.0.0`
-- `pyyaml>=6.0`
-
-### Installation Methods
-1. **uv** (fastest): `uv venv && uv pip install -r src/requirements.txt`
-2. **conda**: `conda create -n llm-wiki python=3.11 && pip install -r src/requirements.txt`
-3. **pip**: `python -m venv .venv && pip install -r src/requirements.txt`
-
-## Entry Points
-
-### Natural Language (Recommended)
-
-Agent parses user intent and executes protocol directly:
-
-```
-User: "请摄入 sources/paper.pdf"
-Agent: [Reads CLAUDE.md] → [Executes ingest workflow] → [Updates files]
-```
-
-### CLI Commands (Optional)
-
-If dependencies installed:
+## Quick Start
 
 ```bash
-# Using venv Python
-.venv/Scripts/python -c "from src.llm_wiki.core import WikiManager; ..."
+# 1. Clone
+git clone https://github.com/yourname/llm-wiki.git
+cd llm-wiki
 
-# Direct module execution (when __main__ implemented)
-python -m src.llm_wiki status
-python -m src.llm_wiki lint
+# 2. Add source material
+cp ~/Downloads/paper.pdf sources/
+
+# 3. Tell your agent
+"请摄入 sources/paper.pdf 到 wiki"
 ```
 
 ## Modes of Operation
 
-| Mode | Dependencies | Use Case |
+| Mode | Dependencies | Best For |
 |------|--------------|----------|
-| **Protocol** | None | Natural language interaction via Agent |
-| **CLI** | Python + click | Scripting, batch operations, status checks |
+| **Protocol** | None | Natural language via Claude Code, OpenClaw |
+| **CLI** | Python + click | Scripting, batch operations |
 
-## Integration Notes
+## Documentation
 
-### For Claude Code
-- Primary: Natural language triggers (ingest, query, lint)
-- Fallback: Direct file operations if CLI unavailable
-- Context files: `CLAUDE.md`, `wiki/index.md`, `log.md`
+- `CLAUDE.md` — User-facing protocol (read this first)
+- `AGENTS.md` — Implementation guide for agent developers
+- `SKILL.md` — This file, machine-readable specification
 
-### For OpenClaw
-- Same protocol as Claude Code
-- May expose as MCP tools in future
+## License
 
-### For Other Agents
-- Read `CLAUDE.md` for user protocol
-- Read `AGENTS.md` for implementation guidance
-- Implement core workflows in agent's native language
-
-## Version History
-
-| Version | Date | Changes |
-|---------|------|---------|
-| 1.0.0 | 2026-04-13 | Initial release |
-
-## See Also
-
-- [Karpathy's llm-wiki gist](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)
-- [Sage-Wiki](https://github.com/xoai/sage-wiki) - Alternative full-featured implementation
+MIT — free to use, modify, and distribute.

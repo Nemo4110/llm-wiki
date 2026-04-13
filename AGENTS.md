@@ -184,6 +184,13 @@ $PY -c "from src.llm_wiki.core import WikiManager, find_wiki_root; w = WikiManag
 - **主文件**：`src/llm_wiki/commands.py`
 - **核心逻辑**：`src/llm_wiki/core.py`
 
+### 辅助脚本
+
+项目包含辅助脚本（`scripts/`）：
+- `scripts/wiki-status.sh` — 快速查看 wiki 状态
+- `scripts/wiki-lint.sh` — 运行健康检查
+- `scripts/init-wiki.sh` — 初始化新项目
+
 ### 依赖和虚拟环境
 
 依赖文件：`src/requirements.txt`

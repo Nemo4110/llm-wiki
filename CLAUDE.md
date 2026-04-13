@@ -18,11 +18,15 @@ llm-wiki/
 ├── wiki/             # 生成的知识页面（你管理）
 │   ├── index.md      # 入口索引
 │   └── *.md          # 主题页面
-├── schema/           # 配置和模板
+├── assets/           # 模板和配置
 │   ├── page_template.md
 │   └── ingest_rules.md
+├── scripts/          # 辅助脚本（可选）
+├── src/              # CLI 实现（可选）
 ├── log.md            # 时间线日志（追加式）
-└── CLAUDE.md         # 本文件
+├── CLAUDE.md         # 本文件
+├── AGENTS.md         # Agent 实现指南
+└── SKILL.md          # 技能规范
 ```
 
 ## 核心工作流
