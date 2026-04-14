@@ -17,6 +17,13 @@ commands:
       - /wiki-query "Transformer 的工作原理"
       - /wiki-query "我们讨论过哪些优化方法？" --save
 
+  - name: wiki-index
+    description: 建立或更新 wiki 的 embedding 索引
+    usage: /wiki-index [--force] [--provider <name>]
+    examples:
+      - /wiki-index
+      - /wiki-index --force
+
   - name: wiki-lint
     description: 检查 wiki 健康状况
     usage: /wiki-lint [--fix]
