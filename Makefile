@@ -81,6 +81,10 @@ release:
 	@mkdir -p $(PACKAGE_DIR)/wiki
 	@echo "Note: sources/ directory will be created by user"
 
+	@echo "Cleaning Python cache files..."
+	@find $(PACKAGE_DIR) -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+	@find $(PACKAGE_DIR) -name "*.pyc" -delete 2>/dev/null || true
+
 	@echo "Creating archive..."
 	@cd $(RELEASE_DIR) && ( \
 		if command -v zip >/dev/null 2>&1; then \
