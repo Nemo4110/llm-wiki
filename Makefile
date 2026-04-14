@@ -47,7 +47,9 @@ release:
 	@cp -r hooks $(PACKAGE_DIR)/
 	@cp -r scripts $(PACKAGE_DIR)/
 	@cp -r src $(PACKAGE_DIR)/
-	@cp -r sources $(PACKAGE_DIR)/
+	@echo "Creating sources directory with README..."
+	@mkdir -p $(PACKAGE_DIR)/sources
+	@cp sources/README.md $(PACKAGE_DIR)/sources/
 
 	@echo "Copying root files..."
 	@cp SKILL.md CLAUDE.md AGENTS.md README.md ROADMAP.md log.md .gitignore $(PACKAGE_DIR)/
@@ -75,9 +77,9 @@ release:
 	@echo "" >> $(PACKAGE_DIR)/wiki/index.md
 	@echo "*Last updated: $(shell date +%Y-%m-%d)*" >> $(PACKAGE_DIR)/wiki/index.md
 
-	@echo "Creating .gitkeep files..."
-	@touch $(PACKAGE_DIR)/sources/.gitkeep
-	@touch $(PACKAGE_DIR)/wiki/.gitkeep
+	@echo "Creating wiki directory..."
+	@mkdir -p $(PACKAGE_DIR)/wiki
+	@echo "Note: sources/ directory will be created by user"
 
 	@echo "Creating archive..."
 	@cd $(RELEASE_DIR) && ( \

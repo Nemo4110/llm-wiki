@@ -119,6 +119,35 @@ related:
     note: "Alternative full-featured implementation"
 ---
 
+# CLI Reference
+
+## Protocol Mode (Recommended)
+
+Use natural language with your agent:
+
+```
+"请摄入 sources/paper.pdf 到 wiki"
+"查询 wiki: Transformer 和 RNN 有什么区别？"
+"检查 wiki 健康状况"
+```
+
+## CLI Mode (Optional)
+
+After installing dependencies:
+
+```bash
+# Show wiki status overview
+python -m src.llm_wiki status
+
+# Run health check
+python -m src.llm_wiki lint
+
+# Show help
+python -m src.llm_wiki --help
+```
+
+**Note**: `ingest` and `query` commands in CLI only provide auxiliary functions (like listing pages). Actual content processing requires natural language interaction with the agent.
+
 # LLM-Wiki
 
 Karpathy's llm-wiki pattern implementation — cumulative knowledge management for AI agents.

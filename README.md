@@ -119,25 +119,32 @@ Claude 会：
 
 ## 核心命令
 
-### `/wiki-ingest <path>` — 摄取资料
+### 协议模式（推荐）
 
-```bash
-/wiki-ingest sources/paper.pdf
-/wiki-ingest sources/article.md
+使用自然语言与 Agent 交互：
+
+```
+"请摄入 sources/paper.pdf 到 wiki"
+"查询 wiki: Transformer 和 RNN 有什么区别？"
+"检查 wiki 健康状况"
 ```
 
-### `/wiki-query <question>` — 查询知识库
+### CLI 模式（可选）
+
+安装依赖后，可使用命令行工具：
 
 ```bash
-/wiki-query "Transformer 和 RNN 有什么区别？"
-/wiki-query "我们讨论过哪些优化方法？"
+# 查看 wiki 状态
+python -m src.llm_wiki status
+
+# 健康检查
+python -m src.llm_wiki lint
+
+# 查看帮助
+python -m src.llm_wiki --help
 ```
 
-### `/wiki-lint` — 健康检查
-
-```bash
-/wiki-lint
-```
+**注意**：`ingest` 和 `query` 命令在 CLI 中仅提供辅助功能（如列出页面），实际的内容处理需要通过自然语言与 Agent 交互完成。
 
 检查并报告：
 

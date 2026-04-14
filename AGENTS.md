@@ -156,8 +156,8 @@ uv pip install -r src/requirements.txt
 ls -la .venv/  # 或 venv/
 
 # 如果有，使用虚拟环境的 Python
-.venv/Scripts/python -c "from src.llm_wiki.core import WikiManager; print('OK')"  # Windows
-.venv/bin/python -c "from src.llm_wiki.core import WikiManager; print('OK')"      # Linux/macOS
+.venv/Scripts/python -m src.llm_wiki --help  # Windows
+.venv/bin/python -m src.llm_wiki --help      # Linux/macOS
 ```
 
 ### 检查 CLI 可用性
@@ -175,13 +175,25 @@ python -c "from skills.llm_wiki.core import WikiManager; print('OK')"
 
 ### 可用命令
 
-| 命令 | 用途 | 示例 |
-|-----|------|------|
-| `wiki status` | 查看 wiki 概览 | 快速了解页面数量、最近活动 |
-| `wiki lint` | 健康检查 | 发现孤儿页面、死链等问题 |
-| `wiki ingest <path>` | 摄取资料（辅助）| 验证资料存在，预览影响 |
+```bash
+# 查看 wiki 状态
+python -m src.llm_wiki status
 
-**注意**：`wiki ingest` 和 `wiki query` 需要 LLM 处理，CLI 只提供辅助功能。实际 ingest/query 建议用**协议模式**直接操作文件。
+# 健康检查
+python -m src.llm_wiki lint
+
+# 查看所有命令帮助
+python -m src.llm_wiki --help
+```
+
+| 命令 | 用途 | 说明 |
+|-----|------|------|
+| `status` | 查看 wiki 概览 | 页面数量、最近活动 |
+| `lint` | 健康检查 | 孤儿页面、死链等问题 |
+| `ingest <path>` | 摄取资料（辅助）| 仅预览，实际处理需用协议模式 |
+| `query <text>` | 查询 wiki（辅助）| 仅列出页面，实际查询需用协议模式 |
+
+**注意**：`ingest` 和 `query` 需要 LLM 处理，CLI 只提供辅助功能。实际内容处理建议用**协议模式**直接操作文件。
 
 ### CLI 辅助工作流示例
 
@@ -191,10 +203,10 @@ PY=".venv/Scripts/python"  # Windows
 PY=".venv/bin/python"      # Linux/macOS
 
 # 1. 先检查 wiki 状态
-$PY -c "from src.llm_wiki.core import WikiManager; from pathlib import Path; w = WikiManager(Path('wiki')); print(f'Pages: {len(w.list_pages())}')"
+$PY -m src.llm_wiki status
 
 # 2. 运行 lint 检查问题
-$PY -c "from src.llm_wiki.core import WikiManager, find_wiki_root; w = WikiManager(find_wiki_root()/'wiki'); print(w.lint())"
+$PY -m src.llm_wiki lint
 
 # 3. 用户要求摄入新资料，你（Agent）直接处理：
 #    - 读取 sources/new-paper.pdf
@@ -248,7 +260,7 @@ $PY -c "from src.llm_wiki.core import WikiManager, find_wiki_root; w = WikiManag
 用户：运行 wiki lint 看看有什么问题
 
 你（CLI 模式）：
-1. 执行：python -m skills.llm_wiki lint
+1. 执行：python -m src.llm_wiki lint
 2. 分析输出
 3. 解释问题并提供修复建议
 
