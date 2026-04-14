@@ -282,16 +282,16 @@ llm-wiki/
 ### Data Flow
 
 ```
-┌──────────┐     ┌─────────────┐     ┌──────────┐
-│ sources/ │────▶│  LLM Processing  │────▶│  wiki/   │
-│ (Raw)    │     │ (Extract + Link) │     │ (Structured)│
-└──────────┘     └─────────────┘     └──────────┘
-                          │
-                          ▼
-                    ┌──────────┐
-                    │ log.md   │
-                    │ (Record) │
-                    └──────────┘
++----------+     +--------------------+     +--------------+
+| sources/ |---->|   LLM Processing   |---->|    wiki/     |
+|  (Raw)   |     | (Extract + Link)   |     | (Structured) |
++----------+     +--------------------+     +--------------+
+                          |
+                          v
+                    +----------+
+                    |  log.md  |
+                    | (Record) |
+                    +----------+
 ```
 
 ### Key Design
@@ -309,24 +309,24 @@ This SKILL **does not rely on Embedding/vector retrieval**. Queries are complete
 
 ```
 User asks question
-    │
-    ▼
-┌─────────────────┐
-│ 1. Read index.md │ ← Human/Agent-maintained category index
-│    Locate relevant topics │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ 2. Read relevant pages  │ ← Discover associations through [[links]]
-│    and their link neighbors │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ 3. LLM Synthesis     │ ← Generate answers based on read content
-│    Generate with citations │      Citation format: [[PageName]]
-└─────────────────┘
+         |
+         v
++-------------------------------+
+|  1. Read index.md             |  <-- Human/Agent-maintained category index
+|     Locate relevant topics    |
++-------------------------------+
+         |
+         v
++-------------------------------+
+|  2. Read relevant pages       |  <-- Discover associations through [[links]]
+|     and their link neighbors  |
++-------------------------------+
+         |
+         v
++-------------------------------+
+|  3. LLM Synthesis             |  <-- Generate answers based on read content
+|     Generate with citations   |  Citation format: [[PageName]]
++-------------------------------+
 ```
 
 **Example Flow**:

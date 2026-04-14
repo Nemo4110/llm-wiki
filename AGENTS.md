@@ -9,25 +9,25 @@
 ### 决策树
 
 ```
-文件类型识别
-    │
-    ├─ 文本文件 (.md, .txt, .json, .yaml, .py, .js 等)
-    │     └─▶ 直接使用 Read 工具读取
-    │
-    ├─ PDF 文件 (.pdf)
-    │     ├─ 检查依赖：pdfplumber>=0.11.8 是否安装？
-    │     │     ├─ 已安装 → 使用 Python 脚本读取
-    │     │     └─ 未安装 → 先安装依赖，再读取
-    │     └─▶ 通过 scripts/read_pdf.py 或 Python 代码处理
-    │
-    ├─ 图片文件 (.png, .jpg, .jpeg, .gif 等)
-    │     └─▶ 使用 Read 工具（支持视觉模型）
-    │
-    ├─ Office 文档 (.docx, .xlsx, .pptx)
-    │     └─▶ 需要安装 python-docx/openpyxl 等库
-    │
-    └─ 其他二进制格式
-          └─▶ 查找或创建相应的 Python 处理脚本
+File Type Recognition
+    |
+    +-- Text files (.md, .txt, .json, .yaml, .py, .js, etc.)
+    |     +--> Use Read tool directly
+    |
+    +-- PDF files (.pdf)
+    |     +-- Check dependency: is pdfplumber>=0.11.8 installed?
+    |     |     +-- Yes -> Use Python script to read
+    |     |     +-- No  -> Install dependency first, then read
+    |     +--> Process via scripts/read_pdf.py or Python code
+    |
+    +-- Image files (.png, .jpg, .jpeg, .gif, etc.)
+    |     +--> Use Read tool (vision model supported)
+    |
+    +-- Office documents (.docx, .xlsx, .pptx)
+    |     +--> Requires python-docx / openpyxl, etc.
+    |
+    +-- Other binary formats
+          +--> Find or create corresponding Python processing script
 ```
 
 ### PDF 文件处理详细流程
@@ -218,16 +218,16 @@ $PY -m src.llm_wiki lint
 ## 决策树
 
 ```
-用户输入
-    │
-    ├─ 自然语言（"摄入资料"、"查询 wiki"）
-    │     └─▶ 协议模式：直接操作文件
-    │
-    ├─ 明确 CLI（"运行 wiki lint"、"检查状态"）
-    │     └─▶ CLI 模式：执行命令并解释输出
-    │
-    └─ 脚本化需求（"批量处理"、"自动化"）
-          └─▶ CLI 模式：生成/执行脚本
+User Input
+    |
+    +-- Natural language ("ingest sources", "query wiki")
+    |     +--> Protocol mode: operate files directly
+    |
+    +-- Explicit CLI ("run wiki lint", "check status")
+    |     +--> CLI mode: execute commands and explain output
+    |
+    +-- Scripting needs ("batch process", "automation")
+          +--> CLI mode: generate / execute scripts
 ```
 
 ## 重要原则

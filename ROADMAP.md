@@ -42,19 +42,19 @@
 **方案：混合检索**
 
 ```
-用户查询
-    │
-    ├──▶ 关键词匹配 ──▶ 标题/标签匹配（快速过滤）
-    │
-    ├──▶ 向量检索 ──▶ 语义相似页面（Embedding）
-    │
-    └──▶ 链接遍历 ──▶ 关联页面（从命中页面出发）
-                │
-                ▼
-            合并 + 去重 + 排序
-                │
-                ▼
-            Top-K 页面 → LLM 综合
+User Query
+    |
+    +--> Keyword Match  --> Title/Tag match (fast filter)
+    |
+    +--> Vector Search  --> Semantic similar pages (Embedding)
+    |
+    +--> Link Traversal --> Related pages (from hit pages)
+                |
+                v
+        Merge + Deduplicate + Rank
+                |
+                v
+        Top-K pages -> LLM Synthesis
 ```
 
 **实现选项**：
@@ -113,9 +113,9 @@
 - [ ] **分卷 wiki**：当单个仓库过大时，拆分为多个子 wiki
 - [ ] **分层索引**：
   ```
-  index.md           # 顶级索引
-  ├── ai/index.md    # AI 子 wiki 索引
-  └── sys/index.md   # 系统子 wiki 索引
+  index.md                # Top-level index
+  +-- ai/index.md         # AI sub-wiki index
+  +-- sys/index.md        # System sub-wiki index
   ```
 - [ ] **增量 Embedding 更新**：只更新修改页面的向量
 
