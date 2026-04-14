@@ -4,7 +4,7 @@ description: "Karpathy's llm-wiki pattern implementation — cumulative knowledg
 version: 1.0.1
 author: "@yourname"
 license: MIT
-repository: "https://github.com/yourname/llm-wiki"
+repository: "https://github.com/Nemo4110/llm-wiki.git"
 
 # Supported platforms
 platforms:
@@ -178,7 +178,7 @@ Karpathy's llm-wiki pattern implementation — cumulative knowledge management f
 
 ```bash
 # 1. Clone
-git clone https://github.com/yourname/llm-wiki.git
+git clone https://github.com/Nemo4110/llm-wiki.git
 cd llm-wiki
 
 # 2. Add source material

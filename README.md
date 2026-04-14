@@ -20,7 +20,7 @@
 ### 1. 克隆/复制此项目
 
 ```bash
-git clone https://github.com/yourname/llm-wiki.git
+git clone https://github.com/Nemo4110/llm-wiki.git
 cd llm-wiki
 ```
 
