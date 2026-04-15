@@ -183,7 +183,7 @@ def index(ctx, force: bool, provider: Optional[str]):
     idx = EmbeddingIndex(wiki, provider_obj)
     indexed, skipped = idx.build(force=force)
 
-    click.echo(f"\n✓ 索引完成")
+    click.echo(f"\n[OK] 索引完成")
     click.echo(f"  新索引/更新: {indexed} 个页面")
     click.echo(f"  跳过（未变更）: {skipped} 个页面")
 
@@ -210,29 +210,29 @@ def lint(ctx, fix: bool):
     has_issues = any(issues.values())
 
     if not has_issues:
-        click.echo("✓ 健康状况良好！")
+        click.echo("[OK] 健康状况良好！")
         return
 
     # 报告问题
     if issues['orphans']:
-        click.echo(f"⚠️  孤儿页面 ({len(issues['orphans'])}):")
+        click.echo(f"[!] 孤儿页面 ({len(issues['orphans'])}):")
         for p in issues['orphans'][:5]:
             click.echo(f"    - {p}")
         if len(issues['orphans']) > 5:
             click.echo(f"    ... 还有 {len(issues['orphans']) - 5} 个")
 
     if issues['dead_links']:
-        click.echo(f"\n⚠️  死链 ({len(issues['dead_links'])}):")
+        click.echo(f"\n[!] 死链 ({len(issues['dead_links'])}):")
         for link in issues['dead_links'][:5]:
             click.echo(f"    - [[{link}]]")
 
     if issues['stale']:
-        click.echo(f"\n📅 陈旧页面 ({len(issues['stale'])}):")
+        click.echo(f"\n[OLD] 陈旧页面 ({len(issues['stale'])}):")
         for p in issues['stale'][:5]:
             click.echo(f"    - {p}")
 
     if issues['drafts']:
-        click.echo(f"\n📝 草稿页面 ({len(issues['drafts'])}):")
+        click.echo(f"\n[DRAFT] 草稿页面 ({len(issues['drafts'])}):")
         for p in issues['drafts'][:5]:
             click.echo(f"    - {p}")
 
@@ -250,8 +250,8 @@ def status(ctx):
     pages = wiki.list_pages()
     recent_logs = wiki.read_log(5)
 
-    click.echo(f"📚 Wiki 根目录: {root}")
-    click.echo(f"📄 总页面数: {len(pages)}")
+    click.echo(f"[Wiki] 根目录: {root}")
+    click.echo(f"[Pages] 总页面数: {len(pages)}")
 
     # 状态统计
     status_count = {}
