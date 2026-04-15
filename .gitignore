@@ -66,3 +66,7 @@ wiki/*
 
 # Release builds
 release/
+
+# Sensitive config and auto-generated logs
+config.yaml
+log.md
