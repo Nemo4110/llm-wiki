@@ -15,7 +15,7 @@ File Type Recognition
     |     +--> Use Read tool directly
     |
     +-- PDF files (.pdf)
-    |     +-- Check dependency: is pdfplumber>=0.11.8 installed?
+    |     +-- Check dependency: is PyMuPDF (pymupdf) installed?
     |     |     +-- Yes -> Use Python script to read
     |     |     +-- No  -> Install dependency first, then read
     |     +--> Process via scripts/read_pdf.py or Python code
@@ -35,15 +35,14 @@ File Type Recognition
 **步骤 1：检查依赖**
 
 ```bash
-# 检查 pdfplumber 是否已安装
-python -c "import pdfplumber; print(pdfplumber.__version__)"
+# 检查 PyMuPDF 是否已安装
+python -c "import fitz; print(fitz.__doc__[:30])"
 ```
 
 如果失败，需要先安装：
 
 ```bash
-# 安全版本（已修复 CVE-2025-64512）
-pip install pdfplumber>=0.11.8 pdfminer.six>=20251107
+pip install pymupdf>=1.25.0
 ```
 
 **步骤 2：读取 PDF 内容**
@@ -58,23 +57,32 @@ python scripts/read_pdf.py sources/paper.pdf
 python scripts/read_pdf.py sources/paper.pdf 1-10
 ```
 
-**方法 B：使用 Python 代码**
+**方法 B：使用 Python 代码（推荐：PyMuPDF）**
+
+```python
+import fitz  # PyMuPDF
+
+doc = fitz.open("sources/paper.pdf")
+for page in doc:
+    print(page.get_text())
+doc.close()
+```
+
+**回退方案：pdfplumber（表格提取）**
+
+如果 PyMuPDF 在提取复杂表格时效果不佳，可回退使用 `pdfplumber`（注意需安装安全版本 >= 0.11.8 以修复 CVE-2025-64512）：
 
 ```python
 import pdfplumber
 
 with pdfplumber.open("sources/paper.pdf") as pdf:
-    # 读取第 1-10 页
-    for i in range(min(10, len(pdf.pages))):
-        page = pdf.pages[i]
-        text = page.extract_text()
-        print(f"Page {i+1}:\n{text}\n")
+    for page in pdf.pages:
+        print(page.extract_text())
 ```
 
-**重要安全提示**：
-- **必须使用安全版本**：pdfplumber >= 0.11.8，pdfminer.six >= 20251107
-- **原因**：CVE-2025-64512 漏洞可导致任意代码执行
-- **避免**：直接使用 Read 工具读取 PDF（会触发 pdftoppm 依赖错误）
+**OCR 最后手段**
+
+对于扫描版 PDF 或上述方法均失败的情况，可使用 `pdf2image` + `pytesseract` 进行 OCR。
 
 **PDF 提取质量不佳时的回退方案**
 
@@ -129,8 +137,11 @@ Read("sources/screenshot.jpg")
 **包含的依赖**：
 - `click>=8.0.0` - CLI 框架
 - `pyyaml>=6.0` - YAML 解析
-- `pdfplumber>=0.11.8` - PDF 处理（安全版本）
-- `pdfminer.six>=20251107` - PDF 处理底层库（安全版本）
+- `pymupdf>=1.25.0` - PDF 处理（PyMuPDF，支持 CJK 字体和复杂排版）
+
+**回退依赖**（仅在 PyMuPDF 提取表格效果不佳时使用）：
+- `pdfplumber>=0.11.8` - PDF 表格提取（需安全版本修复 CVE-2025-64512）
+- `pdfminer.six>=20251107` - PDF 底层库
 
 **安装命令**：
 

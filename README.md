@@ -78,22 +78,19 @@ python -c "from src.llm_wiki.core import WikiManager; print('✓ 安装成功')"
 
 项目包含以下核心依赖（定义在 `src/requirements.txt`）：
 
-| 依赖 | 版本要求 | 用途 | 安全说明 |
-|-----|---------|------|---------|
+| 依赖 | 版本要求 | 用途 | 备注 |
+|-----|---------|------|------|
 | `click` | >=8.0.0 | CLI 框架 | - |
 | `pyyaml` | >=6.0 | YAML 解析 | - |
-| `pdfplumber` | >=0.11.8 | PDF 处理 | **必须使用安全版本** |
-| `pdfminer.six` | >=20251107 | PDF 底层库 | **必须使用安全版本** |
+| `pymupdf` | >=1.25.0 | PDF 处理 | PyMuPDF，对 CJK 和复杂排版更友好 |
 | `numpy` | >=1.24.0 | 向量运算 | embedding 检索必需 |
 | `httpx` | >=0.27.0 | HTTP 客户端 | Ollama 本地服务通信 |
 | `mcp` | >=1.0.0 | MCP SDK | 通过 MCP 调用远程 embedding |
 | `openai` | >=1.0.0 | OpenAI SDK | OpenAI embedding API |
 
-**PDF 处理安全警告**：
-
-- **CVE-2025-64512**：旧版本 pdfplumber（<= 0.11.7）存在任意代码执行漏洞
-- **修复版本**：pdfplumber >= 0.11.8，pdfminer.six >= 20251107
-- **安装要求**：必须使用安全版本，避免使用旧版本
+**回退依赖**（仅在 PyMuPDF 表格提取效果不佳时使用）：
+- `pdfplumber >= 0.11.8` — 表格提取（需安全版本修复 CVE-2025-64512）
+- `pdfminer.six >= 20251107` — PDF 底层库
 
 **纯协议模式**：如果你只想用 Claude Code 的自然语言指令（如"请摄入资料"），**仍需要安装 PDF 处理依赖**以读取 PDF 文件。纯文本文件可以不安装依赖直接处理。
 

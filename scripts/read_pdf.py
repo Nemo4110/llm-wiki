@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""读取 PDF 文件内容的辅助脚本"""
+"""读取 PDF 文件内容的辅助脚本（基于 PyMuPDF）"""
 
 import sys
-import pdfplumber
 import io
+
 
 def read_pdf(pdf_path, pages=None):
     """读取 PDF 文件内容
@@ -15,31 +15,41 @@ def read_pdf(pdf_path, pages=None):
     # 强制 UTF-8 输出，绕开控制台编码问题
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 
-    with pdfplumber.open(pdf_path) as pdf:
-        if pages:
-            # 解析页码范围
-            if '-' in pages:
-                start, end = map(int, pages.split('-'))
-                page_nums = range(start - 1, end)  # 转为 0-indexed
-            else:
-                page_nums = [int(pages) - 1]
+    try:
+        import fitz  # PyMuPDF
+    except ImportError as e:
+        print("错误：PyMuPDF 未安装。请运行：pip install pymupdf")
+        sys.exit(1)
 
-            for i in page_nums:
-                if i < len(pdf.pages):
-                    page = pdf.pages[i]
-                    text = page.extract_text()
-                    print(f"\n{'='*60}")
-                    print(f"Page {i + 1}")
-                    print(f"{'='*60}")
-                    print(text)
+    doc = fitz.open(pdf_path)
+
+    if pages:
+        # 解析页码范围
+        if '-' in pages:
+            start, end = map(int, pages.split('-'))
+            page_nums = range(start - 1, end)  # 转为 0-indexed
         else:
-            # 读取全部页面
-            for i, page in enumerate(pdf.pages):
-                text = page.extract_text()
+            page_nums = [int(pages) - 1]
+
+        for i in page_nums:
+            if i < len(doc):
+                page = doc.load_page(i)
+                text = page.get_text()
                 print(f"\n{'='*60}")
                 print(f"Page {i + 1}")
                 print(f"{'='*60}")
                 print(text)
+    else:
+        # 读取全部页面
+        for i, page in enumerate(doc):
+            text = page.get_text()
+            print(f"\n{'='*60}")
+            print(f"Page {i + 1}")
+            print(f"{'='*60}")
+            print(text)
+
+    doc.close()
+
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
