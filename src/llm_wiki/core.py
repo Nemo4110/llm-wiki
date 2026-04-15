@@ -4,6 +4,7 @@ LLM-Wiki 核心逻辑
 处理 wiki 的读取、更新、索引维护。
 """
 
+import hashlib
 import os
 import re
 from dataclasses import dataclass, field
@@ -34,6 +35,12 @@ class WikiPage:
     @property
     def tags(self) -> List[str]:
         return self.frontmatter.get('tags', [])
+
+    @property
+    def content_hash(self) -> str:
+        """计算页面内容哈希，用于增量更新"""
+        text = f"{self.title}\n{'\n'.join(self.tags)}\n{self.content}"
+        return hashlib.sha256(text.encode('utf-8')).hexdigest()
 
 
 @dataclass

@@ -76,6 +76,31 @@ with pdfplumber.open("sources/paper.pdf") as pdf:
 - **原因**：CVE-2025-64512 漏洞可导致任意代码执行
 - **避免**：直接使用 Read 工具读取 PDF（会触发 pdftoppm 依赖错误）
 
+**PDF 提取质量不佳时的回退方案**
+
+如果 pdfplumber 提取的文本出现大量乱码（尤其是包含中文、特殊字体或复杂排版的学术论文），可尝试以下替代方案：
+
+**方法 C：使用 PyMuPDF（fitz）**
+
+PyMuPDF 对 CJK（中日韩）字体和复杂 PDF 的文本提取通常更可靠：
+
+```bash
+# 安装
+pip install pymupdf
+```
+
+```python
+import fitz  # PyMuPDF
+
+doc = fitz.open("sources/paper.pdf")
+for page in doc:
+    print(page.get_text())
+```
+
+**方法 D：转换为图片后 OCR（最后手段）**
+
+对于扫描版 PDF 或上述方法均失败的情况，可使用 `pdf2image` + `pytesseract` 进行 OCR，但速度较慢。
+
 ### 文本文件处理
 
 直接使用 Read 工具：
@@ -134,6 +159,8 @@ uv pip install -r src/requirements.txt
 2. **根据文件类型选择正确的读取策略**（见上方"文件类型处理策略"）
 3. 直接操作文件（读取、写入、编辑）
 4. 按照 Ingest/Query/Lint 工作流执行
+   - **Ingest 时必须创建 stub 页面**：任何新页面中首次出现的 `[[Concept]]`，如果目标页面不存在，必须同步创建一个 stub（至少包含 frontmatter + 一句话定义）
+   - **双向链接检查**：更新现有页面后，检查是否有新页面应该反向链接过来
 
 **不需要**：调用任何 CLI 命令
 
@@ -247,11 +274,12 @@ User Input
 你（协议模式）：
 1. 读取 sources/paper.pdf
 2. 提取关键洞察
-3. 创建 wiki/Attention-Mechanism.md
-4. 更新 wiki/index.md
-5. 追加 log.md
+3. 创建 wiki/Attention-Mechanism.md（内含 [[Self-Attention]]、[[Transformer]] 等链接）
+4. 检查死链：创建 wiki/Self-Attention.md 和 wiki/Transformer.md 等 stub 页面
+5. 更新 wiki/index.md
+6. 追加 log.md
 
-回复：已摄入 paper.pdf，创建了 [[Attention Mechanism]] 页面...
+回复：已摄入 paper.pdf，创建了 [[Attention Mechanism]] 页面，并同步创建了 [[Self-Attention]]、[[Transformer]] 等关联概念 stub...
 ```
 
 ### 场景 2：明确 CLI 请求

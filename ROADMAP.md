@@ -66,10 +66,12 @@ User Query
 | 本地 heavy | `BAAI/bge-large-zh` 等高质量模型 | P3 |
 
 **交付物**：
-- [ ] `skills/llm_wiki/retrieval.py` - 检索模块
-- [ ] `wiki/.cache/embeddings.json` - 本地缓存
-- [ ] CLI 命令：`wiki index` - 建立/更新索引
-- [ ] 配置项：`config.yaml` 中启用/禁用 embedding
+
+- [x] `src/llm_wiki/retrieval.py` - 检索模块
+- [x] `src/llm_wiki/embeddings.py` - embedding 提供者抽象层
+- [x] `wiki/.cache/embeddings.json` - 本地缓存
+- [x] CLI 命令：`wiki index` - 建立/更新索引
+- [x] 配置项：`config.yaml` 中启用/禁用 embedding
 
 ### 编辑器集成
 
@@ -156,6 +158,16 @@ User Query
 
 **条件**：当页面 > 500 或用户明确要求时，启动 Embedding 支持
 
+### 2026-04-14：Embedding 作为可选升级实现
+
+**决定**：在 CLI 中增加可选的 embedding 混合检索支持，默认关闭
+
+**实现**：
+
+- Provider 抽象层支持 Ollama（本地）、OpenAI（远程 API）、MCP（通过 MCP 服务器调用）
+- `wiki index` 命令建立增量索引，`wiki query --semantic` 使用混合检索
+- 配置项 `embedding.enabled` 默认为 `false`，不影响现有纯符号导航用户
+
 ---
 
-*最后更新：2026-04-13*
+*最后更新：2026-04-14*
