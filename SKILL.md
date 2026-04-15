@@ -72,6 +72,7 @@ functions:
       - Extract key insights
       - Identify/create affected wiki pages
       - Update cross-references
+      - Create stub pages for any new [[Dead Link]] introduced in the content
       - Append to log.md
 
   query:
@@ -446,7 +447,7 @@ Issues and PRs welcome!
 
 - [ ] MCP server wrapper (for other Agents)
 - [ ] Obsidian plugin (one-click sync)
-- [ ] Incremental embedding for faster retrieval
+- [x] Incremental embedding for faster retrieval
 - [ ] Multi-language support
 
 ## License
