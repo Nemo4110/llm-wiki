@@ -180,7 +180,7 @@ uv pip install -r src/requirements.txt
 **适用场景**：用户明确要求使用命令行工具，或需要脚本化操作
 
 **你的行为**：
-1. 检查 CLI 是否可用：`python -m skills.llm_wiki --help`
+1. 检查 CLI 是否可用：`python -m src.llm_wiki --help`
 2. 使用相应命令辅助执行
 
 ## CLI 工具参考
@@ -205,10 +205,10 @@ ls -la .venv/  # 或 venv/
 .venv/Scripts/python -c "from src.llm_wiki.core import WikiManager; print('OK')"
 
 # 或使用系统 Python
-python -c "from skills.llm_wiki.core import WikiManager; print('OK')"
+python -c "from src.llm_wiki.core import WikiManager; print('OK')"
 
-# 命令行入口（暂未实现 __main__，推荐用协议模式）
-# python -m skills.llm_wiki --help
+# 命令行入口
+# python -m src.llm_wiki --help
 ```
 
 ### 可用命令
@@ -312,7 +312,7 @@ User Input
 用户：检查 wiki 状态
 
 你：发现项目有 .venv/ 目录，使用虚拟环境
-    .venv/Scripts/python -c "from skills.llm_wiki.core import ..."
+    .venv/Scripts/python -c "from src.llm_wiki.core import ..."
     → 成功获取信息
 
 回复：wiki 目前有 15 个页面，最近活动是...
@@ -421,5 +421,5 @@ def check_dep(module_name, python_path=None):
 
 ---
 
-*Agent 指南版本：1.0.0*
-*最后更新：2026-04-13*
+*Agent 指南版本：1.1.0*
+*最后更新：2026-04-16*

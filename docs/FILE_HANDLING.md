@@ -8,7 +8,7 @@
 |---------|--------|---------|----------------|
 | **文本文件** | .md, .txt, .json, .yaml, .yml | 直接使用 Read 工具 | 否 |
 | **代码文件** | .py, .js, .ts, .java, .go, .rs 等 | 直接使用 Read 工具 | 否 |
-| **PDF 文件** | .pdf | 使用 pdfplumber + Python 脚本 | **是**（>=0.11.8） |
+| **PDF 文件** | .pdf | 使用 PyMuPDF (fitz) + Python 脚本 | **是** (>=1.25.0) |
 | **图片文件** | .png, .jpg, .jpeg, .gif, .bmp | 直接使用 Read 工具（视觉模型） | 否 |
 | **Office 文档** | .docx, .xlsx, .pptx | 使用 python-docx/openpyxl 等 | 是 |
 | **压缩文件** | .zip, .tar, .gz | 先解压，再处理内部文件 | 否 |
@@ -18,24 +18,19 @@
 ### 步骤 1：检查依赖
 
 ```bash
-# 检查是否已安装安全版本
-python -c "import pdfplumber; print(pdfplumber.__version__)"
+# 检查是否已安装 PyMuPDF
+python -c "import fitz; print(fitz.__doc__[:30])"
 ```
 
-**如果失败，安装安全版本**：
+**如果失败，安装依赖**：
 
 ```bash
-pip install pdfplumber>=0.11.8 pdfminer.six>=20251107
+pip install pymupdf>=1.25.0
 ```
-
-⚠️ **安全警告**：
-- 旧版本（pdfplumber <= 0.11.7）存在 **CVE-2025-64512** 漏洞
-- 漏洞可导致任意代码执行
-- **必须使用安全版本**：pdfplumber >= 0.11.8，pdfminer.six >= 20251107
 
 ### 步骤 2：读取 PDF
 
-**方法 A：使用现有脚本**
+**方法 A：使用现有脚本（推荐）**
 
 ```bash
 # 读取全部页面
@@ -45,38 +40,53 @@ python scripts/read_pdf.py sources/paper.pdf
 python scripts/read_pdf.py sources/paper.pdf 1-10
 ```
 
-**方法 B：使用 Python 代码**
+**方法 B：使用 Python 代码（推荐：PyMuPDF）**
 
 ```python
-import pdfplumber
+import fitz  # PyMuPDF
 
-with pdfplumber.open("sources/paper.pdf") as pdf:
-    # 读取前 10 页
-    for i in range(min(10, len(pdf.pages))):
-        page = pdf.pages[i]
-        text = page.extract_text()
-        print(f"Page {i+1}:\n{text}\n")
+doc = fitz.open("sources/paper.pdf")
+for page in doc:
+    print(page.get_text())
+doc.close()
 ```
 
 **方法 C：读取完整内容**
 
 ```python
-import pdfplumber
+import fitz
 
 def read_full_pdf(pdf_path):
     """读取 PDF 全部内容"""
-    with pdfplumber.open(pdf_path) as pdf:
-        full_text = []
-        for i, page in enumerate(pdf.pages):
-            text = page.extract_text()
-            if text:
-                full_text.append(f"=== Page {i+1} ===\n{text}")
-        return "\n\n".join(full_text)
+    doc = fitz.open(pdf_path)
+    full_text = []
+    for i, page in enumerate(doc):
+        text = page.get_text()
+        if text:
+            full_text.append(f"=== Page {i+1} ===\n{text}")
+    doc.close()
+    return "\n\n".join(full_text)
 
 # 使用
 content = read_full_pdf("sources/paper.pdf")
 print(content)
 ```
+
+**回退方案：pdfplumber（表格提取）**
+
+如果 PyMuPDF 在提取复杂表格时效果不佳，可回退使用 `pdfplumber`（注意需安装安全版本 >= 0.11.8 以修复 CVE-2025-64512）：
+
+```python
+import pdfplumber
+
+with pdfplumber.open("sources/paper.pdf") as pdf:
+    for page in pdf.pages:
+        print(page.extract_text())
+```
+
+**OCR 最后手段**
+
+对于扫描版 PDF 或上述方法均失败的情况，可使用 `pdf2image` + `pytesseract` 进行 OCR。
 
 ### 常见错误处理
 
@@ -88,7 +98,7 @@ pdftoppm failed: Command 'pdftoppm' not found
 
 **原因**：Read 工具尝试使用系统工具 `pdftoppm` 处理 PDF，但系统未安装
 
-**解决方案**：使用 pdfplumber 代替 Read 工具
+**解决方案**：使用 PyMuPDF 或 pdfplumber 代替 Read 工具
 
 ---
 
@@ -120,7 +130,7 @@ API Error: 422 {"detail":"validation errors for ClaudeMessagesRequest..."}
 
 **原因**：Read 工具处理 PDF 失败，导致 API 验证错误
 
-**解决方案**：不使用 Read 工具，改用 pdfplumber + Python 脚本
+**解决方案**：不使用 Read 工具，改用 PyMuPDF + Python 脚本
 
 ## 文本文件处理
 
@@ -188,7 +198,7 @@ import importlib.util
 def check_dependencies():
     """检查关键依赖"""
     deps = {
-        'pdfplumber': 'pdfplumber>=0.11.8',
+        'fitz': 'pymupdf>=1.25.0',
         'yaml': 'pyyaml>=6.0',
         'click': 'click>=8.0.0',
     }
@@ -217,5 +227,5 @@ check_dependencies()
 
 ---
 
-*文档版本：1.0.0*
-*最后更新：2026-04-13*
+*文档版本：1.1.0*
+*最后更新：2026-04-16*

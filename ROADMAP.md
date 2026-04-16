@@ -2,15 +2,16 @@
 
 > 项目演进计划和待办事项
 
-## 当前状态：v1.0.0
+## 当前状态：v1.1.0
 
 **核心功能**：
 - [x] 基于协议的 wiki 工作流
 - [x] Ingest / Query / Lint 三大命令
-- [x] 纯 Markdown，零依赖
+- [x] 纯 Markdown，零外部强制依赖
 - [x] Obsidian 兼容
+- [x] 可选 Embedding 混合检索（Ollama / OpenAI / MCP）
 
-**查询机制**：符号导航 + LLM 综合（无 Embedding）
+**查询机制**：默认使用符号导航 + LLM 综合；CLI 可选开启 Embedding 增强
 
 ---
 

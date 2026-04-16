@@ -205,5 +205,5 @@ status: "active"  # active | draft | archived
 
 ## 版本
 
-Protocol: v1.0.0
-Last Updated: 2026-04-13
+Protocol: v1.1.0
+Last Updated: 2026-04-16

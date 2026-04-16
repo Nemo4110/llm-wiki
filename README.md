@@ -92,7 +92,7 @@ python -c "from src.llm_wiki.core import WikiManager; print('✓ 安装成功')"
 - `pdfplumber >= 0.11.8` — 表格提取（需安全版本修复 CVE-2025-64512）
 - `pdfminer.six >= 20251107` — PDF 底层库
 
-**纯协议模式**：如果你只想用 Claude Code 的自然语言指令（如"请摄入资料"），**仍需要安装 PDF 处理依赖**以读取 PDF 文件。纯文本文件可以不安装依赖直接处理。
+**纯协议模式**：如果你只想用 Claude Code 的自然语言指令（如"请摄入资料"）处理纯文本文件，**无需安装任何依赖**。仅当需要读取 PDF 时才需要安装 PyMuPDF。
 
 ### 3. 放入你的第一个资料
 
@@ -339,7 +339,7 @@ Claude：已创建 [[LoRA vs Full Fine-tuning]]
 
 ### 自定义页面模板
 
-编辑 `schema/page_template.md`：
+编辑 `assets/page_template.md`：
 
 ```markdown
 ---
@@ -372,7 +372,7 @@ tags:
 
 ### 自定义 Ingest 规则
 
-编辑 `schema/ingest_rules.md`，添加特定领域的处理逻辑。
+编辑 `assets/ingest_rules.md`，添加特定领域的处理逻辑。
 
 ## 对比其他方案
 

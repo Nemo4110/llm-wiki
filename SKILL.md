@@ -42,6 +42,21 @@ dependencies:
     - name: pyyaml
       version: ">=6.0"
       reason: "YAML parsing"
+    - name: pymupdf
+      version: ">=1.25.0"
+      reason: "PDF processing (recommended)"
+    - name: numpy
+      version: ">=1.24.0"
+      reason: "Embedding retrieval"
+    - name: httpx
+      version: ">=0.27.0"
+      reason: "Ollama/local HTTP client for embedding"
+    - name: openai
+      version: ">=1.0.0"
+      reason: "OpenAI embedding API"
+    - name: mcp
+      version: ">=1.0.0"
+      reason: "MCP SDK for remote embedding providers"
 
 # Installation methods
 installation:
@@ -240,17 +255,21 @@ python -c "from src.llm_wiki.core import WikiManager; print('✓ Installation su
 
 **Important Dependency Notes**:
 
-| Dependency | Version | Purpose | Security Note |
-|------------|---------|---------|---------------|
+| Dependency | Version | Purpose | Notes |
+|------------|---------|---------|-------|
 | `click` | >=8.0.0 | CLI framework | - |
 | `pyyaml` | >=6.0 | YAML parsing | - |
-| `pdfplumber` | >=0.11.8 | PDF processing | **Security version required** |
-| `pdfminer.six` | >=20251107 | PDF底层库 | **Security version required** |
+| `pymupdf` | >=1.25.0 | PDF processing | Primary PDF engine, best for CJK |
 
-**PDF Processing Security Warning**:
-- **CVE-2025-64512**: Old versions of pdfplumber (<= 0.11.7) have arbitrary code execution vulnerability
-- **Fixed versions**: pdfplumber >= 0.11.8, pdfminer.six >= 20251107
-- **Installation requirement**: Must use secure versions
+**Optional dependencies** (for enhanced features):
+- `numpy >=1.24.0` — Vector operations for embedding retrieval
+- `httpx >=0.27.0` — HTTP client for Ollama/local services
+- `openai >=1.0.0` — OpenAI embedding API
+- `mcp >=1.0.0` — MCP SDK for remote embedding providers
+
+**Fallback PDF dependency**:
+- `pdfplumber >=0.11.8` — Table extraction fallback (security version required for CVE-2025-64512)
+- `pdfminer.six >=20251107` — PDF底层库 fallback
 
 ## Project Structure
 
@@ -304,9 +323,9 @@ llm-wiki/
 
 ## Query Mechanism
 
-### Current Implementation: Symbolic Navigation + LLM Synthesis
+### Current Implementation: Symbolic Navigation + LLM Synthesis (Default)
 
-This SKILL **does not rely on Embedding/vector retrieval**. Queries are completed through:
+By default, this SKILL **does not require Embedding/vector retrieval**. Queries are completed through:
 
 ```
 User asks question
@@ -330,6 +349,8 @@ User asks question
 +-------------------------------+
 ```
 
+**Optional Enhancement**: After enabling `config.yaml` embedding settings, CLI `query --semantic` adds hybrid search (Keyword Match + Vector Search + Link Traversal) for faster, more accurate retrieval.
+
 **Example Flow**:
 
 User asks: "What is LoRA?"
@@ -340,7 +361,7 @@ User asks: "What is LoRA?"
    > LoRA (Low-Rank Adaptation) is a parameter-efficient fine-tuning method — see [[LoRA]].
    > Compared to traditional [[Fine-tuning]], it only trains low-rank matrices...
 
-### Why No Embedding?
+### Why is Embedding Optional?
 
 | Consideration | Current Solution | Embedding Solution |
 |---------------|------------------|-------------------|
@@ -350,16 +371,16 @@ User asks: "What is LoRA?"
 | **Accuracy** | Precise links, explainable | Approximate similarity, may retrieve irrelevant content |
 | **Scale** | Suitable for 0-500 pages | Essential for large scale (1000+ pages) |
 
-**Conclusion**: For personal/small team knowledge bases, maintaining `index.md` and page links is simpler and more effective than introducing Embedding.
+**Conclusion**: For personal/small team knowledge bases, maintaining `index.md` and page links is simpler and more effective than introducing Embedding. Embedding is available as an opt-in CLI enhancement when scale demands it.
 
 ### When to Use Embedding?
 
-Consider upgrading when your wiki shows:
+Consider enabling `config.yaml` embedding settings when your wiki shows:
 - [ ] Page count > 500, manual indexing hard to maintain
 - [ ] Queries are mostly fuzzy semantic ("that paper about optimization...")
 - [ ] Need cross-topic associations (user didn't mention keywords, but semantically related)
 
-See [ROADMAP.md](ROADMAP.md) for upgrade plans.
+See [ROADMAP.md](ROADMAP.md) for details.
 
 ## Example Workflows
 
