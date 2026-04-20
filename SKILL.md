@@ -1,7 +1,7 @@
 ---
 name: llm-wiki
 description: "Karpathy's llm-wiki pattern implementation — cumulative knowledge management for AI agents"
-version: 1.1.0
+version: 1.2.0
 author: "@yourname"
 license: MIT
 repository: "https://github.com/Nemo4110/llm-wiki.git"
@@ -279,7 +279,7 @@ llm-wiki/
 ├── AGENTS.md           # Agent implementation guide (CLI usage)
 ├── SKILL.md            # This file
 ├── log.md              # Timeline log (append-only)
-├── sources/            # Raw materials (user-managed, Agent read-only)
+├── sources/            # Raw materials (user-managed + tool-fetched; Agent forbidden from writing LLM-generated content)
 │   └── README.md
 ├── wiki/               # Generated knowledge pages (Agent-managed)
 │   ├── index.md        # Entry index

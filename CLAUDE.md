@@ -13,7 +13,7 @@
 
 ```text
 llm-wiki/
-├── sources/          # 原始资料（只读，用户管理）
+├── sources/          # 原始资料（用户管理 + 网络工具获取；Agent 禁止写入任何 LLM 生成内容）
 │   └── README.md     # 资料管理指南
 ├── wiki/             # 生成的知识页面（你管理）
 │   ├── index.md      # 入口索引
@@ -33,7 +33,14 @@ llm-wiki/
 
 ### 1. Ingest（摄取）
 
-**触发**：用户添加资料到 `sources/`，或明确要求 `/wiki-ingest <path>`
+**触发**（满足以下任一条件）：
+
+1. **文件已存在于 `sources/`**：用户已将资料放入 `sources/`，明确要求 `/wiki-ingest <path>`
+2. **用户提供了可获取的 URL/DOI**：用户给出网络地址，Agent 必须先使用网络工具获取到 `sources/`，再执行 ingest
+
+**前置检查**：
+- 如果用户只提供了标题、作者或描述，但没有提供 URL/DOI，也没有文件在 `sources/` 中 → Agent 应**主动使用网络搜索工具**（WebSearch、WebFetch 等）查找开放获取版本，将搜索结果反馈给用户确认，确认后再下载获取；搜索无果则标记为 `[[Pending: 来源名]]` 并告知用户
+- 如果用户提供了 URL 但获取失败（404、付费墙、反爬）→ **不得伪造内容填充 `sources/`**，应标记为 `[[Pending: 来源名]]` 并在 `log.md` 记录失败原因
 
 **步骤**：
 
@@ -195,6 +202,7 @@ status: "active"  # active | draft | archived
 - 不要创建没有链接的孤立页面
 - 不要留下死链（`[[不存在的页面]]`）
 - 不要在正文中重复 frontmatter 信息
+- **绝对禁止将 LLM 生成内容写入 `sources/`**：`sources/` 只存放用户提供的原始文件或 Agent 通过真实网络请求获取的文件。禁止将幻觉、编造、推测的内容伪装成原始资料写入该目录。如果你无法获取某个来源，如实告知用户，而不是创造一个假的来源文件
 
 ## 相关文件
 
@@ -205,5 +213,5 @@ status: "active"  # active | draft | archived
 
 ## 版本
 
-Protocol: v1.1.0
-Last Updated: 2026-04-16
+Protocol: v1.2.0
+Last Updated: 2026-04-20

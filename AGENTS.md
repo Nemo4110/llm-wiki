@@ -2,6 +2,138 @@
 
 > 本文件指导 Claude Code、OpenClaw 等 AI Agent 如何使用 llm-wiki。
 
+## Sources 目录写入规则
+
+> `sources/` 的完整性是整个知识库的根基。一旦原始资料被污染，所有派生的 wiki 内容都将失去可信度。
+
+### 允许写入 `sources/` 的两种情况
+
+| 情况 | 条件 | 操作 |
+|------|------|------|
+| A | 用户手动放入文件 | 只读，不修改 |
+| B | 用户提供了 URL/DOI，文件尚未在 `sources/` 中 | 使用网络工具获取，验证内容非空且格式正确后写入 |
+
+### 绝对禁止
+
+- **禁止**将 LLM 生成的文本、摘要、推测内容保存为 `.md`、`.txt` 或任何格式放入 `sources/`
+- **禁止**在没有实际执行网络请求的情况下，声称"已下载"并创建文件
+- **禁止**在获取失败时用生成内容"兜底"
+
+### 标准网络获取模板
+
+**直接下载（PDF、文本文件）**：
+
+```bash
+# 检查 URL 是否可达
+curl -I -L "https://example.com/paper.pdf"
+
+# 下载到 sources/
+curl -L -o "sources/YYYY-MM-DD-描述.pdf" "https://example.com/paper.pdf"
+
+# 验证文件非空
+ls -la "sources/YYYY-MM-DD-描述.pdf"
+```
+
+**需要渲染的网页（技术博客、动态内容）**：
+
+使用 Playwright 工具获取页面内容：
+
+```bash
+# 使用 playwright 获取渲染后的页面
+playwright screenshot --full-page "https://tech.blog.example.com/article" "sources/temp-screenshot.png"
+```
+
+或使用 Python 脚本获取文本：
+
+```python
+from playwright.sync_api import sync_playwright
+
+with sync_playwright() as p:
+    browser = p.chromium.launch()
+    page = browser.new_page()
+    page.goto("https://tech.blog.example.com/article")
+    text = page.inner_text("article")  # 或合适的 selector
+    with open("sources/YYYY-MM-DD-描述.md", "w", encoding="utf-8") as f:
+        f.write(text)
+    browser.close()
+```
+
+**DOI 解析**：
+
+```bash
+# DOI 通常重定向到出版商页面，可能需要处理付费墙
+curl -L -o "sources/paper.html" "https://doi.org/10.xxxx/xxxxx"
+
+# 优先尝试 arXiv 等开放获取版本
+curl -L -o "sources/paper.pdf" "https://arxiv.org/pdf/xxxxx.pdf"
+```
+
+### 获取失败处理流程
+
+```
+获取尝试
+    |
+    +-- 成功 → 验证文件非空 → 写入 sources/ → 继续 ingest
+    |
+    +-- 失败（404/403/付费墙/反爬）
+          |
+          +--> 不在 sources/ 创建任何文件
+          +--> 在 wiki/ 创建或更新 [[Pending: 来源名]] stub 页面
+          +--> 在 log.md 记录失败原因
+          +--> 回复用户说明情况，请求协助
+```
+
+### 正确 vs 错误示例
+
+**错误**（绝对禁止）：
+
+```
+用户：请摄入这些论文 [提供 5 个标题，无 URL]
+
+Agent：（没有执行任何 curl/playwright 调用）
+      直接创建 sources/paper-1.md，内容为 LLM 生成的"摘要"
+      然后基于这些伪造内容创建 wiki 页面
+```
+
+**正确**（无 URL，Agent 主动搜索）：
+
+```
+用户：请摄入这些论文 [提供 5 个标题，无 URL]
+
+Agent：使用 WebSearch 搜索每个标题的开放获取版本
+      → 找到论文 1 的 arXiv 链接、论文 2 的作者主页 PDF
+      回复用户："我搜索到了以下可能来源，请确认是否正确：
+      1. 《论文标题1》→ https://arxiv.org/pdf/xxxx.pdf
+      2. 《论文标题2》→ https://author-page.edu/paper2.pdf
+      确认后我将下载并执行 ingest。"
+      （用户确认后 → 执行 curl 下载 → 继续 ingest）
+```
+
+**正确**（有 URL 的情况）：
+
+```
+用户：请摄入 https://arxiv.org/pdf/2401.xxxxx.pdf
+
+Agent：执行 curl -L -o "sources/2026-04-20-paper.pdf" "https://arxiv.org/pdf/2401.xxxxx.pdf"
+      验证文件大小 > 0
+      读取 PDF 内容
+      继续正常 ingest 流程
+```
+
+**正确**（获取失败的情况）：
+
+```
+用户：请摄入 https://example.com/paywalled-paper.pdf
+
+Agent：执行 curl -I "https://example.com/paywalled-paper.pdf"
+      → 返回 403 Forbidden
+      不创建 sources/ 文件
+      创建 wiki/Pending-Paywalled-Paper.md（stub，标记为待获取）
+      记录 log.md："[日期] pending | 付费墙阻止获取 xxx"
+      回复用户："该论文需要付费访问，我无法自动获取。
+      请手动下载后放入 sources/，或提供开放获取版本链接。"
+```
+
 ## 文件类型处理策略
 
 > **关键原则**：不同文件类型需要不同的读取策略，避免直接使用 Read 工具处理二进制文件。
@@ -421,5 +553,5 @@ def check_dep(module_name, python_path=None):
 
 ---
 
-*Agent 指南版本：1.1.0*
-*最后更新：2026-04-16*
+*Agent 指南版本：1.2.0*
+*最后更新：2026-04-20*
