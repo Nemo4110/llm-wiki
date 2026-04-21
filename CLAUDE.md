@@ -48,23 +48,35 @@ llm-wiki/
 2. **提取**关键洞察（insights）
 3. **识别**受影响的 wiki 页面（新建或更新）
 4. **更新**页面：合并新信息，保持原有结构
-5. **维护**交叉引用：`[[PageName]]` 格式。创建新页面时出现的所有内部链接，若目标页面不存在，必须同时创建对应的 **stub 页面**（至少包含一句话定义 + 规范 frontmatter）。
-6. **记录**到 `log.md`：
+5. **动态关联**（新增）：新页面创建后，主动发现与已有页面的关联并执行双向更新
+   - 运行 `wiki link --source <新页面> --mode light` 发现相关页面
+   - 对 score >= 0.5 的高置信度关联：
+     a. 读取已有页面内容，分析新旧知识关系
+     b. 选择合并策略：`link_only`（仅加链接）/`append_related`（相关页面）/`append_section`（追加章节）
+     c. 运行 `wiki link --source <新页面> --target <已有页面> --strategy <策略>` 生成变更
+     d. 审查 diff，确认后应用；高风险修改需用户确认
+   - 批量摄入时（>=2 个 sources）：先完成所有新页面创建，再运行 `wiki relink --since <最早日期> --mode deep`
+6. **维护**交叉引用：`[[PageName]]` 格式。创建新页面时出现的所有内部链接，若目标页面不存在，必须同时创建对应的 **stub 页面**（至少包含一句话定义 + 规范 frontmatter）。
+7. **记录**到 `log.md`：
 
    ```markdown
    ## [2026-04-10] ingest | 资料名
    - 新增页面：[[PageA]], [[PageB]]
    - 更新页面：[[PageC]]
+   - 关联更新：[[PageD]]（添加与 PageA 的对比）
    - 关键洞察：一句话总结
    ```
 
-7. **更新** `wiki/index.md`
+8. **更新** `wiki/index.md`
 
 **规则**：
 
 - 一个概念一个页面
 - 页面名使用 PascalCase（如 `Transformer.md`）
 - 用 `[[链接]]` 建立关联，不重复内容
+- **动态关联优先**：新页面创建后，优先使用 CLI 工具发现关联，而非凭记忆猜测
+- **双向更新安全**：反向更新已有页面时，只追加不替换；必须生成 diff 审查；修改前自动备份到 `wiki/.backups/`
+- **批量关联**：一次摄入 >=2 个 sources 时，使用 `wiki relink --since <日期> --mode deep` 做全局关联
 
 ### 2. Query（查询）
 
@@ -194,6 +206,8 @@ status: "active"  # active | draft | archived
 - 保持简洁：不要过度工程化
 - 引用来源：每个声明都可追溯到 sources/
 - 渐进完善：草稿页面好过没有页面
+- **动态关联**：新页面创建后主动运行关联工具，融合新旧知识
+- **审查 diff**：反向更新已有页面前，必须查看并确认 diff 合理
 
 ### DON'T
 
@@ -213,5 +227,5 @@ status: "active"  # active | draft | archived
 
 ## 版本
 
-Protocol: v1.2.0
-Last Updated: 2026-04-20
+Protocol: v1.3.0
+Last Updated: 2026-04-21
