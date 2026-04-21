@@ -1,7 +1,7 @@
 ---
 name: llm-wiki
 description: "Karpathy's llm-wiki pattern implementation — cumulative knowledge management for AI agents"
-version: 1.2.0
+version: 1.3.0
 author: "@yourname"
 license: MIT
 repository: "https://github.com/Nemo4110/llm-wiki.git"
@@ -86,9 +86,41 @@ functions:
       - Read source content
       - Extract key insights
       - Identify/create affected wiki pages
+      - Dynamic linking: run `wiki link --source <new_page> --mode light` to discover related pages
+      - For high-confidence relations (score >= 0.5), apply merge strategy to backward-update existing pages
       - Update cross-references
       - Create stub pages for any new [[Dead Link]] introduced in the content
       - Append to log.md
+      - For batch ingest (>=2 sources), run `wiki relink --since <date> --mode deep`
+
+  link:
+    description: "Discover and merge relationships between wiki pages"
+    trigger: "关联 wiki 页面"
+    inputs:
+      - name: source
+        type: string
+        description: "Source page title"
+      - name: target
+        type: string
+        description: "Target page title (optional, for merge execution)"
+      - name: mode
+        type: string
+        description: "light or deep"
+    workflow:
+      - Run `wiki link --source <page> --mode light` to discover relations
+      - Run `wiki link --source <page> --target <page> --strategy <strategy>` to merge
+      - Review diff before applying
+
+  relink:
+    description: "Batch global relationship discovery for recent pages"
+    trigger: "全局关联"
+    inputs:
+      - name: since
+        type: string
+        description: "Date cutoff (YYYY-MM-DD)"
+      - name: mode
+        type: string
+        description: "light or deep"
 
   query:
     description: "Query wiki knowledge base"

@@ -481,6 +481,148 @@ User Input
 （注：CLI 依赖未安装，我直接读取文件获取的信息）
 ```
 
+## 双向更新实现指南
+
+> 本章节指导 Agent 如何在 ingest 过程中执行动态关联和反向更新。
+
+### 为什么需要双向更新
+
+传统 ingest 只创建新页面，已有页面不会自动反映新知识。双向更新让知识库随时间**自我完善**：
+- 新论文改进了旧方法 → 旧页面自动补充"最新进展"
+- 新工作与旧工作形成对比 → 双方页面添加对比链接
+- 新工作依赖旧概念 → 旧概念页面获得反向引用
+
+### 关联工作流
+
+```
+Finish new page creation
+    |
+    v
++----------------------------------+
+| 1. Run: wiki link --source PAGE  |  <-- CLI discovers relations
+|         --mode light             |
++----------------------------------+
+    |
+    v
++----------------------------------+
+| 2. Agent reviews relation report |  <-- LLM judges relevance
+|    Only process score >= 0.5     |
++----------------------------------+
+    |
+    v
++----------------------------------+
+| 3. For each high-confidence rel: |
+|    a. Read existing page         |
+|    b. Analyze old vs new         |
+|    c. Choose merge strategy      |
+|    d. Run: wiki link --target    |
+|    e. Review diff, then apply    |
++----------------------------------+
+    |
+    v
+Update log.md, record operations
+```
+
+### 合并策略选择决策树
+
+```
+Relation between new page and existing page
+    |
+    +-- Same field, different work
+    |     +--> link_only (add to "Related Pages")
+    |
+    +-- New work extends/improves old method
+    |     +--> append_section (add "Latest Progress")
+    |
+    +-- New work contrasts with old work
+    |     +--> append_section (add "Comparison with xxx")
+    |     +--> append_related (bidirectional links)
+    |
+    +-- New work corrects old concept
+    |     +--> update_concept (update definition, use with care)
+    |     +--> append_section (add "Concept Evolution")
+    |
+    +-- New work heavily depends on old concept
+          +--> append_related (add backlink to old page)
+```
+
+### CLI 命令参考
+
+**发现关联（轻量模式）：**
+```bash
+python -m src.llm_wiki link --source "Bid2X" --mode light
+```
+输出：Markdown 关联报告，包含相关页面、score、关系类型、建议操作
+
+**发现关联（深度模式，含 embedding）：**
+```bash
+python -m src.llm_wiki link --source "Bid2X" --mode deep --max-related 10
+```
+
+**执行具体合并（带 diff 审查）：**
+```bash
+# 预览
+python -m src.llm_wiki link --source "Bid2X" --target "RTBAgent" \
+    --strategy append_related --dry-run
+
+# 应用
+python -m src.llm_wiki link --source "Bid2X" --target "RTBAgent" \
+    --strategy append_related
+```
+
+**批量全局关联：**
+```bash
+# 对最近 7 天新增页面做全局深度关联
+python -m src.llm_wiki relink --mode deep --dry-run
+
+# 指定日期范围
+python -m src.llm_wiki relink --since 2026-04-20 --mode deep
+```
+
+### Agent 实现模式（协议模式）
+
+**场景：用户要求摄入 sources/new-paper.pdf**
+
+```
+Agent:
+1. 读取 sources/new-paper.pdf
+2. 提取洞察，创建 wiki/NewMethod.md
+3. 检查死链，创建 stub 页面
+4. 运行 CLI（如有虚拟环境）：
+   .venv/Scripts/python -m src.llm_wiki link --source "NewMethod" --mode light
+   → 获得关联报告
+5. 对 score >= 0.5 的关联，如 [[OldMethod]]：
+   a. 读取 wiki/OldMethod.md
+   b. LLM 分析："NewMethod 是对 OldMethod 的改进，扩展了 xxx 能力"
+   c. 决策：使用 append_section 策略，追加"与 NewMethod 的关系"
+   d. 运行 CLI 生成 diff：
+      .venv/Scripts/python -m src.llm_wiki link \
+        --source "NewMethod" --target "OldMethod" \
+        --strategy append_section --dry-run
+   e. 审查 diff，确认合理
+   f. 应用修改（去掉 --dry-run）
+6. 更新 log.md，记录新增页面和关联更新
+7. 更新 wiki/index.md
+```
+
+### 安全守则
+
+1. **永远先 --dry-run**：生成 diff 审查后再应用
+2. **只追加不替换**：`append_related` 和 `append_section` 是安全策略
+3. **谨慎使用 update_concept**：只有在确认新信息确实修正了旧定义时才使用
+4. **限制批量更新**：单次 source 触发的反向更新不超过 5 个页面
+5. **备份自动**：CLI 工具会自动备份到 `wiki/.backups/`，可回滚
+
+### 故障处理
+
+| 问题 | 解决 |
+|------|------|
+| `wiki link` 报错找不到页面 | 确认页面已创建，检查标题拼写 |
+| diff 不合理 | 不应用，改为手动编辑页面 |
+| 误关联到不相关页面 | 忽略（score 通常 < 0.3），不执行合并 |
+| 策略不在允许列表 | 检查 config.yaml 的 `linking.deep_mode.strategies_allowed` |
+| 备份目录过大 | 手动清理 `wiki/.backups/` 中的旧备份 |
+
 ## 技术细节
 
 ### CLI 入口点
