@@ -47,10 +47,10 @@ dependencies:
       reason: "PDF processing (recommended)"
     - name: numpy
       version: ">=1.24.0"
-      reason: "Embedding retrieval"
+      reason: "Vector operations for embedding retrieval"
     - name: httpx
       version: ">=0.27.0"
-      reason: "Ollama/local HTTP client for embedding"
+      reason: "HTTP client for Ollama/local embedding services"
     - name: openai
       version: ">=1.0.0"
       reason: "OpenAI embedding API"
@@ -77,7 +77,7 @@ installation:
 functions:
   ingest:
     description: "Ingest source material into wiki"
-    trigger: "请摄入资料"
+    trigger: "Please ingest material"
     inputs:
       - name: source_path
         type: string
@@ -95,7 +95,7 @@ functions:
 
   link:
     description: "Discover and merge relationships between wiki pages"
-    trigger: "关联 wiki 页面"
+    trigger: "Link wiki pages"
     inputs:
       - name: source
         type: string
@@ -113,7 +113,7 @@ functions:
 
   relink:
     description: "Batch global relationship discovery for recent pages"
-    trigger: "全局关联"
+    trigger: "Global linking"
     inputs:
       - name: since
         type: string
@@ -124,7 +124,7 @@ functions:
 
   query:
     description: "Query wiki knowledge base"
-    trigger: "查询 wiki"
+    trigger: "Query wiki"
     inputs:
       - name: question
         type: string
@@ -137,7 +137,7 @@ functions:
 
   lint:
     description: "Health check for wiki"
-    trigger: "检查 wiki 健康"
+    trigger: "Check wiki health"
     checks:
       - orphan pages
       - dead links
@@ -174,9 +174,9 @@ related:
 Use natural language with your agent:
 
 ```
-"请摄入 sources/paper.pdf 到 wiki"
-"查询 wiki: Transformer 和 RNN 有什么区别？"
-"检查 wiki 健康状况"
+"Please ingest sources/paper.pdf into wiki"
+"Query wiki: What is the difference between Transformer and RNN?"
+"Check wiki health"
 ```
 
 ## CLI Mode (Optional)
@@ -204,7 +204,7 @@ Karpathy's llm-wiki pattern implementation — cumulative knowledge management f
 
 ## Why SKILL Form?
 
-| Dimension | Standalone App (e.g., Sage-Wiki) | This SKILL Implementation |
+| Dimension | Standalone App (e.g. Sage-Wiki) | This SKILL Implementation |
 |-----------|----------------------------------|---------------------------|
 | **Architecture** | Go + SQLite + Embedded Frontend | Pure Markdown |
 | **Deployment** | Requires running service | Zero deployment |
@@ -215,12 +215,12 @@ Karpathy's llm-wiki pattern implementation — cumulative knowledge management f
 
 ## Features
 
-- 📚 **Protocol-driven**: Works with natural language (no installation required)
-- 📝 **Pure Markdown**: No database, no lock-in, git-native
-- 🔗 **Wiki-style links**: `[[PageName]]` format, Obsidian-compatible
-- 🧠 **Cumulative learning**: Every query can create new knowledge
-- 🔍 **Health checks**: Orphan pages, dead links, stale content detection
-- 🖥️ **Optional CLI**: Python scripts for automation and batch operations
+- **Protocol-driven**: Works with natural language (no installation required)
+- **Pure Markdown**: No database, no lock-in, git-native
+- **Wiki-style links**: `[[PageName]]` format, Obsidian-compatible
+- **Cumulative learning**: Every query can create new knowledge
+- **Health checks**: Orphan pages, dead links, stale content detection
+- **Optional CLI**: Python scripts for automation and batch operations
 
 ## Quick Start
 
@@ -233,7 +233,7 @@ cd llm-wiki
 cp ~/Downloads/paper.pdf sources/
 
 # 3. Tell your agent
-"请摄入 sources/paper.pdf 到 wiki"
+"Please ingest sources/paper.pdf into wiki"
 ```
 
 ## Installation
@@ -301,7 +301,7 @@ python -c "from src.llm_wiki.core import WikiManager; print('✓ Installation su
 
 **Fallback PDF dependency**:
 - `pdfplumber >=0.11.8` — Table extraction fallback (security version required for CVE-2025-64512)
-- `pdfminer.six >=20251107` — PDF底层库 fallback
+- `pdfminer.six >=20251107` — PDF underlying library fallback
 
 ## Project Structure
 
@@ -309,7 +309,7 @@ python -c "from src.llm_wiki.core import WikiManager; print('✓ Installation su
 llm-wiki/
 ├── CLAUDE.md           # ⭐ Core protocol: Agent behavior guidelines
 ├── AGENTS.md           # Agent implementation guide (CLI usage)
-├── SKILL.md            # This file
+├── SKILL.md            # This file, machine-readable specification
 ├── log.md              # Timeline log (append-only)
 ├── sources/            # Raw materials (user-managed + tool-fetched; Agent forbidden from writing LLM-generated content)
 │   └── README.md

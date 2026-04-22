@@ -1,113 +1,114 @@
-# LLM-Wiki 工作协议
+# LLM-Wiki Work Protocol
 
-> 这是 llm-wiki 的核心协议文件。作为 Agent，你必须遵循此协议维护知识库。
+> This is the core protocol file for llm-wiki. As an Agent, you MUST follow this protocol to maintain the knowledge base.
+> **Before performing any task, you MUST read and understand `SKILL.md` to learn the machine-readable specification, available functions, entry points, and dependencies.**
 
-## 设计哲学
+## Design Philosophy
 
-- **LLM 即程序员，Wiki 即代码库**
-- **用户负责**：放入资料、提出好问题、判断意义
-- **你负责**：摘要、交叉引用、索引、日志、所有繁琐工作
-- **积累优于检索**：每次交互都应留下持久价值
+- **LLM as programmer, Wiki as codebase**
+- **User is responsible for**: Placing materials, asking good questions, judging significance
+- **You are responsible for**: Summarizing, cross-referencing, indexing, logging, all the tedious work
+- **Accumulation over retrieval**: Every interaction should leave lasting value
 
-## 目录结构
+## Directory Structure
 
 ```text
 llm-wiki/
-├── sources/          # 原始资料（用户管理 + 网络工具获取；Agent 禁止写入任何 LLM 生成内容）
-│   └── README.md     # 资料管理指南
-├── wiki/             # 生成的知识页面（你管理）
-│   ├── index.md      # 入口索引
-│   └── *.md          # 主题页面
-├── assets/           # 模板和配置
+├── sources/          # Raw materials (user-managed + tool-fetched; Agent is FORBIDDEN from writing any LLM-generated content)
+│   └── README.md     # Material management guide
+├── wiki/             # Generated knowledge pages (Agent-managed)
+│   ├── index.md      # Entry index
+│   └── *.md          # Topic pages
+├── assets/           # Templates and configuration
 │   ├── page_template.md
 │   └── ingest_rules.md
-├── scripts/          # 辅助脚本（可选）
-├── src/              # CLI 实现（可选）
-├── log.md            # 时间线日志（追加式）
-├── CLAUDE.md         # 本文件
-├── AGENTS.md         # Agent 实现指南
-└── SKILL.md          # 技能规范
+├── scripts/          # Auxiliary scripts (optional)
+├── src/              # CLI implementation (optional)
+├── log.md            # Timeline log (append-only)
+├── CLAUDE.md         # This file (user-facing protocol)
+├── AGENTS.md         # Agent implementation guide
+└── SKILL.md          # Machine-readable skill specification (ALL Agents MUST read)
 ```
 
-## 核心工作流
+## Core Workflows
 
-### 1. Ingest（摄取）
+### 1. Ingest
 
-**触发**（满足以下任一条件）：
+**Trigger** (satisfies either condition):
 
-1. **文件已存在于 `sources/`**：用户已将资料放入 `sources/`，明确要求 `/wiki-ingest <path>`
-2. **用户提供了可获取的 URL/DOI**：用户给出网络地址，Agent 必须先使用网络工具获取到 `sources/`，再执行 ingest
+1. **File already exists in `sources/`**: User has placed material in `sources/` and explicitly requests `/wiki-ingest <path>`
+2. **User provided a fetchable URL/DOI**: User gives a network address; Agent MUST first use network tools to fetch into `sources/`, then execute ingest
 
-**前置检查**：
-- 如果用户只提供了标题、作者或描述，但没有提供 URL/DOI，也没有文件在 `sources/` 中 → Agent 应**主动使用网络搜索工具**（WebSearch、WebFetch 等）查找开放获取版本，将搜索结果反馈给用户确认，确认后再下载获取；搜索无果则标记为 `[[Pending: 来源名]]` 并告知用户
-- 如果用户提供了 URL 但获取失败（404、付费墙、反爬）→ **不得伪造内容填充 `sources/`**，应标记为 `[[Pending: 来源名]]` 并在 `log.md` 记录失败原因
+**Pre-check**:
+- If user only provided title, author, or description but no URL/DOI, and no file is in `sources/` → Agent should **proactively use web search tools** (WebSearch, WebFetch, etc.) to find open-access versions, present search results to user for confirmation, then download after confirmation; if search yields nothing, mark as `[[Pending: SourceName]]` and inform user
+- If user provided a URL but fetching failed (404, paywall, anti-bot) → **do NOT fabricate content to fill `sources/`**, mark as `[[Pending: SourceName]]` and record failure reason in `log.md`
 
-**步骤**：
+**Steps**:
 
-1. **读取**资料内容
-2. **提取**关键洞察（insights）
-3. **识别**受影响的 wiki 页面（新建或更新）
-4. **更新**页面：合并新信息，保持原有结构
-5. **动态关联**（新增）：新页面创建后，主动发现与已有页面的关联并执行双向更新
-   - 运行 `wiki link --source <新页面> --mode light` 发现相关页面
-   - 对 score >= 0.5 的高置信度关联：
-     a. 读取已有页面内容，分析新旧知识关系
-     b. 选择合并策略：`link_only`（仅加链接）/`append_related`（相关页面）/`append_section`（追加章节）
-     c. 运行 `wiki link --source <新页面> --target <已有页面> --strategy <策略>` 生成变更
-     d. 审查 diff，确认后应用；高风险修改需用户确认
-   - 批量摄入时（>=2 个 sources）：先完成所有新页面创建，再运行 `wiki relink --since <最早日期> --mode deep`
-6. **维护**交叉引用：`[[PageName]]` 格式。创建新页面时出现的所有内部链接，若目标页面不存在，必须同时创建对应的 **stub 页面**（至少包含一句话定义 + 规范 frontmatter）。
-7. **记录**到 `log.md`：
+1. **Read** material content
+2. **Extract** key insights
+3. **Identify** affected wiki pages (create new or update existing)
+4. **Update** pages: Merge new information while preserving existing structure
+5. **Dynamic linking** (NEW): After creating new pages, proactively discover relations with existing pages and perform bidirectional updates
+   - Run `wiki link --source <new_page> --mode light` to discover related pages
+   - For high-confidence relations (score >= 0.5):
+     a. Read existing page content, analyze the relationship between old and new knowledge
+     b. Choose merge strategy: `link_only` (add link only) / `append_related` (related pages) / `append_section` (append section)
+     c. Run `wiki link --source <new_page> --target <existing_page> --strategy <strategy>` to generate changes
+     d. Review diff, confirm before applying; high-risk modifications require user confirmation
+   - For batch ingest (>=2 sources): Complete all new page creations first, then run `wiki relink --since <earliest_date> --mode deep`
+6. **Maintain** cross-references: `[[PageName]]` format. All internal links appearing in new pages must have corresponding **stub pages** created synchronously (at least one-sentence definition + standard frontmatter) if the target page does not exist.
+7. **Record** in `log.md`:
 
    ```markdown
-   ## [2026-04-10] ingest | 资料名
-   - 新增页面：[[PageA]], [[PageB]]
-   - 更新页面：[[PageC]]
-   - 关联更新：[[PageD]]（添加与 PageA 的对比）
-   - 关键洞察：一句话总结
+   ## [2026-04-10] ingest | Material name
+   - New pages: [[PageA]], [[PageB]]
+   - Updated pages: [[PageC]]
+   - Relation updates: [[PageD]] (added comparison with PageA)
+   - Key insight: One-sentence summary
    ```
 
-8. **更新** `wiki/index.md`
+8. **Update** `wiki/index.md`
 
-**规则**：
+**Rules**:
 
-- 一个概念一个页面
-- 页面名使用 PascalCase（如 `Transformer.md`）
-- 用 `[[链接]]` 建立关联，不重复内容
-- **动态关联优先**：新页面创建后，优先使用 CLI 工具发现关联，而非凭记忆猜测
-- **双向更新安全**：反向更新已有页面时，只追加不替换；必须生成 diff 审查；修改前自动备份到 `wiki/.backups/`
-- **批量关联**：一次摄入 >=2 个 sources 时，使用 `wiki relink --since <日期> --mode deep` 做全局关联
+- One concept per page
+- Page names use PascalCase (e.g. `Transformer.md`)
+- Use `[[links]]` to establish associations; do not duplicate content
+- **Dynamic linking first**: After creating new pages, prefer using CLI tools to discover relations rather than guessing from memory
+- **Bidirectional update safety**: When backward-updating existing pages, append only, never replace; must generate diff for review; automatic backup to `wiki/.backups/` before modification
+- **Batch linking**: When ingesting >=2 sources in one batch, use `wiki relink --since <date> --mode deep` for global linking
 
-### 2. Query（查询）
+### 2. Query
 
-**触发**：用户问 `/wiki-query <问题>` 或直接提问涉及知识库
+**Trigger**: User asks `/wiki-query <question>` or directly asks a question involving the knowledge base
 
-**步骤**：
+**Steps**:
 
-1. **读取** `wiki/index.md` 定位相关页面
-2. **读取**相关 wiki 页面内容
-3. **综合**回答，使用引用格式：`[[页面名]]`
-4. **判断**：这个回答是否值得存档？
-   - 如果是新洞察 → 创建新页面或追加到现有页面
-   - 如果是常见问题 → 更新 `wiki/index.md` 的 FAQ 部分
+1. **Read** `wiki/index.md` to locate relevant pages
+2. **Read** relevant wiki page content
+3. **Synthesize** answer with citations: `[[PageName]]`
+4. **Judge**: Is this answer worth archiving?
+   - If it is a new insight → Create new page or append to existing page
+   - If it is a frequently asked question → Update the FAQ section of `wiki/index.md`
 
-### 3. Lint（健康检查）
+### 3. Lint (Health Check)
 
-**触发**：`/wiki-lint` 或定期执行
+**Trigger**: `/wiki-lint` or periodic execution
 
-**检查项**：
+**Checklist**:
 
-- [ ] **孤儿页面**：没有被任何页面引用的页面
-- [ ] **死链**：`[[不存在的页面]]`
-- [ ] **陈旧页面**：超过 90 天未更新
-- [ ] **矛盾声明**：同一概念在不同页面定义冲突
-- [ ] **待办项**：`TODO` 标记未处理
+- [ ] **Orphan pages**: Pages not referenced by any other page
+- [ ] **Dead links**: `[[Non-existent page]]`
+- [ ] **Stale pages**: Not updated in 90 days
+- [ ] **Contradictory statements**: Same concept defined differently across pages
+- [ ] **TODO items**: `TODO` markers not processed
 
-**输出**：Markdown 报告，包含修复建议
+**Output**: Markdown report with fix suggestions
 
-## 页面格式规范
+## Page Format Specification
 
-### Frontmatter（必须）
+### Frontmatter (Required)
 
 ```yaml
 ---
@@ -115,117 +116,122 @@ created: 2026-04-10
 updated: 2026-04-10
 sources:
   - "sources/paper.pdf"
-  - "sources/笔记.md"
+  - "sources/notes.md"
 tags:
   - "AI/ML"
-  - "架构"
+  - "Architecture"
 status: "active"  # active | draft | archived
 ---
 ```
 
-### 页面结构
+### Page Structure
 
 ```markdown
-# 页面标题
+# Page Title
 
-一句话定义。——[[相关概念]]
+One-sentence definition. ——[[RelatedConcept]]
 
-## 核心要点
+## Key Insights
 
-- 要点 1
-- 要点 2——见[[另一页面]]
+- Insight 1
+- Insight 2 ——see [[AnotherPage]]
 
-## 详细说明
+## Detailed Explanation
 
 ...
 
-## 相关页面
+## Related Pages
 
-- [[PageA]] — 关系描述
-- [[PageB]] — 关系描述
+- [[PageA]] — Relationship description
+- [[PageB]] — Relationship description
 
-## 来源
+## Sources
 
-- [资料名](../sources/xxx)
+- [Material name](../sources/xxx)
 
-## 变更日志
+## Changelog
 
-- 2026-04-10: 初始创建
+- 2026-04-10: Initial creation
 ```
 
-## 交叉引用规则
+## Cross-Reference Rules
 
-1. **首次提及**概念时创建链接：`[[Concept]]`
-2. **避免过度链接**：同一页面中多次提及，只链接第一次
-3. **双向链接**：创建新页面时，检查哪些现有页面应该链接过来
-4. **链接文本**：保持自然，可使用 `[[Target|显示文本]]`
-5. **链接落地**：每个 `[[PageName]]` 都必须指向一个真实存在的页面。如果目标页面尚未创建，必须在本次 ingest 结束时同步创建 stub（至少包含 `# 标题`、一句话定义和 frontmatter）
+1. **First mention** of a concept creates a link: `[[Concept]]`
+2. **Avoid over-linking**: Only link the first mention within the same page
+3. **Bidirectional links**: When creating a new page, check which existing pages should link back
+4. **Link text**: Keep it natural; can use `[[Target|display text]]`
+5. **Link resolution**: Every `[[PageName]]` MUST point to a real page. If the target page has not been created yet, a stub must be created by the end of this ingest (at least `# Title`, one-sentence definition, and frontmatter)
 
-## 索引格式（index.md）
+## Index Format (index.md)
 
 ```markdown
 # Wiki Index
 
-## 最近活动
-<!-- 从 log.md 提取最近 5 条 -->
+## Recent Activity
+<!-- Extract last 5 entries from log.md -->
 
-## 快速入口
+## Quick Access
 
-### 按主题
+### By Topic
 - **AI/ML**: [[Transformer]], [[LoRA]], [[RLHF]]
-- **系统**: [[架构]], [[性能]]
+- **System**: [[Architecture]], [[Performance]]
 
-### 按状态
-- 🟢 活跃: ...
-- 🟡 草稿: ...
-- 🔴 待整理: ...
+### By Status
+- 🟢 Active: ...
+- 🟡 Draft: ...
+- 🔴 Pending: ...
 
-## 待办
-- [ ] [[Draft: 新概念]] — 需要完善
+## TODO
+- [ ] [[Draft: NewConcept]] — Needs refinement
 ```
 
-## 日志格式（log.md）
+## Log Format (log.md)
 
 ```markdown
 # Wiki Log
 
-## [2026-04-10] ingest | 论文：Attention Is All You Need
-- 新增：[[Transformer]], [[Self-Attention]], [[Multi-Head Attention]]
-- 更新：[[NLP 架构演进]]
-- 关键洞察：Transformer 统一了编码器-解码器架构
+## [2026-04-10] ingest | Paper: Attention Is All You Need
+- New: [[Transformer]], [[Self-Attention]], [[Multi-Head Attention]]
+- Updated: [[NLP Architecture Evolution]]
+- Key insight: Transformer unified encoder-decoder architecture
 
-## [2026-04-09] query | "Transformer 和 RNN 的区别"
-- 回答已存档到 [[Transformer vs RNN]]
+## [2026-04-09] query | "Difference between Transformer and RNN"
+- Answer archived to [[Transformer vs RNN]]
 ```
 
-## 你的行为准则
+## Your Behavioral Guidelines
 
 ### DO
 
-- 主动维护：用户没要求时也指出问题
-- 保持简洁：不要过度工程化
-- 引用来源：每个声明都可追溯到 sources/
-- 渐进完善：草稿页面好过没有页面
-- **动态关联**：新页面创建后主动运行关联工具，融合新旧知识
-- **审查 diff**：反向更新已有页面前，必须查看并确认 diff 合理
+- Be proactive: Point out issues even when user didn't ask
+- Keep it simple: Do not over-engineer
+- Cite sources: Every claim can be traced back to sources/
+- Incremental improvement: A draft page is better than no page
+- **Dynamic linking**: After creating new pages, proactively run linking tools to merge old and new knowledge
+- **Review diffs**: Before backward-updating existing pages, must view and confirm the diff is reasonable
+- **Read SKILL.md**: Before any operation, read `SKILL.md` to understand available functions and entry points
 
 ### DON'T
 
-- 不要删除用户放入 sources/ 的原始资料
-- 不要在没有确认的情况下大规模重构
-- 不要创建没有链接的孤立页面
-- 不要留下死链（`[[不存在的页面]]`）
-- 不要在正文中重复 frontmatter 信息
-- **绝对禁止将 LLM 生成内容写入 `sources/`**：`sources/` 只存放用户提供的原始文件或 Agent 通过真实网络请求获取的文件。禁止将幻觉、编造、推测的内容伪装成原始资料写入该目录。如果你无法获取某个来源，如实告知用户，而不是创造一个假的来源文件
+- Do not delete raw materials placed by user in sources/
+- Do not perform large-scale refactoring without confirmation
+- Do not create isolated pages without links
+- Do not leave dead links (`[[Non-existent page]]`)
+- Do not repeat frontmatter information in the body
+- **Synchronize all README files**: When updating `README.md`, apply the same changes to all language variants (e.g. `docs/README.cn.md`). Never let the translated versions fall out of sync with the primary file
+- **ABSOLUTELY FORBIDDEN to write LLM-generated content into `sources/`**: `sources/` only stores user-provided original files or files fetched by Agent through real network requests. Do NOT write hallucinations, fabrications, or speculations disguised as raw materials into this directory. If you cannot obtain a source, be honest with the user instead of creating a fake source file
 
-## 相关文件
+## Related Files
 
-- `AGENTS.md` — 给 Claude Code / OpenClaw 等 Agent 的实现指南
-  - CLI 工具使用说明
-  - 协议模式 vs CLI 模式决策树
-  - 故障处理参考
+- `AGENTS.md` — Implementation guide for Claude Code / OpenClaw and other Agents
+  - CLI tool usage instructions
+  - Protocol mode vs CLI mode decision tree
+  - Troubleshooting reference
+- `SKILL.md` — **Machine-readable specification. ALL Agents MUST read this file before operating.**
+  - Entry points, functions, dependencies
+  - Standard-format skill description
 
-## 版本
+## Version
 
 Protocol: v1.3.0
 Last Updated: 2026-04-21
