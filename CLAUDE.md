@@ -43,6 +43,21 @@ llm-wiki/
 - If user only provided title, author, or description but no URL/DOI, and no file is in `sources/` → Agent should **proactively use web search tools** (WebSearch, WebFetch, etc.) to find open-access versions, present search results to user for confirmation, then download after confirmation; if search yields nothing, mark as `[[Pending: SourceName]]` and inform user
 - If user provided a URL but fetching failed (404, paywall, anti-bot) → **do NOT fabricate content to fill `sources/`**, mark as `[[Pending: SourceName]]` and record failure reason in `log.md`
 
+**Post-Fetch Verification Gate** (MANDATORY for all network-fetched files):
+
+Before proceeding to content extraction, Agent MUST verify the downloaded file actually matches what the user requested.
+
+1. **Read** the downloaded file (first 1-2 pages for PDFs; full content for text/Markdown)
+2. **Extract verifiable identifiers**:
+   - Academic papers: title, first author, DOI, arXiv ID
+   - Blogs/articles: `<title>` or `# Heading`
+   - All files: check for error-page keywords (`404`, `Access Denied`, `Please enable JavaScript`, `Subscribe to access`)
+3. **Compare** extracted identifiers against user-provided description (title, author, URL context)
+4. **Judge**:
+   - **PASS** (confident match) → Continue to Step 1 below
+   - **FAIL** (clear mismatch or error page) → STOP; do NOT ingest; record failure in `log.md`; report to user
+   - **UNCERTAIN** (cannot extract identifiers or ambiguous) → Report extracted metadata to user; ask for confirmation before proceeding
+
 **Steps**:
 
 1. **Read** material content
@@ -78,6 +93,7 @@ llm-wiki/
 - **Dynamic linking first**: After creating new pages, prefer using CLI tools to discover relations rather than guessing from memory
 - **Bidirectional update safety**: When backward-updating existing pages, append only, never replace; must generate diff for review; automatic backup to `wiki/.backups/` before modification
 - **Batch linking**: When ingesting >=2 sources in one batch, use `wiki relink --since <date> --mode deep` for global linking
+- **NEVER ingest unverified sources**: If Post-Fetch Verification Gate returns FAIL, do NOT proceed with content extraction, do NOT create wiki pages from that file, and do NOT log it as ingested. Report the mismatch to the user and await instruction
 
 ### 2. Query
 

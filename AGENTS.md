@@ -82,12 +82,132 @@ curl -L -o "sources/paper.html" "https://doi.org/10.xxxx/xxxxx"
 curl -L -o "sources/paper.pdf" "https://arxiv.org/pdf/xxxxx.pdf"
 ```
 
+### Post-Fetch Verification Protocol
+
+> Downloading is not enough. You MUST verify the file content matches what the user requested before ingesting.
+
+After every successful network fetch, before writing to `sources/` or proceeding with ingest, perform the following verification:
+
+#### Verification Checklist
+
+| # | Check | How | If Failed |
+|---|-------|-----|-----------|
+| 1 | File is readable | Attempt to read/parse the file | STOP — file may be corrupted |
+| 2 | Not an error page | Scan for `404`, `Access Denied`, `Please enable JavaScript`, `Subscribe`, `Login` | STOP — treat as fetch failure |
+| 3 | Format matches extension | PDF starts with `%PDF`; HTML has `<html`; MD is plain text | WARN — rename extension if needed |
+| 4 | Title matches expectation | Extract title/heading and compare to user's description | STOP if clearly wrong; ask user if uncertain |
+| 5 | Identifiers match (if provided) | Extract DOI, arXiv ID, author names; compare to user input | STOP if mismatch |
+
+#### Extracting Verifiable Identifiers by File Type
+
+**PDF (academic papers)**:
+
+Use Python to extract text from the first 1-2 pages, then look for:
+
+```python
+import fitz  # PyMuPDF
+
+doc = fitz.open("sources/downloaded-paper.pdf")
+text = ""
+for page in doc[:2]:  # first 2 pages
+    text += page.get_text()
+doc.close()
+
+# Extract identifiers
+import re
+doi = re.search(r'10\.\d{4,}/[^\s]+', text)
+arxiv = re.search(r'arXiv:\d{4}\.\d{4,}', text, re.I)
+# Title is usually the largest text block on page 1
+```
+
+**Markdown / HTML / Text**:
+
+Use Read tool directly. Extract:
+- First `# Heading` or `<title>` tag
+- First paragraph as summary check
+
+**All file types**:
+
+Check for error-page signatures:
+- `404 Not Found`, `403 Forbidden`
+- `Access Denied`, `Subscription Required`
+- `Please enable JavaScript`, `Cloudflare`
+- Empty or near-empty content (\< 100 bytes for text files)
+
+#### Mismatch Handling Flow
+
+```
+Verification result
+    |
+    +-- PASS (confident match)
+    |     → Write to sources/ → Continue normal ingest
+    |
+    +-- FAIL (clear mismatch or error page)
+    |     → Do NOT write to sources/ (or delete if already written)
+    |     → Do NOT create wiki pages
+    |     → Do NOT log as "ingested"
+    |     → Record in log.md: "[Date] verify-failed | Filename — reason"
+    |     → Reply to user with extracted vs expected metadata
+    |     → Await user instruction
+    |
+    +-- UNCERTAIN (cannot extract or ambiguous)
+          → Report extracted metadata to user
+          → Ask: "Extracted title: 'X'. Is this the correct file?"
+          → Only proceed after explicit user confirmation
+```
+
+#### Example: Verification Pass
+
+```
+User: Please ingest https://arxiv.org/pdf/2106.09685.pdf (the LoRA paper)
+
+Agent: curl -L -o sources/2106.09685.pdf https://arxiv.org/pdf/2106.09685.pdf
+       python (extract text from first 2 pages)
+       → Title: "LoRA: Low-Rank Adaptation of Large Language Models"
+       → Authors: "Edward J. Hu, Yelong Shen, Phillip Wallis"
+       → arXiv ID: arXiv:2106.09685
+       → Compare to user description: "LoRA paper" — MATCH
+       → Verification: PASS
+       → Continue with ingest
+```
+
+#### Example: Verification Fail
+
+```
+User: Please ingest https://arxiv.org/pdf/2106.09685.pdf (the LoRA paper)
+
+Agent: curl -L -o sources/2106.09685.pdf https://arxiv.org/pdf/2106.09685.pdf
+       python (extract text)
+       → Title: "Attention Is All You Need"  ← Wrong paper!
+       → arXiv ID: arXiv:1706.03762         ← Mismatch
+       → Verification: FAIL
+       → Do NOT ingest
+       → Report to user: "Downloaded file is 'Attention Is All You Need' (arXiv:1706.03762),
+          but you requested the LoRA paper (2106.09685). Please check the URL."
+```
+
+#### Example: Error Page Detected
+
+```
+User: Please ingest https://example.com/paywalled-paper.pdf
+
+Agent: curl -L -o sources/paper.pdf https://example.com/paywalled-paper.pdf
+       python (read file)
+       → Content contains: "Subscribe to access this article"
+       → Verification: FAIL (error page)
+       → Do NOT ingest
+       → Record in log.md: verify-failed — paywall
+       → Report to user with alternatives
+```
+
 ### Fetch Failure Handling Flow
 
 ```
 Fetch attempt
     |
-    +-- Success → Verify file non-empty → Write to sources/ → Continue ingest
+    +-- Success → Run Post-Fetch Verification → PASS → Write to sources/ → Continue ingest
+    |                        |
+    |                        +-- FAIL → Do NOT write to sources/ → Report to user
     |
     +-- Failure (404/403/paywall/anti-bot)
           |
