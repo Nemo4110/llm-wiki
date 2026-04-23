@@ -13,7 +13,7 @@ Claude Code SKILL implementation of [Karpathy's llm-wiki](https://gist.github.co
 | **Architecture** | Go + SQLite + Embedded Frontend | Pure Markdown |
 | **Deployment** | Requires running service | Zero deployment |
 | **Integration** | Indirect via MCP | Native commands |
-| **Code Size** | ~10k lines | ~500 lines |
+| **Code Size** | ~10k lines | ~2.5k lines |
 | **Data Format** | Proprietary | Plain text Markdown |
 | **Editor** | Locked in app | Obsidian/VSCode/Any |
 
@@ -154,13 +154,6 @@ python -m src.llm_wiki --help
 ```
 
 **Note**: The `ingest` and `query` commands in CLI only provide auxiliary functions (such as listing pages, semantic retrieval). Actual content processing requires interacting with the Agent via natural language.
-
-Check and report:
-
-- Orphan pages (pages not referenced by any other page)
-- Dead links (links pointing to non-existent pages)
-- Stale pages (not updated in 90 days)
-- Draft pages
 
 ## Directory Structure
 
@@ -396,7 +389,7 @@ Detailed roadmap at [ROADMAP.md](ROADMAP.md).
 - [ ] MCP server wrapper (so other Agents can use it)
 - [ ] Obsidian plugin (one-click sync)
 - [x] Incremental embedding for faster retrieval
-- [ ] Multi-language support
+- [x] Multi-language support (English + Chinese)
 
 ## License
 
