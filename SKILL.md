@@ -1,7 +1,7 @@
 ---
 name: llm-wiki
 description: "Karpathy's llm-wiki pattern implementation — cumulative knowledge management for AI agents"
-version: 1.3.0
+version: 1.4.0
 author: "@yourname"
 license: MIT
 repository: "https://github.com/Nemo4110/llm-wiki.git"
