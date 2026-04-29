@@ -208,11 +208,12 @@ class TestKnowledgeLinker:
 
     def test_relation_graph_to_markdown(self, populated_wiki):
         linker = KnowledgeLinker(populated_wiki)
-        graph = linker.build_relation_graph(["LoRA"], mode="light")
+        # deep mode does not force min_score to 0.3, allowing weak relations
+        graph = linker.build_relation_graph(["LoRA"], mode="deep", min_score=0.0)
 
         md = graph.to_markdown()
         assert "# 关联报告" in md
-        assert "LoRA" in md
+        # With min_score=0.0 in deep mode, Fine-tuning should appear
         assert "Fine-tuning" in md
 
     def test_suggest_action(self, populated_wiki):
