@@ -65,13 +65,13 @@ Before proceeding to content extraction, Agent MUST verify the downloaded file a
 3. **Identify** affected wiki pages (create new or update existing)
 4. **Update** pages: Merge new information while preserving existing structure
 5. **Dynamic linking** (NEW): After creating new pages, proactively discover relations with existing pages and perform bidirectional updates
-   - Run `wiki link --source <new_page> --mode light` to discover related pages
+   - Run `python scripts/agent-bridge.py link --source <new_page> --mode light` to discover related pages
    - For high-confidence relations (score >= 0.5):
      a. Read existing page content, analyze the relationship between old and new knowledge
      b. Choose merge strategy: `link_only` (add link only) / `append_related` (related pages) / `append_section` (append section)
-     c. Run `wiki link --source <new_page> --target <existing_page> --strategy <strategy>` to generate changes
+     c. Run `python scripts/agent-bridge.py link --source <new_page> --target <existing_page> --strategy <strategy>` to generate changes
      d. Review diff, confirm before applying; high-risk modifications require user confirmation
-   - For batch ingest (>=2 sources): Complete all new page creations first, then run `wiki relink --since <earliest_date> --mode deep`
+   - For batch ingest (>=2 sources): Complete all new page creations first, then run `python scripts/agent-bridge.py relink --since <earliest_date> --mode deep`
 6. **Maintain** cross-references: `[[PageName]]` format. All internal links appearing in new pages must have corresponding **stub pages** created synchronously (at least one-sentence definition + standard frontmatter) if the target page does not exist.
 7. **Record** in `log.md`:
 
@@ -92,7 +92,7 @@ Before proceeding to content extraction, Agent MUST verify the downloaded file a
 - Use `[[links]]` to establish associations; do not duplicate content
 - **Dynamic linking first**: After creating new pages, prefer using CLI tools to discover relations rather than guessing from memory
 - **Bidirectional update safety**: When backward-updating existing pages, append only, never replace; must generate diff for review; automatic backup to `wiki/.backups/` before modification
-- **Batch linking**: When ingesting >=2 sources in one batch, use `wiki relink --since <date> --mode deep` for global linking
+- **Batch linking**: When ingesting >=2 sources in one batch, use `python scripts/agent-bridge.py relink --since <date> --mode deep` for global linking
 - **NEVER ingest unverified sources**: If Post-Fetch Verification Gate returns FAIL, do NOT proceed with content extraction, do NOT create wiki pages from that file, and do NOT log it as ingested. Report the mismatch to the user and await instruction
 
 ### 2. Query
@@ -235,17 +235,24 @@ One-sentence definition. ——[[RelatedConcept]]
 - Do not leave dead links (`[[Non-existent page]]`)
 - Do not repeat frontmatter information in the body
 - **Synchronize all README files**: When updating `README.md`, apply the same changes to all language variants (e.g. `docs/README.cn.md`). Never let the translated versions fall out of sync with the primary file
+- **Use project-managed Python environment only**: If `.venv/` exists in the project root, use `.venv/Scripts/python.exe` (Windows) or `.venv/bin/python` (Linux/macOS). Do not use system Python or global pip. When uv is available, prefer `uv run python`.
 - **ABSOLUTELY FORBIDDEN to write LLM-generated content into `sources/`**: `sources/` only stores user-provided original files or files fetched by Agent through real network requests. Do NOT write hallucinations, fabrications, or speculations disguised as raw materials into this directory. If you cannot obtain a source, be honest with the user instead of creating a fake source file
 
 ## Related Files
 
-- `AGENTS.md` — Implementation guide for Claude Code / OpenClaw and other Agents
-  - CLI tool usage instructions
-  - Protocol mode vs CLI mode decision tree
+- `AGENTS.md` — **Agent tool selection guide. ALL Agents MUST read this file before operating.**
+  - Task category decision tree (when to use agent-bridge vs protocol mode)
+  - Agent bridge subcommand reference
+  - Execution visibility and logging format
   - Troubleshooting reference
-- `SKILL.md` — **Machine-readable specification. ALL Agents MUST read this file before operating.**
+- `SKILL.md` — Machine-readable specification
   - Entry points, functions, dependencies
   - Standard-format skill description
+- `scripts/agent-bridge.py` — Unified Agent entry point
+  - Auto-detects Python environment
+  - Structured Markdown output with `[ACTION]` markers
+- `src/llm_wiki/agent_logger.py` — Execution traceability
+  - Logging format: `[LEVEL] file:line func() | message` to stderr
 
 ## Version
 

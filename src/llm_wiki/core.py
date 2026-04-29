@@ -13,6 +13,10 @@ from pathlib import Path
 from typing import List, Optional, Set, Dict, Tuple
 import yaml
 
+from .agent_logger import get_logger
+
+LOG = get_logger("core")
+
 
 @dataclass
 class WikiPage:
@@ -62,6 +66,7 @@ class WikiManager:
 
     def list_pages(self) -> List[WikiPage]:
         """列出所有 wiki 页面"""
+        LOG.debug("Listing pages in %s", self.wiki_dir)
         pages = []
         for md_file in self.wiki_dir.glob("*.md"):
             if md_file.name == "index.md":
@@ -69,10 +74,12 @@ class WikiManager:
             page = self._load_page(md_file)
             if page:
                 pages.append(page)
+        LOG.info("Listed %d pages", len(pages))
         return pages
 
     def get_page(self, title: str) -> Optional[WikiPage]:
         """获取指定页面"""
+        LOG.debug("Getting page: %s", title)
         # 尝试多种文件名变体
         variations = [
             title,
@@ -89,6 +96,7 @@ class WikiManager:
         """创建新页面"""
         filename = f"{title.replace(' ', '-').replace('/', '-')}.md"
         path = self.wiki_dir / filename
+        LOG.info("Creating page: %s -> %s", title, path)
 
         # 构建 frontmatter
         fm_lines = ["---"]
@@ -103,11 +111,13 @@ class WikiManager:
 
         full_content = "\n".join(fm_lines) + "\n\n" + content
         path.write_text(full_content, encoding='utf-8')
+        LOG.debug("Page written: %s (%d bytes)", path, len(full_content))
         return path
 
     def update_page(self, title: str, new_content: str,
                     merge_strategy: str = "append") -> Path:
         """更新现有页面"""
+        LOG.info("Updating page: %s (strategy=%s)", title, merge_strategy)
         page = self.get_page(title)
         if not page:
             raise ValueError(f"Page not found: {title}")
@@ -131,6 +141,7 @@ class WikiManager:
             for detail in details:
                 log_entry += f"- {detail}\n"
 
+        LOG.info("Appending log: %s | %s", action, description)
         # 追加到文件
         with open(self.log_file, 'a', encoding='utf-8') as f:
             f.write(log_entry)
@@ -142,10 +153,12 @@ class WikiManager:
 
         content = self.log_file.read_text(encoding='utf-8')
         entries = re.findall(r'##\s*\[.*?\].*?(?=\n##|\Z)', content, re.DOTALL)
+        LOG.debug("Read %d log entries", len(entries))
         return entries[-n:] if entries else []
 
     def lint(self) -> Dict[str, List[str]]:
         """运行健康检查"""
+        LOG.info("Running lint...")
         issues = {
             'orphans': [],
             'dead_links': [],
@@ -186,6 +199,9 @@ class WikiManager:
             if link not in all_titles:
                 issues['dead_links'].append(link)
 
+        LOG.info("Lint complete: orphans=%d dead_links=%d stale=%d drafts=%d",
+                 len(issues['orphans']), len(issues['dead_links']),
+                 len(issues['stale']), len(issues['drafts']))
         return issues
 
     def _load_page(self, path: Path) -> Optional[WikiPage]:
@@ -211,6 +227,7 @@ class WikiManager:
                     title = line[2:].strip()
                     break
 
+            LOG.debug("Loaded page: %s (title=%s, tags=%s)", path, title, frontmatter.get('tags', []))
             return WikiPage(
                 title=title,
                 content=content,
@@ -218,7 +235,7 @@ class WikiManager:
                 path=path
             )
         except Exception as e:
-            print(f"Error loading page {path}: {e}")
+            LOG.error("Error loading page %s: %s", path, e)
             return None
 
     def _merge_content(self, old: str, new: str) -> str:

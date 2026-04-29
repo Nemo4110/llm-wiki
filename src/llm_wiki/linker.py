@@ -12,7 +12,10 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional, Set, Tuple
 
+from .agent_logger import get_logger
 from .core import WikiManager, WikiPage
+
+LOG = get_logger("linker")
 
 
 class RelationType(Enum):
@@ -161,6 +164,7 @@ class KnowledgeLinker:
 
     def _clear_cache(self):
         """清除关键词缓存"""
+        LOG.debug("Clearing keyword cache")
         self._keyword_cache.clear()
 
     def find_related(
@@ -192,8 +196,11 @@ class KnowledgeLinker:
         Returns:
             按 score 降序排列的 PageRelation 列表
         """
+        LOG.info("find_related: query=%s mode=kw_w=%.1f vec_w=%.1f link_w=%.1f top_k=%d min_score=%.2f",
+                 query, keyword_weight, vector_weight, link_weight, top_k, min_score)
         pages = self.wiki.list_pages()
         if not pages:
+            LOG.warning("Wiki has no pages")
             return []
 
         # 构建查询文本
@@ -202,11 +209,13 @@ class KnowledgeLinker:
             full_query = f"{query}\n{query_content}"
         query_tags_set = set(query_tags or [])
         query_keywords = _extract_keywords(full_query)
+        LOG.debug("Query keywords extracted: %d terms", len(query_keywords))
 
         scores: Dict[str, float] = {}
         evidence: Dict[str, List[str]] = {}
 
         # 1. Keyword Match
+        LOG.debug("Phase 1: keyword match (weight=%.1f)", keyword_weight)
         for page in pages:
             kw_score = 0.0
             page_evidence = []
@@ -252,6 +261,7 @@ class KnowledgeLinker:
             and self.index.cache
             and self.index.cache.get("pages")
         ):
+            LOG.debug("Phase 2: vector match (weight=%.1f)", vector_weight)
             try:
                 vec_results = self.index.search(
                     full_query,
@@ -261,20 +271,26 @@ class KnowledgeLinker:
                     link_weight=0.0,
                     enable_link_traversal=False,
                 )
+                LOG.debug("Vector search returned %d results", len(vec_results))
                 for title, vec_score in vec_results:
                     if title in scores:
                         scores[title] = scores.get(title, 0.0) + vec_score * vector_weight
                         if vec_score > 0.5:
                             evidence.setdefault(title, []).append(f"语义相似度: {vec_score:.2f}")
             except Exception:
-                pass  # embedding 搜索失败则忽略
+                LOG.warning("Vector search failed, skipping", exc_info=True)
+        else:
+            LOG.debug("Phase 2: vector match skipped (use_embedding=%s index=%s)",
+                      use_embedding, self.index is not None)
 
         # 3. Link Proximity
         if link_weight > 0:
+            LOG.debug("Phase 3: link proximity (weight=%.1f)", link_weight)
             # 从 query 内容中提取链接
             query_links: Set[str] = set()
             link_pattern = r"\[\[([^\]]+)\]\]"
             query_links = set(re.findall(link_pattern, full_query))
+            LOG.debug("Query links found: %s", query_links)
 
             # 1-hop 传播
             link_boosts: Dict[str, float] = {}
@@ -296,10 +312,13 @@ class KnowledgeLinker:
                         if neighbor in page_map and neighbor != query and neighbor not in hop1:
                             link_boosts[neighbor] = link_boosts.get(neighbor, 0.0) + link_weight * 0.25
 
+            LOG.debug("Link proximity boosts: %d pages affected", len(link_boosts))
             for title, boost in link_boosts.items():
                 scores[title] = scores.get(title, 0.0) + boost
                 if boost >= link_weight * 0.3:
                     evidence.setdefault(title, []).append("链接邻近")
+        else:
+            LOG.debug("Phase 3: link proximity skipped (weight=%.1f)", link_weight)
 
         # 构建 PageRelation 列表
         relations = []
@@ -307,6 +326,8 @@ class KnowledgeLinker:
         for title, score in scores.items():
             if score < min_score:
                 continue
+            if title == query:
+                continue  # exclude self-relation
             page = page_map.get(title)
             if not page:
                 continue
@@ -336,6 +357,8 @@ class KnowledgeLinker:
 
         # 按 score 降序，限制数量
         relations.sort(key=lambda r: r.score, reverse=True)
+        LOG.info("find_related complete: %d relations above min_score (returning top %d)",
+                 len(relations), top_k)
         return relations[:top_k]
 
     def build_relation_graph(
@@ -359,11 +382,13 @@ class KnowledgeLinker:
         Returns:
             RelationGraph 包含所有发现的关联
         """
+        LOG.info("build_relation_graph: %d new pages, mode=%s, top_k=%d", len(new_pages), mode, top_k)
         all_relations: List[PageRelation] = []
 
         for page_title in new_pages:
             page = self.wiki.get_page(page_title)
             if not page:
+                LOG.warning("Page not found in graph build: %s", page_title)
                 continue
 
             # 根据模式调整参数
@@ -394,6 +419,7 @@ class KnowledgeLinker:
 
             all_relations.extend(rels)
 
+        LOG.info("build_relation_graph complete: %d total relations", len(all_relations))
         return RelationGraph(relations=all_relations)
 
     def classify_relation(

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Optional
 import click
 
+from .agent_logger import setup_agent_logging, get_logger
 from .config import load_config
 from .core import WikiManager, find_wiki_root, IngestResult
 from .embeddings import create_provider
@@ -15,12 +16,19 @@ from .linker import KnowledgeLinker
 from .merge import ContentMerger, MergeStrategy, SafeWriter
 from .retrieval import EmbeddingIndex
 
+LOG = get_logger("commands")
+
 
 @click.group()
 @click.option('--wiki-dir', type=click.Path(), help='Wiki 目录路径')
+@click.option('--verbose', '-v', is_flag=True, help='启用详细日志输出到 stderr')
 @click.pass_context
-def cli(ctx, wiki_dir: Optional[str]):
+def cli(ctx, wiki_dir: Optional[str], verbose: bool):
     """LLM-Wiki 命令行工具"""
+    setup_agent_logging()
+    if verbose:
+        get_logger("").setLevel("DEBUG")
+
     if wiki_dir:
         root = Path(wiki_dir)
     else:
@@ -30,6 +38,7 @@ def cli(ctx, wiki_dir: Optional[str]):
         click.echo("错误：找不到 wiki 根目录。请确保当前目录在 wiki 内，或指定 --wiki-dir")
         ctx.exit(1)
 
+    LOG.info("CLI initialized: root=%s", root)
     ctx.ensure_object(dict)
     ctx.obj['wiki'] = WikiManager(root / "wiki")
     ctx.obj['root'] = root
@@ -82,6 +91,7 @@ def query(ctx, query_text: str, save: bool, semantic: bool):
         wiki query "LoRA 和全量微调的区别" --save
         wiki query "优化方法" --semantic
     """
+    LOG.info("query: text=%s semantic=%s", query_text, semantic)
     wiki = ctx.obj['wiki']
     root = ctx.obj['root']
 
@@ -168,6 +178,8 @@ def link(ctx, source: str, target: Optional[str], mode: str, strategy: str,
     执行具体合并（指定 --target）：
         wiki link --source "NewPage" --target "OldPage" --strategy append_related
     """
+    LOG.info("link: source=%s target=%s mode=%s strategy=%s dry_run=%s",
+             source, target, mode, strategy, dry_run)
     wiki = ctx.obj['wiki']
     root = ctx.obj['root']
 
@@ -194,8 +206,9 @@ def link(ctx, source: str, target: Optional[str], mode: str, strategy: str,
                 if provider:
                     index = EmbeddingIndex(wiki, provider)
                     linker.index = index
+                    LOG.info("Embedding index attached for deep mode")
             except Exception:
-                pass  # embedding 不可用则回退到 keyword
+                LOG.warning("Embedding unavailable, falling back to keyword", exc_info=True)
 
     # 如果指定了 target，执行合并操作
     if target:
@@ -325,6 +338,7 @@ def relink(ctx, since: Optional[str], mode: str, dry_run: bool, output_format: s
         wiki relink --since 2026-04-20 --mode deep
         wiki relink --since 2026-04-20 --dry-run
     """
+    LOG.info("relink: since=%s mode=%s dry_run=%s", since, mode, dry_run)
     wiki = ctx.obj['wiki']
     root = ctx.obj['root']
 
@@ -423,6 +437,7 @@ def index(ctx, force: bool, provider: Optional[str]):
         wiki index --force
         wiki index --provider ollama
     """
+    LOG.info("index: force=%s provider=%s", force, provider)
     wiki = ctx.obj['wiki']
     root = ctx.obj['root']
 
@@ -471,6 +486,7 @@ def lint(ctx, fix: bool):
       - 陈旧页面（90天未更新）
       - 草稿页面
     """
+    LOG.info("lint: fix=%s", fix)
     wiki = ctx.obj['wiki']
 
     click.echo("正在检查 wiki 健康状况...\n")
@@ -514,6 +530,7 @@ def lint(ctx, fix: bool):
 @click.pass_context
 def status(ctx):
     """查看 wiki 状态概览"""
+    LOG.info("status")
     wiki = ctx.obj['wiki']
     root = ctx.obj['root']
 

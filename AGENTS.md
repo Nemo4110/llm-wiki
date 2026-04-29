@@ -9,10 +9,287 @@ Before executing any wiki-related task, every Agent MUST:
 
 1. **Read `SKILL.md`** — Understand the machine-readable specification, entry points, functions, and dependencies.
 2. **Read `CLAUDE.md`** — Understand the core protocol and behavioral rules.
-3. **Verify available tools** — Check whether CLI tools are available; if not, fall back to protocol mode (direct file operations).
+3. **Run `python scripts/agent-bridge.py check`** — Verify the runtime environment.
 4. **Respect `sources/` integrity** — Never write LLM-generated content into `sources/`.
 
 Failure to follow the above may result in corrupted knowledge base, fabricated sources, or broken cross-references.
+
+---
+
+## Agent Tool Selection Guide
+
+> **STOP. Before doing any wiki task, read this section.**
+>
+> This project provides a single unified entry point for Agents: **`scripts/agent-bridge.py`**.
+> You do NOT need to remember multiple CLI commands. You do NOT need to check if dependencies are installed.
+> Just run `python scripts/agent-bridge.py check` at the start of each session.
+
+### Mandatory Pre-Task Check
+
+Before any wiki operation, run:
+
+```bash
+python scripts/agent-bridge.py check
+```
+
+This produces a structured Markdown report telling you:
+- Whether the environment is ready
+- How many wiki pages exist
+- Whether embedding/linking features are enabled
+- Which Python interpreter will be used
+
+**Do not skip this step.** It eliminates all uncertainty about "is CLI installed?"
+
+### Python Environment Rule
+
+All Python operations in this project MUST use the project's own virtual environment:
+
+1. **If `.venv/` exists** in the project root → use `.venv/Scripts/python.exe` (Windows) or `.venv/bin/python` (Linux/macOS). Prefer `uv run python` when uv is available.
+2. **If no `.venv/` but conda is available** → use `conda run -n llm-wiki python`.
+3. **Never use system Python** or global pip directly.
+
+This ensures consistent dependency versions and avoids environment pollution. When running tests, use:
+
+```bash
+.venv/Scripts/python.exe -m pytest tests/        # Windows
+.venv/bin/python -m pytest tests/                # Linux/macOS
+```
+
+---
+
+### Task Type Quick Reference
+
+Every wiki task falls into exactly one of three categories. **The category determines which tool you use.**
+
+| Category | Task | Needs LLM? | You Use | If Unavailable |
+|----------|------|-----------|---------|---------------|
+| **A** | Link discovery | No | `agent-bridge.py link` | Fallback: read files directly |
+| **A** | Batch relink | No | `agent-bridge.py relink` | Fallback: run `link` per page |
+| **A** | Health check | No | `agent-bridge.py lint` | Fallback: manual inspection |
+| **A** | Status overview | No | `agent-bridge.py status` | Fallback: count files in wiki/ |
+| **A** | Embedding index | No | `agent-bridge.py index` | Skip semantic search |
+| **A** | Safe merge | No | `agent-bridge.py merge` | Manual edit with diff review |
+| **A** | Semantic query | No | `agent-bridge.py query --semantic` | Fallback to keyword listing |
+| **B** | Ingest material | **Yes** | Protocol mode (direct file ops) | N/A |
+| **B** | Query & synthesize | **Yes** | Protocol mode (direct file ops) | N/A |
+| **C** | Apply link results | **Agent judges** | `merge` (after reviewing diff) | Manual edit |
+
+**Category A**: Pure algorithm. No LLM intelligence needed. **Always use `agent-bridge.py`.**
+
+**Category B**: Requires LLM understanding, insight extraction, or creative synthesis. **Always use Protocol mode** (read/write files directly).
+
+**Category C**: Hybrid. The tool discovers candidates (Category A), but you use LLM judgment to decide whether to apply them.
+
+---
+
+### Why agent-bridge.py Exists
+
+The old documentation told you "Protocol mode = operate files directly" and also "run `wiki link` commands". This created mixed signals. You (the Agent) naturally chose the path with lowest cognitive uncertainty: writing Python code yourself.
+
+**`agent-bridge.py` solves this by being the single obvious choice for all Category A tasks.**
+
+It handles internally:
+- Finding the right Python interpreter (venv, conda, system)
+- Checking if `src.llm_wiki` is importable
+- Calling the library code directly (no subprocess overhead)
+- Producing structured Markdown output (no JSON to parse)
+- Logging every internal step to stderr with file:line precision (fully visible)
+
+You see the full execution trace, so it is never a black box.
+
+---
+
+## Category A Tasks: Use agent-bridge.py
+
+### 1. Link Discovery
+
+**When**: After creating a new wiki page during ingest. Discover which existing pages are related.
+
+```bash
+python scripts/agent-bridge.py link --source "NewPage" --mode light
+```
+
+**Output sections**:
+- `## Relation Discovery: <Page>` — summary
+- `### Relations` — table of candidates with score, type, evidence
+- `### Actionable Items` — high-confidence relations with suggested next commands
+
+**Your action**: Review the `[ACTION]` markers. For score >= 0.5 relations, run the suggested `--dry-run` merge command first, review the diff, then apply.
+
+**Example workflow**:
+
+```
+Agent:
+1. Run: python scripts/agent-bridge.py link --source "LoRA" --mode light
+2. Read output: finds [[Fine-tuning]] score=0.78 type=EXTENDS
+3. Run dry-run merge:
+   python scripts/agent-bridge.py merge --source "LoRA" --target "Fine-tuning" \
+       --strategy append_related --dry-run
+4. Review diff in output
+5. If reasonable, re-run without --dry-run
+```
+
+### 2. Batch Global Relink
+
+**When**: After ingesting 2+ sources. Discover cross-page relations for all recent pages at once.
+
+```bash
+python scripts/agent-bridge.py relink --since 2026-04-20 --mode deep --dry-run
+```
+
+Remove `--dry-run` after reviewing the relation report.
+
+### 3. Health Check (Lint)
+
+**When**: Periodic maintenance, or user asks "check wiki health".
+
+```bash
+python scripts/agent-bridge.py lint
+```
+
+**Output sections**:
+- `## Summary` — count table for orphans, dead links, stale, drafts
+- `## Orphan Pages` — pages not referenced by any other
+- `## Dead Links` — `[[Non-existent page]]` references
+- `## Stale Pages` — >90 days since last update
+- `## Draft Pages`
+
+**Your action**: For dead links, create stub pages. For orphans, consider adding backlinks from relevant pages.
+
+### 4. Status Overview
+
+**When**: User asks "what's in the wiki?" or you need context before a task.
+
+```bash
+python scripts/agent-bridge.py status
+```
+
+### 5. Semantic Query (when embedding enabled)
+
+**When**: User asks a question and `embedding.enabled: true` in config.yaml. This finds candidate pages via vector search; you then read those pages and synthesize the answer.
+
+```bash
+python scripts/agent-bridge.py query "What is LoRA?" --semantic
+```
+
+**Output sections**:
+- `## Semantic Results` — ranked table of relevant pages
+- `[ACTION] Agent: Read the top-ranked pages and synthesize an answer with citations.`
+
+**Your action**: Read the listed pages, then synthesize an answer. Do NOT treat the semantic results as the final answer.
+
+### 6. Safe Merge
+
+**When**: Applying a relation update to an existing page. Always produces a diff for review.
+
+```bash
+# Preview
+python scripts/agent-bridge.py merge --source "NewPage" --target "OldPage" \
+    --strategy append_related --dry-run
+
+# Apply
+python scripts/agent-bridge.py merge --source "NewPage" --target "OldPage" \
+    --strategy append_related
+```
+
+### 7. Embedding Index
+
+**When**: After adding new pages and embedding is enabled. Build/update the vector index.
+
+```bash
+python scripts/agent-bridge.py index
+```
+
+---
+
+## Category B Tasks: Use Protocol Mode (Direct File Operations)
+
+### Ingest
+
+**Never** use a CLI command for ingest. Ingest requires LLM intelligence to:
+- Understand the source material
+- Extract key insights
+- Decide page structure and cross-references
+- Write frontmatter and content
+
+```
+User: Please ingest sources/paper.pdf
+
+Agent (Protocol mode):
+1. Read sources/paper.pdf (use appropriate file reader)
+2. Extract key insights via LLM
+3. Create wiki/NewConcept.md with proper frontmatter
+4. Create stub pages for any new [[Dead Link]]
+5. Run agent-bridge.py link --source "NewConcept" --mode light
+6. Review high-confidence relations, run merge --dry-run for each
+7. Update wiki/index.md
+8. Append log.md
+```
+
+### Query (without embedding)
+
+When embedding is disabled, query is pure Protocol mode:
+
+```
+User: What's the difference between LoRA and full fine-tuning?
+
+Agent (Protocol mode):
+1. Read wiki/index.md to locate relevant topics
+2. Read wiki/LoRA.md and linked neighbors
+3. Synthesize answer with citations: [[LoRA]], [[Fine-tuning]]
+4. Judge: Is this answer worth archiving?
+```
+
+---
+
+## Category C Tasks: Hybrid (Tool Discovery + Agent Judgment)
+
+### Applying Link Results
+
+This is the only task that requires both `agent-bridge.py` AND your LLM judgment.
+
+```
+Agent:
+1. Run: python scripts/agent-bridge.py link --source "Bid2X" --mode light
+2. Read output. For each relation with score >= 0.5:
+   a. Read the target existing page
+   b. LLM analysis: "Bid2X is an improvement over RTBAgent, extending xxx"
+   c. Decision: Use append_related strategy
+   d. Run: python scripts/agent-bridge.py merge --source "Bid2X" --target "RTBAgent" \
+          --strategy append_related --dry-run
+   e. Review diff in output
+   f. If reasonable, re-run without --dry-run
+3. Update log.md
+```
+
+---
+
+## Execution Visibility: Logging
+
+All `agent-bridge.py` commands and the underlying library code emit structured logs to **stderr**.
+
+Format:
+```
+[INFO] src/llm_wiki/linker.py:187 find_related() | find_related: query=LoRA mode=kw_w=0.6 vec_w=0.0 link_w=0.4 top_k=5 min_score=0.30
+[DEBUG] src/llm_wiki/linker.py:204 find_related() | Query keywords extracted: 42 terms
+[DEBUG] src/llm_wiki/linker.py:210 find_related() | Phase 1: keyword match (weight=0.6)
+[DEBUG] src/llm_wiki/linker.py:313 find_related() | Phase 3: link proximity skipped (weight=0.0)
+[INFO] src/llm_wiki/linker.py:342 find_related() | find_related complete: 3 relations above min_score (returning top 5)
+```
+
+Every log line includes:
+- **Log level**: INFO / DEBUG / WARNING / ERROR
+- **File path**: relative to project root
+- **Line number**: exact source line
+- **Function name**: which method emitted the log
+- **Message**: what happened
+
+**Why this matters**: You can trace the full execution pipeline. If a relation is missing, you can see which phase (keyword/vector/link) filtered it out. If embedding fails, you see the exact exception. Nothing is hidden.
+
+To see full debug output, add `--verbose` to any direct CLI command:
+```bash
+python -m src.llm_wiki --verbose link --source "X" --mode light
+```
 
 ---
 
@@ -116,7 +393,7 @@ doc.close()
 # Extract identifiers
 import re
 doi = re.search(r'10\.\d{4,}/[^\s]+', text)
-arxiv = re.search(r'arXiv:\d{4}\.\d{4,}', text, re.I)
+arXiv = re.search(r'arXiv:\d{4}\.\d{4,}', text, re.I)
 # Title is usually the largest text block on page 1
 ```
 
@@ -132,7 +409,7 @@ Check for error-page signatures:
 - `404 Not Found`, `403 Forbidden`
 - `Access Denied`, `Subscription Required`
 - `Please enable JavaScript`, `Cloudflare`
-- Empty or near-empty content (\< 100 bytes for text files)
+- Empty or near-empty content (< 100 bytes for text files)
 
 #### Mismatch Handling Flow
 
@@ -140,20 +417,20 @@ Check for error-page signatures:
 Verification result
     |
     +-- PASS (confident match)
-    |     → Write to sources/ → Continue normal ingest
+    |     -> Write to sources/ -> Continue normal ingest
     |
     +-- FAIL (clear mismatch or error page)
-    |     → Do NOT write to sources/ (or delete if already written)
-    |     → Do NOT create wiki pages
-    |     → Do NOT log as "ingested"
-    |     → Record in log.md: "[Date] verify-failed | Filename — reason"
-    |     → Reply to user with extracted vs expected metadata
-    |     → Await user instruction
+    |     -> Do NOT write to sources/ (or delete if already written)
+    |     -> Do NOT create wiki pages
+    |     -> Do NOT log as "ingested"
+    |     -> Record in log.md: "[Date] verify-failed | Filename — reason"
+    |     -> Reply to user with extracted vs expected metadata
+    |     -> Await user instruction
     |
     +-- UNCERTAIN (cannot extract or ambiguous)
-          → Report extracted metadata to user
-          → Ask: "Extracted title: 'X'. Is this the correct file?"
-          → Only proceed after explicit user confirmation
+          -> Report extracted metadata to user
+          -> Ask: "Extracted title: 'X'. Is this the correct file?"
+          -> Only proceed after explicit user confirmation
 ```
 
 #### Example: Verification Pass
@@ -163,12 +440,12 @@ User: Please ingest https://arxiv.org/pdf/2106.09685.pdf (the LoRA paper)
 
 Agent: curl -L -o sources/2106.09685.pdf https://arxiv.org/pdf/2106.09685.pdf
        python (extract text from first 2 pages)
-       → Title: "LoRA: Low-Rank Adaptation of Large Language Models"
-       → Authors: "Edward J. Hu, Yelong Shen, Phillip Wallis"
-       → arXiv ID: arXiv:2106.09685
-       → Compare to user description: "LoRA paper" — MATCH
-       → Verification: PASS
-       → Continue with ingest
+       -> Title: "LoRA: Low-Rank Adaptation of Large Language Models"
+       -> Authors: "Edward J. Hu, Yelong Shen, Phillip Wallis"
+       -> arXiv ID: arXiv:2106.09685
+       -> Compare to user description: "LoRA paper" — MATCH
+       -> Verification: PASS
+       -> Continue with ingest
 ```
 
 #### Example: Verification Fail
@@ -178,11 +455,11 @@ User: Please ingest https://arxiv.org/pdf/2106.09685.pdf (the LoRA paper)
 
 Agent: curl -L -o sources/2106.09685.pdf https://arxiv.org/pdf/2106.09685.pdf
        python (extract text)
-       → Title: "Attention Is All You Need"  ← Wrong paper!
-       → arXiv ID: arXiv:1706.03762         ← Mismatch
-       → Verification: FAIL
-       → Do NOT ingest
-       → Report to user: "Downloaded file is 'Attention Is All You Need' (arXiv:1706.03762),
+       -> Title: "Attention Is All You Need"  <- Wrong paper!
+       -> arXiv ID: arXiv:1706.03762         <- Mismatch
+       -> Verification: FAIL
+       -> Do NOT ingest
+       -> Report to user: "Downloaded file is 'Attention Is All You Need' (arXiv:1706.03762),
           but you requested the LoRA paper (2106.09685). Please check the URL."
 ```
 
@@ -193,11 +470,11 @@ User: Please ingest https://example.com/paywalled-paper.pdf
 
 Agent: curl -L -o sources/paper.pdf https://example.com/paywalled-paper.pdf
        python (read file)
-       → Content contains: "Subscribe to access this article"
-       → Verification: FAIL (error page)
-       → Do NOT ingest
-       → Record in log.md: verify-failed — paywall
-       → Report to user with alternatives
+       -> Content contains: "Subscribe to access this article"
+       -> Verification: FAIL (error page)
+       -> Do NOT ingest
+       -> Record in log.md: verify-failed — paywall
+       -> Report to user with alternatives
 ```
 
 ### Fetch Failure Handling Flow
@@ -205,9 +482,9 @@ Agent: curl -L -o sources/paper.pdf https://example.com/paywalled-paper.pdf
 ```
 Fetch attempt
     |
-    +-- Success → Run Post-Fetch Verification → PASS → Write to sources/ → Continue ingest
+    +-- Success -> Run Post-Fetch Verification -> PASS -> Write to sources/ -> Continue ingest
     |                        |
-    |                        +-- FAIL → Do NOT write to sources/ → Report to user
+    |                        +-- FAIL -> Do NOT write to sources/ -> Report to user
     |
     +-- Failure (404/403/paywall/anti-bot)
           |
@@ -235,12 +512,12 @@ Agent: (Did not execute any curl/playwright call)
 User: Please ingest these papers [provides 5 titles, no URLs]
 
 Agent: Uses WebSearch to find open-access versions for each title
-      → Found arXiv link for paper 1, author homepage PDF for paper 2
+      -> Found arXiv link for paper 1, author homepage PDF for paper 2
       Replies to user: "I found the following possible sources, please confirm:
-      1. Paper Title 1 → https://arxiv.org/pdf/xxxx.pdf
-      2. Paper Title 2 → https://author-page.edu/paper2.pdf
+      1. Paper Title 1 -> https://arxiv.org/pdf/xxxx.pdf
+      2. Paper Title 2 -> https://author-page.edu/paper2.pdf
       I will download and ingest after your confirmation."
-      (User confirms → Execute curl download → Continue ingest)
+      (User confirms -> Execute curl download -> Continue ingest)
 ```
 
 **Correct** (URL provided):
@@ -260,7 +537,7 @@ Agent: Execute curl -L -o "sources/2026-04-20-paper.pdf" "https://arxiv.org/pdf/
 User: Please ingest https://example.com/paywalled-paper.pdf
 
 Agent: Execute curl -I "https://example.com/paywalled-paper.pdf"
-      → Returns 403 Forbidden
+      -> Returns 403 Forbidden
       Do NOT create sources/ file
       Create wiki/Pending-Paywalled-Paper.md (stub, marked as pending)
       Record in log.md: "[Date] pending | Paywall prevented fetching xxx"
@@ -427,219 +704,63 @@ uv pip install -r src/requirements.txt
 
 ---
 
-## Two Work Modes
+## Old CLI Commands (Still Available)
 
-### Mode A: Protocol Mode (Recommended)
+The underlying `python -m src.llm_wiki` CLI remains available for human users and scripting. As an Agent, **prefer `agent-bridge.py`** because it:
+- Auto-detects the environment
+- Produces structured Markdown output
+- Has unified error handling
 
-**Applicable scenario**: User uses natural language commands, e.g. "Please ingest material", "Query wiki"
+If you need to use the lower-level CLI directly, see the command reference below.
 
-**Your behavior**:
-1. Read `CLAUDE.md` to understand the protocol
-2. Read `SKILL.md` to understand available functions, entry points, and dependencies
-3. **Select the correct reading strategy based on file type** (see "File Type Processing Strategy" above)
-4. Operate files directly (read, write, edit)
-5. Follow Ingest/Query/Lint workflow
-   - **Must create stub pages during Ingest**: Any `[[Concept]]` first appearing in a new page must have a corresponding stub created synchronously (at least frontmatter + one-sentence definition) if the target page does not exist
-   - **Bidirectional link check**: After updating existing pages, check if new pages should link back
-
-**Not needed**: Invoke any CLI commands
-
-### Mode B: CLI Mode
-
-**Applicable scenario**: User explicitly requests command-line tools, or scripting operations are needed
-
-**Your behavior**:
-1. Check CLI availability: `python -m src.llm_wiki --help`
-2. Use corresponding commands to assist execution
-
----
-
-## CLI Tool Reference
-
-### Check Dependencies and Virtual Environment
-
-The project may already have a virtual environment; check first:
-
-```bash
-# Check if virtual environment exists in project directory
-ls -la .venv/  # or venv/
-
-# If yes, use virtual environment's Python
-.venv/Scripts/python -m src.llm_wiki --help  # Windows
-.venv/bin/python -m src.llm_wiki --help      # Linux/macOS
-```
-
-### Check CLI Availability
+### Direct CLI Command Reference
 
 ```bash
 # Using virtual environment Python (preferred)
-.venv/Scripts/python -c "from src.llm_wiki.core import WikiManager; print('OK')"
-
-# Or using system Python
-python -c "from src.llm_wiki.core import WikiManager; print('OK')"
-
-# Command-line entry point
-# python -m src.llm_wiki --help
-```
-
-### Available Commands
-
-```bash
-# View wiki status
-python -m src.llm_wiki status
-
-# Health check
-python -m src.llm_wiki lint
-
-# View all command help
-python -m src.llm_wiki --help
-```
-
-| Command | Purpose | Note |
-|---------|---------|------|
-| `status` | View wiki overview | Page count, recent activity |
-| `lint` | Health check | Orphan pages, dead links, etc. |
-| `ingest <path>` | Ingest material (auxiliary) | Only preview; actual processing requires protocol mode |
-| `query <text>` | Query wiki (auxiliary) | Only lists pages; actual query requires protocol mode |
-
-**Note**: `ingest` and `query` require LLM processing; CLI only provides auxiliary functions. Actual content processing is recommended via **protocol mode** direct file operations.
-
-### CLI Auxiliary Workflow Example
-
-```bash
-# Use virtual environment (recommended)
 PY=".venv/Scripts/python"  # Windows
 PY=".venv/bin/python"      # Linux/macOS
 
-# 1. Check wiki status first
+# Check availability
+$PY -m src.llm_wiki --help
+
+# Status
 $PY -m src.llm_wiki status
 
-# 2. Run lint to check for issues
+# Lint
 $PY -m src.llm_wiki lint
 
-# 3. User requests ingesting new material; you (Agent) process directly:
-#    - Read sources/new-paper.pdf
-#    - Extract insights
-#    - Update pages under wiki/
-#    - Append log.md
+# Link (human-readable markdown output)
+$PY -m src.llm_wiki link --source "NewPage" --mode light
+
+# Relink
+$PY -m src.llm_wiki relink --since 2026-04-20 --mode deep
+
+# Index
+$PY -m src.llm_wiki index
 ```
 
----
-
-## Decision Tree
-
-```
-User Input
-    |
-    +-- Natural language ("ingest sources", "query wiki")
-    |     +--> Protocol mode: operate files directly
-    |
-    +-- Explicit CLI ("run wiki lint", "check status")
-    |     +--> CLI mode: execute commands and explain output
-    |
-    +-- Scripting needs ("batch process", "automation")
-          +--> CLI mode: generate / execute scripts
-```
-
----
-
-## Important Principles
-
-1. **Default to protocol mode**: Most users expect natural language interaction
-2. **CLI is supplementary**: For status viewing, batch operations, script integration
-3. **Do not assume CLI is installed**: User may not have installed dependencies; prefer pure file operations
-4. **Be transparent**: If using CLI, tell the user what you are doing
-5. **Synchronize all README files**: When updating `README.md`, apply the same changes to all language variants (e.g. `docs/README.cn.md`). Never let the translated versions fall out of sync with the primary file
-
----
-
-## Example Conversations
-
-### Scenario 1: Natural Language Command
-
-```
-User: Please ingest sources/paper.pdf
-
-You (Protocol mode):
-1. Read sources/paper.pdf
-2. Extract key insights
-3. Create wiki/Attention-Mechanism.md (with [[Self-Attention]], [[Transformer]], etc. links)
-4. Check dead links: Create wiki/Self-Attention.md and wiki/Transformer.md stub pages
-5. Update wiki/index.md
-6. Append log.md
-
-Reply: Ingested paper.pdf, created [[Attention Mechanism]] page, and synchronously created stub pages for [[Self-Attention]], [[Transformer]], etc...
-```
-
-### Scenario 2: Explicit CLI Request
-
-```
-User: Run wiki lint to see if there are any issues
-
-You (CLI mode):
-1. Execute: python -m src.llm_wiki lint
-2. Analyze output
-3. Explain issues and provide fix suggestions
-
-Reply: Found 3 orphan pages: [[PageA]], [[PageB]]...
-```
-
-### Scenario 3: Using Virtual Environment
-
-```
-User: Check wiki status
-
-You: Found .venv/ directory in the project; using virtual environment
-    .venv/Scripts/python -c "from src.llm_wiki.core import ..."
-    → Successfully retrieved information
-
-Reply: Wiki currently has 15 pages; recent activity was...
-```
-
-### Scenario 4: Using conda Environment
-
-```
-User: Check wiki status
-
-You: Detected CONDA_PREFIX environment variable; using conda environment
-    $CONDA_PREFIX/bin/python -c "from src.llm_wiki.core import ..."
-    → Successfully retrieved information
-
-Reply: Wiki currently has 15 pages; recent activity was...
-(Using conda environment: llm-wiki)
-```
-
-### Scenario 5: CLI Dependencies Not Installed (Protocol Mode Fallback)
-
-```
-User: Run wiki lint
-
-You: Attempted execution
-    .venv/Scripts/python -c "from src.llm_wiki.core import WikiManager"
-    → Failed (ModuleNotFoundError: .venv does not exist or dependencies not installed)
-
-You: Switched to protocol mode; reading files directly
-    - Read wiki/ to count pages
-    - Read log.md to get recent activity
-    - Manually executed lint logic
-
-Reply: Wiki currently has 15 pages; found 3 orphan pages: [[PageA]]...
-(Note: CLI dependencies not installed; I retrieved this information by reading files directly)
-```
+| Command | Purpose | Agent Should Use Instead |
+|---------|---------|------------------------|
+| `status` | Wiki overview | `agent-bridge.py status` |
+| `lint` | Health check | `agent-bridge.py lint` |
+| `link` | Relation discovery | `agent-bridge.py link` |
+| `relink` | Batch global linking | `agent-bridge.py relink` |
+| `index` | Build embedding index | `agent-bridge.py index` |
+| `ingest` | Preview only (no LLM) | **Protocol mode** (direct file ops) |
+| `query` | List pages / semantic search | `agent-bridge.py query` for semantic; **Protocol mode** for synthesis |
 
 ---
 
 ## Bidirectional Update Implementation Guide
 
 > This section guides Agents on how to perform dynamic linking and bidirectional updates during ingest.
-> **Before using any `link` or `relink` CLI commands, you MUST have read `SKILL.md` to understand the function signatures, inputs, and workflow.**
 
 ### Why Bidirectional Updates Are Needed
 
 Traditional ingest only creates new pages; existing pages do not automatically reflect new knowledge. Bidirectional updates let the knowledge base **self-improve** over time:
-- New paper improves an old method → old page automatically gets "Latest Progress" section
-- New work contrasts with old work → both pages add comparison links
-- New work depends on old concept → old concept page gets backlinked
+- New paper improves an old method -> old page automatically gets "Latest Progress" section
+- New work contrasts with old work -> both pages add comparison links
+- New work depends on old concept -> old concept page gets backlink
 
 ### Linking Workflow
 
@@ -647,26 +768,28 @@ Traditional ingest only creates new pages; existing pages do not automatically r
 Finish new page creation
     |
     v
-+----------------------------------+
-| 1. Run: wiki link --source PAGE  |  <-- CLI discovers relations
-|         --mode light             |
-+----------------------------------+
++------------------------------------------+
+| 1. Run: agent-bridge.py link --source PAGE  |  <-- discovers relations
+|            --mode light                  |
++------------------------------------------+
     |
     v
-+----------------------------------+
-| 2. Agent reviews relation report |  <-- LLM judges relevance
-|    Only process score >= 0.5     |
-+----------------------------------+
++------------------------------------------+
+| 2. Agent reviews relation report         |  <-- LLM judges relevance
+|    Only process score >= 0.5             |
++------------------------------------------+
     |
     v
-+----------------------------------+
-| 3. For each high-confidence rel: |
-|    a. Read existing page         |
-|    b. Analyze old vs new         |
-|    c. Choose merge strategy      |
-|    d. Run: wiki link --target    |
-|    e. Review diff, then apply    |
-+----------------------------------+
++------------------------------------------+
+| 3. For each high-confidence rel:         |
+|    a. Read existing page                 |
+|    b. Analyze old vs new                 |
+|    c. Choose merge strategy              |
+|    d. Run: agent-bridge.py merge         |
+|       --source PAGE --target PAGE        |
+|       --strategy STRATEGY --dry-run      |
+|    e. Review diff, then apply            |
++------------------------------------------+
     |
     v
 Update log.md, record operations
@@ -695,39 +818,6 @@ Relation between new page and existing page
           +--> append_related (add backlink to old page)
 ```
 
-### CLI Command Reference
-
-**Discover relations (light mode):**
-```bash
-python -m src.llm_wiki link --source "Bid2X" --mode light
-```
-Output: Markdown relation report with related pages, score, relation type, suggested action
-
-**Discover relations (deep mode, with embedding):**
-```bash
-python -m src.llm_wiki link --source "Bid2X" --mode deep --max-related 10
-```
-
-**Execute specific merge (with diff review):**
-```bash
-# Preview
-python -m src.llm_wiki link --source "Bid2X" --target "RTBAgent" \
-    --strategy append_related --dry-run
-
-# Apply
-python -m src.llm_wiki link --source "Bid2X" --target "RTBAgent" \
-    --strategy append_related
-```
-
-**Batch global linking:**
-```bash
-# Global deep linking for pages added in the last 7 days
-python -m src.llm_wiki relink --mode deep --dry-run
-
-# Specify date range
-python -m src.llm_wiki relink --since 2026-04-20 --mode deep
-```
-
 ### Agent Implementation Pattern (Protocol Mode)
 
 **Scenario: User requests ingesting sources/new-paper.pdf**
@@ -737,17 +827,14 @@ Agent:
 1. Read sources/new-paper.pdf
 2. Extract insights, create wiki/NewMethod.md
 3. Check dead links, create stub pages
-4. Run CLI (if virtual environment available):
-   .venv/Scripts/python -m src.llm_wiki link --source "NewMethod" --mode light
-   → Get relation report
+4. Run: python scripts/agent-bridge.py link --source "NewMethod" --mode light
+   -> Get relation report
 5. For score >= 0.5 relations, e.g. [[OldMethod]]:
    a. Read wiki/OldMethod.md
    b. LLM analysis: "NewMethod is an improvement over OldMethod, extending xxx capabilities"
    c. Decision: Use append_section strategy, append "Relationship with NewMethod"
-   d. Run CLI to generate diff:
-      .venv/Scripts/python -m src.llm_wiki link \
-        --source "NewMethod" --target "OldMethod" \
-        --strategy append_section --dry-run
+   d. Run: python scripts/agent-bridge.py merge --source "NewMethod" --target "OldMethod" \
+          --strategy append_section --dry-run
    e. Review diff, confirm it is reasonable
    f. Apply modification (remove --dry-run)
 6. Update log.md, record new pages and relation updates
@@ -760,13 +847,13 @@ Agent:
 2. **Append only, never replace**: `append_related` and `append_section` are safe strategies
 3. **Use update_concept with caution**: Only when new information genuinely corrects an old definition
 4. **Limit batch updates**: Single source should trigger no more than 5 backward updates
-5. **Automatic backups**: CLI tools automatically back up to `wiki/.backups/`; rollback available
+5. **Automatic backups**: merge tool automatically backs up to `wiki/.backups/`; rollback available
 
 ### Troubleshooting
 
 | Problem | Solution |
 |---------|----------|
-| `wiki link` errors: page not found | Confirm page has been created; check title spelling |
+| `agent-bridge.py link` errors: page not found | Confirm page has been created; check title spelling |
 | Diff is unreasonable | Do not apply; manually edit the page instead |
 | False positive relation to unrelated page | Ignore (score usually < 0.3); do not execute merge |
 | Strategy not in allowed list | Check config.yaml `linking.deep_mode.strategies_allowed` |
@@ -781,10 +868,13 @@ Agent:
 - **Module**: `src.llm_wiki`
 - **Main file**: `src/llm_wiki/commands.py`
 - **Core logic**: `src/llm_wiki/core.py`
+- **Agent Bridge**: `scripts/agent-bridge.py`
+- **Logging**: `src/llm_wiki/agent_logger.py`
 
 ### Auxiliary Scripts
 
 Project includes auxiliary scripts (`scripts/`):
+- `scripts/agent-bridge.py` — **Unified Agent entry point (RECOMMENDED)**
 - `scripts/wiki-status.sh` — Quick wiki status view
 - `scripts/wiki-lint.sh` — Run health check
 - `scripts/init-wiki.sh` — Initialize new project
@@ -843,9 +933,9 @@ def check_dep(module_name, python_path=None):
 - `AGENTS.md`: Defines **Agent-internal** implementation strategy
 - `SKILL.md`: Machine-readable specification that **ALL Agents MUST read** before operating
 
-They are not contradictory: Protocol mode implements the semantics of CLAUDE.md; CLI mode provides additional tooling capabilities.
+They are not contradictory: Protocol mode implements the semantics of CLAUDE.md; agent-bridge.py provides a unified interface for all algorithmic tasks.
 
 ---
 
-*Agent Guide Version: 1.3.0*
-*Last Updated: 2026-04-21*
+*Agent Guide Version: 1.4.0*
+*Last Updated: 2026-04-29*

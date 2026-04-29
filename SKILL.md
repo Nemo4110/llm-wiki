@@ -22,6 +22,7 @@ capabilities:
 entryPoints:
   protocol: "CLAUDE.md"
   agent-guide: "AGENTS.md"
+  agent-bridge: "scripts/agent-bridge.py"
   cli: "src/llm_wiki/commands.py"
 
 # Hooks (optional integration)
@@ -86,12 +87,12 @@ functions:
       - Read source content
       - Extract key insights
       - Identify/create affected wiki pages
-      - Dynamic linking: run `wiki link --source <new_page> --mode light` to discover related pages
+      - Dynamic linking: run `python scripts/agent-bridge.py link --source <new_page> --mode light` to discover related pages
       - For high-confidence relations (score >= 0.5), apply merge strategy to backward-update existing pages
       - Update cross-references
       - Create stub pages for any new [[Dead Link]] introduced in the content
       - Append to log.md
-      - For batch ingest (>=2 sources), run `wiki relink --since <date> --mode deep`
+      - For batch ingest (>=2 sources), run `python scripts/agent-bridge.py relink --since <date> --mode deep`
 
   link:
     description: "Discover and merge relationships between wiki pages"
@@ -107,8 +108,8 @@ functions:
         type: string
         description: "light or deep"
     workflow:
-      - Run `wiki link --source <page> --mode light` to discover relations
-      - Run `wiki link --source <page> --target <page> --strategy <strategy>` to merge
+      - Run `python scripts/agent-bridge.py link --source <page> --mode light` to discover relations
+      - Run `python scripts/agent-bridge.py link --source <page> --target <page> --strategy <strategy>` to merge
       - Review diff before applying
 
   relink:
@@ -121,6 +122,10 @@ functions:
       - name: mode
         type: string
         description: "light or deep"
+    workflow:
+      - Run `python scripts/agent-bridge.py relink --since <date> --mode deep` to batch-link all recent pages
+      - Review the generated relation report for high-confidence connections
+      - For each high-confidence pair, run `python scripts/agent-bridge.py link --source <new> --target <old> --strategy <strategy>`
 
   query:
     description: "Query wiki knowledge base"
@@ -151,6 +156,7 @@ structure:
   agent-guide: "AGENTS.md"
   specification: "SKILL.md"
   changelog: "log.md"
+  agent-bridge: "scripts/agent-bridge.py"
   sources: "sources/"
   wiki: "wiki/"
   assets: "assets/"
@@ -169,9 +175,39 @@ related:
 
 # CLI Reference
 
-## Protocol Mode (Recommended)
+## Agent Bridge (Recommended for Agents)
 
-Use natural language with your agent:
+Use `scripts/agent-bridge.py` as the single entry point for all tool-assisted operations:
+
+```bash
+# Environment check
+python scripts/agent-bridge.py check
+
+# Discover relations for a new page
+python scripts/agent-bridge.py link --source "NewPage" --mode light
+
+# Execute merge with diff review
+python scripts/agent-bridge.py link --source "NewPage" --target "OldPage" --strategy append_related
+
+# Batch global linking for recent pages
+python scripts/agent-bridge.py relink --since 2026-04-20 --mode deep
+
+# Health check
+python scripts/agent-bridge.py lint
+
+# Status overview
+python scripts/agent-bridge.py status
+```
+
+**Why Agent Bridge?**
+- Single obvious entry point — no guessing whether to use protocol mode or CLI mode
+- Structured Markdown output — human-readable and machine-parseable
+- Execution traceability — detailed logging with file:line references to stderr
+- Auto-detects Python environment (uv venv / conda / system)
+
+## Protocol Mode (Natural Language)
+
+For tasks requiring LLM judgment (content extraction, synthesis, strategy selection):
 
 ```
 "Please ingest sources/paper.pdf into wiki"
@@ -179,9 +215,9 @@ Use natural language with your agent:
 "Check wiki health"
 ```
 
-## CLI Mode (Optional)
+## Legacy CLI Mode (Optional)
 
-After installing dependencies:
+Direct library access for scripting or debugging:
 
 ```bash
 # Show wiki status overview
@@ -194,7 +230,7 @@ python -m src.llm_wiki lint
 python -m src.llm_wiki --help
 ```
 
-**Note**: `ingest` and `query` commands in CLI only provide auxiliary functions (like listing pages). Actual content processing requires natural language interaction with the agent.
+**Note**: `ingest` and `query` commands in legacy CLI only provide auxiliary functions (like listing pages). Actual content processing requires natural language interaction with the agent.
 
 # LLM-Wiki
 

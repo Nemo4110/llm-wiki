@@ -15,7 +15,10 @@ from enum import Enum
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from .agent_logger import get_logger
 from .core import WikiManager, WikiPage
+
+LOG = get_logger("merge")
 
 
 class MergeStrategy(Enum):
@@ -67,6 +70,7 @@ class ContentMerger:
         strategy: MergeStrategy,
         context: Optional[Dict] = None,
     ) -> str:
+        LOG.info("merge: page=%s strategy=%s", page.title, strategy.value)
         """
         将新内容按指定策略合并到页面中。
 
@@ -112,6 +116,7 @@ class ContentMerger:
 
     def generate_diff(self, original: str, modified: str) -> str:
         """生成统一的 diff 格式"""
+        LOG.debug("generate_diff: original=%d chars, modified=%d chars", len(original), len(modified))
         original_lines = original.splitlines(keepends=True)
         modified_lines = modified.splitlines(keepends=True)
         # 确保每行以换行结尾
@@ -398,6 +403,7 @@ class SafeWriter:
             备份文件路径
         """
         page_path = proposal.page_path
+        LOG.info("apply: %s (strategy=%s)", page_path, proposal.strategy.value)
         if not page_path.exists():
             raise ValueError(f"Page not found: {page_path}")
 
@@ -413,10 +419,12 @@ class SafeWriter:
             counter += 1
 
         shutil.copy2(page_path, backup_path)
+        LOG.debug("Backup created: %s", backup_path)
 
         # 写入新内容
         page_path.write_text(proposal.proposed_content, encoding="utf-8")
         proposal.backup_path = backup_path
+        LOG.info("Applied changes to %s, backup at %s", page_path, backup_path)
 
         return backup_path
 
@@ -430,7 +438,9 @@ class SafeWriter:
         Returns:
             是否成功回滚
         """
+        LOG.info("rollback: %s", page_path)
         if not page_path.exists():
+            LOG.warning("rollback failed: page not found: %s", page_path)
             return False
 
         # 查找最新的备份
@@ -441,10 +451,12 @@ class SafeWriter:
             reverse=True,
         )
         if not backups:
+            LOG.warning("rollback failed: no backup found for %s", stem)
             return False
 
         # 恢复备份
         shutil.copy2(backups[0], page_path)
+        LOG.info("rollback complete: restored from %s", backups[0])
         return True
 
     def list_backups(self, page_path: Path) -> List[Path]:
