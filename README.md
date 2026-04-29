@@ -8,14 +8,13 @@ Claude Code SKILL implementation of [Karpathy's llm-wiki](https://gist.github.co
 
 ## Why SKILL Form?
 
-| Dimension | Standalone App (e.g. [Sage-Wiki](https://github.com/xoai/sage-wiki)) | This SKILL Implementation |
-|-----------|----------------------------------|---------------------------|
-| **Architecture** | Go + SQLite + Embedded Frontend | Pure Markdown |
-| **Deployment** | Requires running service | Zero deployment |
-| **Integration** | Indirect via MCP | Native commands |
-| **Code Size** | ~10k lines | ~2.5k lines |
-| **Data Format** | Proprietary | Plain text Markdown |
-| **Editor** | Locked in app | Obsidian/VSCode/Any |
+We chose the SKILL form because it brings these advantages:
+
+- **Zero deployment** — No services to run, no databases to configure; works the moment you clone the repository
+- **Native integration** — Direct command execution via Claude Code, no middleware or protocol translation needed
+- **Plain-text data** — Pure Markdown files, git-native, with no proprietary formats or vendor lock-in
+- **Editor freedom** — Use Obsidian, VS Code, or any text editor you prefer
+- **Minimal footprint** — ~2.5k lines of lightweight glue code, keeping complexity low
 
 ## Quick Start
 

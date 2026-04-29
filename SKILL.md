@@ -240,14 +240,13 @@ Karpathy's llm-wiki pattern implementation — cumulative knowledge management f
 
 ## Why SKILL Form?
 
-| Dimension | Standalone App (e.g. Sage-Wiki) | This SKILL Implementation |
-|-----------|----------------------------------|---------------------------|
-| **Architecture** | Go + SQLite + Embedded Frontend | Pure Markdown |
-| **Deployment** | Requires running service | Zero deployment |
-| **Integration** | Indirect via MCP | Native commands |
-| **Code Size** | ~10k lines | ~500 lines |
-| **Data Format** | Proprietary | Plain text Markdown |
-| **Editor** | Locked in app | Obsidian/VSCode/Any |
+We chose the SKILL form because it brings these advantages:
+
+- **Zero deployment** — No services to run, no databases to configure; works the moment you clone the repository
+- **Native integration** — Direct command execution via Claude Code, no middleware or protocol translation needed
+- **Plain-text data** — Pure Markdown files, git-native, with no proprietary formats or vendor lock-in
+- **Editor freedom** — Use Obsidian, VS Code, or any text editor you prefer
+- **Minimal footprint** — ~500 lines of core protocol, keeping complexity low
 
 ## Features
 
