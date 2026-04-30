@@ -284,6 +284,23 @@ def cmd_link(args: argparse.Namespace) -> int:
         return 1
 
     config = load_config(wiki_root)
+
+    # Auto-select mode when not explicitly specified
+    if args.mode is None:
+        emb_cfg = config.get("embedding", {})
+        if emb_cfg.get("enabled", False):
+            try:
+                provider = create_provider(config)
+                if provider:
+                    args.mode = "deep"
+                    LOG.info("Embedding available, auto-selecting deep mode")
+                else:
+                    args.mode = "light"
+            except Exception:
+                args.mode = "light"
+        else:
+            args.mode = "light"
+
     wiki = WikiManager(wiki_root / "wiki")
     source_page = wiki.get_page(args.source)
     if not source_page:
@@ -866,7 +883,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     # link
     link_parser = subparsers.add_parser("link", help="Discover relations for a page")
     link_parser.add_argument("--source", required=True, help="Source page title")
-    link_parser.add_argument("--mode", choices=["light", "deep"], default="light")
+    link_parser.add_argument("--mode", choices=["light", "deep"], default=None)
     link_parser.add_argument("--max-related", type=int, default=5)
 
     # relink
