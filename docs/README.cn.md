@@ -204,6 +204,8 @@ llm-wiki/
 2. **纯 Markdown**：无数据库，无锁定，git 原生支持版本控制
 3. **双向链接**：`[[PageName]]` 格式，与 Obsidian 兼容
 4. **累积式学习**：每次查询可以产生新的 wiki 页面，知识不断积累
+5. **时间上下文**：保留发表、发布、收藏和摄入时间，让相关工作能按历史顺序阅读
+6. **规划中的 Zotero 集成**：Zotero 负责文献资产管理，llm-wiki 负责沉淀后的 Markdown 知识层
 
 ## 查询机制详解
 
@@ -329,6 +331,17 @@ Claude：已创建 [[LoRA vs Full Fine-tuning]]
 2. 享受图谱视图、快速导航、美观渲染
 3. Claude Code 负责维护，Obsidian 负责阅读和思考
 
+## 规划中的 Zotero MCP 集成
+
+Zotero 将作为未来优先接入的文献资产层，负责管理文献元数据、PDF、批注、收藏夹、标签和 citation key。llm-wiki 继续作为沉淀后的 Markdown 知识层。规划中的 Zotero MCP 集成包括：
+
+- 使用 Zotero MCP 的搜索、元数据、全文、批注和 collection 工具发现待摄入材料。
+- 在 wiki frontmatter 中记录 `zotero_item_key`、`citation_key`、`library_id`、`zotero_uri` 等标识。
+- 保持 `sources/` 完整性：Zotero 管理的原始文件可作为来源资产，但 Agent 生成的摘要仍然禁止写入 `sources/`。
+- 后续可选择向 Zotero 写回轻量标签或回链，例如 `llm-wiki` 和 `wiki:<PageSlug>`。
+
+实现分析见 [Zotero MCP 集成方案](ZOTERO_MCP_INTEGRATION.md)。
+
 ## 进阶配置
 
 ### 自定义页面模板
@@ -386,6 +399,8 @@ tags:
 ### 当前 TODO
 
 - [ ] MCP 服务器封装（让其他 Agent 也能用）
+- [ ] Zotero MCP 集成，用于文献发现、摄入、元数据链接和可选回链同步
+- [ ] 来源发表/发布/收藏时间的元数据规范和时间线视图
 - [ ] Obsidian 插件（一键同步状态）
 - [x] 增量 embedding 加速检索
 - [x] 多语言支持（英文 + 中文）

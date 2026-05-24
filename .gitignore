@@ -64,6 +64,9 @@ wiki/*
 log.md
 config.yaml
 
+# Personal/local planning notes
+docs/superpowers/
+
 # Obsidian
 .obsidian/workspace*
 .obsidian/cache
