@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import argparse
 import datetime as _dt
+import os
 import re
 import shutil
+import stat
 import zipfile
 from pathlib import Path
 
@@ -20,10 +22,19 @@ def read_version() -> str:
     return match.group(1).strip() if match else "1.0.0"
 
 
+def remove_tree(path: Path) -> None:
+    def on_error(function, value, _exc_info):
+        os.chmod(value, stat.S_IWRITE)
+        function(value)
+
+    shutil.rmtree(path, onerror=on_error)
+
+
 def copy_tree(name: str, package_dir: Path) -> None:
     src = ROOT / name
     if src.exists():
-        shutil.copytree(src, package_dir / name, dirs_exist_ok=True)
+        ignore = shutil.ignore_patterns("__pycache__", "*.pyc", "superpowers")
+        shutil.copytree(src, package_dir / name, dirs_exist_ok=True, ignore=ignore)
 
 
 def copy_file(name: str, package_dir: Path) -> None:
@@ -87,7 +98,7 @@ def build_release(version: str) -> tuple[Path, Path]:
     zip_path = RELEASE_DIR / f"{package_name}.zip"
 
     if package_dir.exists():
-        shutil.rmtree(package_dir)
+        remove_tree(package_dir)
     zip_path.unlink(missing_ok=True)
 
     package_dir.mkdir(parents=True)
@@ -97,7 +108,9 @@ def build_release(version: str) -> tuple[Path, Path]:
 
     sources_dir = package_dir / "sources"
     sources_dir.mkdir(parents=True, exist_ok=True)
-    copy_file("sources/README.md", sources_dir)
+    sources_readme = ROOT / "sources" / "README.md"
+    if sources_readme.exists():
+        shutil.copy2(sources_readme, sources_dir / "README.md")
 
     for name in ["SKILL.md", "CLAUDE.md", "AGENTS.md", "README.md", "ROADMAP.md", ".gitignore"]:
         copy_file(name, package_dir)
