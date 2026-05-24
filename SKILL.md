@@ -145,8 +145,11 @@ functions:
     trigger: "Check wiki health"
     checks:
       - orphan pages
-      - dead links
+      - dead links: link targets must be real wiki file stems
       - stale pages
+      - empty pages
+      - duplicate titles
+      - non-canonical links
       - draft pages
       - contradictions
 
@@ -252,7 +255,7 @@ We chose the SKILL form because it brings these advantages:
 
 - **Protocol-driven**: Works with natural language (no installation required)
 - **Pure Markdown**: No database, no lock-in, git-native
-- **Wiki-style links**: `[[PageName]]` format, Obsidian-compatible
+- **Wiki-style links**: `[[PageName]]` format with canonical page files; avoid duplicate shell pages
 - **Cumulative learning**: Every query can create new knowledge
 - **Health checks**: Orphan pages, dead links, stale content detection
 - **Optional CLI**: Python scripts for automation and batch operations
@@ -385,7 +388,7 @@ llm-wiki/
 
 1. **CLAUDE.md as Protocol**: Defines Agent behavior standards, anyone/any Agent can follow
 2. **Pure Markdown**: No database, no lock-in, native git version control
-3. **Bidirectional Links**: `[[PageName]]` format, compatible with Obsidian
+3. **Bidirectional Links**: `[[PageName]]` format, compatible with Obsidian when the link target matches the canonical page file
 4. **Cumulative Learning**: Each query can generate new wiki pages, knowledge continuously accumulates
 
 ## Query Mechanism

@@ -61,6 +61,18 @@ else:
         print(f'📅 Stale pages ({len(issues[\"stale\"])}):')
         for p in issues['stale'][:5]:
             print(f'    - {p}')
+    if issues['empty_pages']:
+        print(f'⚪ Empty pages ({len(issues[\"empty_pages\"])}):')
+        for p in issues['empty_pages'][:5]:
+            print(f'    - {p}')
+    if issues['duplicate_titles']:
+        print(f'🔁 Duplicate titles ({len(issues[\"duplicate_titles\"])}):')
+        for p in issues['duplicate_titles'][:5]:
+            print(f'    - {p}')
+    if issues['noncanonical_links']:
+        print(f'🔗 Non-canonical links ({len(issues[\"noncanonical_links\"])}):')
+        for p in issues['noncanonical_links'][:5]:
+            print(f'    - {p}')
     if issues['drafts']:
         print(f'📝 Draft pages ({len(issues[\"drafts\"])}):')
         for p in issues['drafts'][:5]:
