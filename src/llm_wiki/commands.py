@@ -482,8 +482,11 @@ def lint(ctx, fix: bool):
 
     检查项：
       - 孤儿页面（未被引用的页面）
-      - 死链（指向不存在的页面）
+      - 死链（链接目标不是 wiki 目录下的文件 stem）
       - 陈旧页面（90天未更新）
+      - 空页面（无有效正文）
+      - 重复标题（多个文件声明同一页面）
+      - 非 canonical 链接（链接目标未指向真实文件 stem）
       - 草稿页面
     """
     LOG.info("lint: fix=%s", fix)
@@ -515,6 +518,21 @@ def lint(ctx, fix: bool):
     if issues['stale']:
         click.echo(f"\n[OLD] 陈旧页面 ({len(issues['stale'])}):")
         for p in issues['stale'][:5]:
+            click.echo(f"    - {p}")
+
+    if issues['empty_pages']:
+        click.echo(f"\n[EMPTY] 空页面 ({len(issues['empty_pages'])}):")
+        for p in issues['empty_pages'][:5]:
+            click.echo(f"    - {p}")
+
+    if issues['duplicate_titles']:
+        click.echo(f"\n[DUP] 重复标题 ({len(issues['duplicate_titles'])}):")
+        for p in issues['duplicate_titles'][:5]:
+            click.echo(f"    - {p}")
+
+    if issues['noncanonical_links']:
+        click.echo(f"\n[LINK] 非 canonical 链接 ({len(issues['noncanonical_links'])}):")
+        for p in issues['noncanonical_links'][:5]:
             click.echo(f"    - {p}")
 
     if issues['drafts']:

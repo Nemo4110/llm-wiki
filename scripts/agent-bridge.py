@@ -527,9 +527,11 @@ def cmd_lint(args: argparse.Namespace) -> int:
 
     wiki = WikiManager(wiki_root / "wiki")
     issues = wiki.lint()
-    LOG.info("Lint complete: orphans=%d dead_links=%d stale=%d drafts=%d",
+    LOG.info("Lint complete: orphans=%d dead_links=%d stale=%d empty_pages=%d duplicate_titles=%d noncanonical_links=%d drafts=%d",
              len(issues["orphans"]), len(issues["dead_links"]),
-             len(issues["stale"]), len(issues["drafts"]))
+             len(issues["stale"]), len(issues["empty_pages"]),
+             len(issues["duplicate_titles"]), len(issues["noncanonical_links"]),
+             len(issues["drafts"]))
 
     lines: List[str] = []
     lines.append(_md_header("Wiki Health Check"))
@@ -549,6 +551,9 @@ def cmd_lint(args: argparse.Namespace) -> int:
             ["Orphan pages", str(len(issues["orphans"])), "⚠️" if issues["orphans"] else "✅"],
             ["Dead links", str(len(issues["dead_links"])), "⚠️" if issues["dead_links"] else "✅"],
             ["Stale pages", str(len(issues["stale"])), "⚠️" if issues["stale"] else "✅"],
+            ["Empty pages", str(len(issues["empty_pages"])), "⚠️" if issues["empty_pages"] else "✅"],
+            ["Duplicate titles", str(len(issues["duplicate_titles"])), "⚠️" if issues["duplicate_titles"] else "✅"],
+            ["Non-canonical links", str(len(issues["noncanonical_links"])), "⚠️" if issues["noncanonical_links"] else "✅"],
             ["Draft pages", str(len(issues["drafts"])), "⚠️" if issues["drafts"] else "✅"],
         ],
     ))
@@ -561,15 +566,38 @@ def cmd_lint(args: argparse.Namespace) -> int:
         lines.append("")
 
     if issues["dead_links"]:
-        lines.append(_md_header("Dead Links (target does not exist)", level=3))
+        lines.append(_md_header("Dead Links (target is not a wiki file stem)", level=3))
         lines.append(_md_code_block("\n".join(f"- [[{link}]]" for link in issues["dead_links"])))
         lines.append("")
-        lines.append(_md_action("Create stub pages for dead links or remove broken references."))
+        lines.append(_md_action("Create the missing canonical page file or rewrite the link target to an existing file stem."))
         lines.append("")
 
     if issues["stale"]:
         lines.append(_md_header("Stale Pages (>90 days since update)", level=3))
         lines.append(_md_code_block("\n".join(f"- [[{p}]]" for p in issues["stale"])))
+        lines.append("")
+
+    if issues["empty_pages"]:
+        lines.append(_md_header("Empty Pages", level=3))
+        lines.append(_md_code_block("\n".join(f"- [[{p}]]" for p in issues["empty_pages"])))
+        lines.append("")
+        lines.append(_md_action("Fill these pages with useful content or remove duplicate empty shells."))
+        lines.append("")
+
+    if issues["duplicate_titles"]:
+        lines.append(_md_header("Duplicate Titles", level=3))
+        lines.append(_md_code_block("\n".join(f"- {p}" for p in issues["duplicate_titles"])))
+        lines.append("")
+        lines.append(_md_action("Remove duplicate shell files or merge them into the canonical page file."))
+        lines.append("")
+
+    if issues["noncanonical_links"]:
+        lines.append(_md_header("Non-Canonical Links", level=3))
+        lines.append(_md_code_block("\n".join(f"- {p}" for p in issues["noncanonical_links"][:50])))
+        if len(issues["noncanonical_links"]) > 50:
+            lines.append(f"... and {len(issues['noncanonical_links']) - 50} more")
+        lines.append("")
+        lines.append(_md_action("Rewrite links to target the canonical file stem, e.g. `[[Page-Name|Page Name]]`."))
         lines.append("")
 
     if issues["drafts"]:

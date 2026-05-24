@@ -115,8 +115,11 @@ Before proceeding to content extraction, Agent MUST verify the downloaded file a
 **Checklist**:
 
 - [ ] **Orphan pages**: Pages not referenced by any other page
-- [ ] **Dead links**: `[[Non-existent page]]`
+- [ ] **Dead links**: `[[...]]` target is not a real `wiki/*.md` file stem
 - [ ] **Stale pages**: Not updated in 90 days
+- [ ] **Empty pages**: Files with no meaningful body text
+- [ ] **Duplicate titles**: Multiple files declaring the same `# Title`
+- [ ] **Non-canonical links**: `[[...]]` targets that do not point to the real page file stem
 - [ ] **Contradictory statements**: Same concept defined differently across pages
 - [ ] **TODO items**: `TODO` markers not processed
 
@@ -176,7 +179,9 @@ One-sentence definition. ——[[RelatedConcept]]
 2. **Avoid over-linking**: Only link the first mention within the same page
 3. **Bidirectional links**: When creating a new page, check which existing pages should link back
 4. **Link text**: Keep it natural; can use `[[Target|display text]]`
-5. **Link resolution**: Every `[[PageName]]` MUST point to a real page. If the target page has not been created yet, a stub must be created by the end of this ingest (at least `# Title`, one-sentence definition, and frontmatter)
+5. **Link resolution**: Every `[[PageName]]` target MUST be a real `wiki/*.md` file stem. If the target page has not been created yet, a stub must be created by the end of this ingest (at least `# Title`, one-sentence definition, and frontmatter)
+6. **Canonical file target**: Page files created by this SKILL use the canonical slug filename `Title-With-Spaces.md`. Links should target the real file stem and use aliases for natural display, e.g. `[[AI-Coding-Workflow|AI Coding Workflow]]`. Before creating any new file, check whether the canonical filename already exists. Do not create space-named shell files such as `AI Coding Workflow.md` when `AI-Coding-Workflow.md` exists.
+7. **No empty shell pages**: A page with only `# Title` is invalid. Stubs must include frontmatter, one-sentence definition, at least one useful body section, related links where known, sources if available, and changelog.
 
 ## Index Format (index.md)
 

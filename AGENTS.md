@@ -148,13 +148,16 @@ python scripts/agent-bridge.py lint
 ```
 
 **Output sections**:
-- `## Summary` — count table for orphans, dead links, stale, drafts
+- `## Summary` — count table for orphans, dead links, stale, empty pages, duplicate titles, non-canonical links, drafts
 - `## Orphan Pages` — pages not referenced by any other
-- `## Dead Links` — `[[Non-existent page]]` references
+- `## Dead Links` — `[[...]]` targets that are not real `wiki/*.md` file stems
 - `## Stale Pages` — >90 days since last update
+- `## Empty Pages` — files with no meaningful body text
+- `## Duplicate Titles` — multiple files declaring the same `# Title`
+- `## Non-Canonical Links` — wiki links whose target does not point to the real page file stem
 - `## Draft Pages`
 
-**Your action**: For dead links, create stub pages. For orphans, consider adding backlinks from relevant pages.
+**Your action**: For dead links, create canonical page files or rewrite the link target to an existing file stem. For empty pages, fill them or remove duplicate shells. For duplicate titles, keep the canonical slug file (`Title-With-Spaces.md`) and merge or delete accidental variants. For non-canonical links, rewrite `[[Page Name]]` as `[[Page-Name|Page Name]]`. For orphans, consider adding backlinks from relevant pages.
 
 ### 4. Status Overview
 
