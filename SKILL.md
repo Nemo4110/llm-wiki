@@ -1,7 +1,7 @@
 ---
 name: llm-wiki
 description: "Karpathy's llm-wiki pattern implementation — cumulative knowledge management for AI agents"
-version: 1.4.0
+version: 1.4.1
 author: "@yourname"
 license: MIT
 repository: "https://github.com/Nemo4110/llm-wiki.git"
@@ -85,11 +85,13 @@ functions:
         description: "Path to source file in sources/"
     workflow:
       - Read source content
+      - Extract source time metadata: publication/release/post date, collection date, ingest date, and date precision when available
       - Extract key insights
       - Identify/create affected wiki pages
       - Dynamic linking: run `python scripts/agent-bridge.py link --source <new_page> --mode light` to discover related pages
       - For high-confidence relations (score >= 0.5), apply merge strategy to backward-update existing pages
       - Update cross-references
+      - Preserve temporal relations in page frontmatter (`sources_meta`) and, when useful, a `## 时间线` / `## Timeline` section
       - Create stub pages for any new [[Dead Link]] introduced in the content
       - Append to log.md
       - For batch ingest (>=2 sources), run `python scripts/agent-bridge.py relink --since <date> --mode deep`
@@ -178,6 +180,32 @@ related:
 
 # CLI Reference
 
+## Temporal Metadata Requirement
+
+Agents should distinguish wiki maintenance dates from source/work dates:
+
+- `created` / `updated`: when the wiki page was created or edited.
+- `sources_meta[].published`: when the paper, post, release, documentation, or work appeared.
+- `sources_meta[].collected`: when the user saved, collected, or imported it.
+- `sources_meta[].ingested`: when llm-wiki processed it.
+- `sources_meta[].date_precision`: `day`, `month`, `year`, or `unknown`.
+
+When multiple works are discussed, preserve historical order in the prose or in a `## 时间线` / `## Timeline` section. Do not infer missing months or days.
+
+### Visible Time Anchor Format
+
+Use native Markdown to make time visible without relying on HTML, colors, or wide tables:
+
+- Start `### 时间定位` / `### Temporal Position` with a blockquote summary:
+  - `> **时间范围**：YYYY.MM-YYYY.MM`
+  - `> **阶段判断**：one concise sentence about the historical stage`
+- For dated nodes, prefer list items that start with a bold bracketed anchor:
+  - `- **[2025.09] Work or event name**: why it matters.`
+  - `- **[2026.01] Follow-up work**: what changed.`
+- Use `**[YYYY.MM-YYYY.MM]**` for ranges and `**[YYYY]**` when only year precision is reliable.
+- Apply this especially in `### 时间定位`, `## 时间线`, `### 与已有知识的关系`, `## Related Pages`, and source-note summaries.
+- Prefer readable lists over wide Markdown tables when rows contain wiki links or long relationship text. Use tables only for short, dense, comparison-oriented metadata.
+
 ## Agent Bridge (Recommended for Agents)
 
 Use `scripts/agent-bridge.py` as the single entry point for all tool-assisted operations:
@@ -257,6 +285,7 @@ We chose the SKILL form because it brings these advantages:
 - **Pure Markdown**: No database, no lock-in, git-native
 - **Wiki-style links**: `[[PageName]]` format with canonical page files; avoid duplicate shell pages
 - **Cumulative learning**: Every query can create new knowledge
+- **Temporal knowledge**: Preserve publication/release/collection dates so related works can be read in historical order
 - **Health checks**: Orphan pages, dead links, stale content detection
 - **Optional CLI**: Python scripts for automation and batch operations
 
@@ -537,6 +566,8 @@ Issues and PRs welcome!
 ### Current TODO
 
 - [ ] MCP server wrapper (for other Agents)
+- [ ] Zotero MCP integration for literature discovery, ingest, metadata linking, and optional backlink sync
+- [ ] Temporal metadata and timeline views for source publication/release/collection order
 - [ ] Obsidian plugin (one-click sync)
 - [x] Incremental embedding for faster retrieval
 - [ ] Multi-language support

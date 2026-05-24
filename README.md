@@ -204,6 +204,8 @@ llm-wiki/
 2. **Pure Markdown**: No database, no lock-in, native git version control
 3. **Bidirectional Links**: `[[PageName]]` format, compatible with Obsidian
 4. **Cumulative Learning**: Each query can generate new wiki pages, knowledge continuously accumulates
+5. **Temporal Context**: Preserve publication, release, collection, and ingest dates so related works can be read in historical order
+6. **Planned Zotero Integration**: Let Zotero manage literature assets while llm-wiki keeps distilled Markdown knowledge
 
 ## Query Mechanism
 
@@ -329,6 +331,17 @@ Claude: Created [[LoRA vs Full Fine-tuning]]
 2. Enjoy graph view, quick navigation, beautiful rendering
 3. Claude Code handles maintenance, Obsidian handles reading and thinking
 
+## Planned Zotero MCP Integration
+
+Zotero is the preferred future home for managed literature assets: bibliographic metadata, PDFs, annotations, collections, tags, and citation keys. The planned integration uses Zotero MCP as a source and synchronization layer:
+
+- Use Zotero MCP search, metadata, full-text, annotation, and collection tools to discover materials that should be ingested.
+- Store Zotero identifiers in wiki frontmatter, such as `zotero_item_key`, `citation_key`, `library_id`, and `zotero_uri`.
+- Keep `sources/` integrity intact: Zotero-managed original files remain source assets, but Agent-generated summaries must never be written into `sources/`.
+- Optionally write lightweight backlinks or tags to Zotero later, such as `llm-wiki` and `wiki:<PageSlug>`.
+
+See [docs/ZOTERO_MCP_INTEGRATION.md](docs/ZOTERO_MCP_INTEGRATION.md) for the implementation analysis.
+
 ## Advanced Configuration
 
 ### Custom Page Template
@@ -386,6 +399,8 @@ Detailed roadmap at [ROADMAP.md](ROADMAP.md).
 ### Current TODO
 
 - [ ] MCP server wrapper (so other Agents can use it)
+- [ ] Zotero MCP integration for literature discovery, ingest, metadata linking, and optional backlink sync
+- [ ] Temporal metadata and timeline views for source publication/release/collection order
 - [ ] Obsidian plugin (one-click sync)
 - [x] Incremental embedding for faster retrieval
 - [x] Multi-language support (English + Chinese)

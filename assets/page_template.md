@@ -5,6 +5,15 @@ sources:
   - "sources/FILENAME"
 source_types:
   - "academic_paper | technical_article | code_repository | book | note | documentation | other"
+sources_meta:
+  - title: "Source Title"
+    type: "academic_paper | technical_article | code_repository | book | note | documentation | other"
+    published: "YYYY-MM | YYYY-MM-DD | YYYY"
+    collected: "YYYY-MM-DD"
+    ingested: "YYYY-MM-DD"
+    date_precision: "day | month | year | unknown"
+    zotero_item_key: ""
+    citation_key: ""
 tags:
   - "TAG"
 status: "draft"  # draft | active | archived
@@ -36,9 +45,19 @@ status: "draft"  # draft | active | archived
 
 它扩展、修正、反驳或实例化了哪些已有页面？
 
+### 时间定位
+
+这个知识、论文、帖子或项目处在什么时间点？它是在回应哪些早期工作，还是开启/代表了后续方向？
+
 ## 来源笔记
 
 <!-- 根据 source_types 从 assets/source_snippets.md 插入对应片段。只保留能从来源可靠提取的字段，不为填满模板而编造内容。 -->
+
+## 时间线
+
+<!-- 仅当页面承载多个来源或需要表达前后演进时保留。按 published/released/posted 时间排序，而不是按 ingest 时间排序。 -->
+
+- YYYY-MM: 来源或工作名称 — 与本页主题的时间关系
 
 ## 相关页面
 

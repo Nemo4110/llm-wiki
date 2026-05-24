@@ -1,14 +1,115 @@
-# Agent Implementation Guide
+# LLM-Wiki Unified Agent Protocol
 
 > This document guides Claude Code, OpenClaw, and other AI Agents on how to use llm-wiki.
+> `AGENTS.md` and `CLAUDE.md` are intended to be hard links to the same unified protocol file. Update one content body only.
 > **All Agents operating in this project directory MUST read and understand `SKILL.md` before performing any task.**
+
+## Design Philosophy
+
+- **LLM as programmer, Wiki as codebase**
+- **User is responsible for**: placing materials, asking good questions, judging significance
+- **Agent is responsible for**: summarizing, cross-referencing, indexing, logging, and maintaining structural consistency
+- **Accumulation over retrieval**: interactions should leave lasting value when they produce reusable knowledge
+- **Zotero as literature layer, wiki as knowledge layer**: Zotero can manage bibliographic metadata, PDFs, annotations, collections, tags, and citation keys; llm-wiki should distill concepts, relationships, time ordering, and synthesis into Markdown
+
+## Core Work Protocol
+
+### Ingest
+
+Use Protocol mode for ingest because it requires LLM judgment. The Agent must:
+
+1. Verify the source exists in `sources/` or was fetched through a real network/Zotero operation.
+2. Run the post-fetch verification gate before using network-fetched files.
+3. Extract source metadata, including title, authors/creator, URL/DOI/arXiv/citation key where available.
+4. Extract source time metadata:
+   - `published`: paper publication, arXiv date, article/post date, release date, or documentation date.
+   - `updated_at_source`: source-side update time if available.
+   - `collected`: user collection, Zotero import, or saved time if available.
+   - `ingested`: llm-wiki processing date.
+   - `date_precision`: `day`, `month`, `year`, or `unknown`.
+5. Extract key insights and decide whether to create a new page or update an existing concept page.
+6. Preserve `sources_meta` in frontmatter when source-level metadata is available.
+7. Add a `## 时间线` / `## Timeline` section for overview pages or multi-source pages where historical order matters.
+   - For papers, arXiv works, named methods, released systems, benchmark reports, or technical posts with a clear source date, show a compact visible date as a Markdown time anchor before the work name, e.g. `**[2024.02] FlashAttention V3**` or `**[2025.08] GRPO training discussion**`.
+   - If only a year is reliable, use `YYYY`; do not invent a month.
+   - Start `### 时间定位` / `### Temporal Position` with a blockquote summary using `> **时间范围**：...` and `> **阶段判断**：...` when the page has multiple dated nodes.
+   - Prefer readable lists over wide Markdown tables when the row contains wiki links or long relationship text. Tables must not force narrow columns to wrap wiki links into broken fragments.
+8. Run dynamic linking with `agent-bridge.py link` or `relink`, review diffs, and append safe backward updates.
+9. Update `wiki/index.md` and append `log.md`.
+
+Never treat `created` / `updated` as publication dates. They are wiki maintenance dates only.
+
+### Query
+
+For wiki queries, first read `wiki/index.md`, then relevant pages and link neighbors. Use semantic query only as candidate discovery; synthesize from the actual page content and cite wiki pages with `[[PageName]]`. If a query produces a lasting new synthesis, ask or decide whether to archive it into wiki according to user intent.
+
+For questions that need source coverage, recent literature, annotations, or a specific paper, Zotero MCP may be used as a source-discovery layer. Zotero results are not the final answer; read metadata/fulltext/annotations, then synthesize with citations.
+
+### Page Format Requirements
+
+Every non-index wiki page should include frontmatter, one-sentence definition, knowledge content, related pages, sources, and changelog. When available, include source-level metadata:
+
+```yaml
+---
+created: 2026-04-10
+updated: 2026-04-10
+sources:
+  - "sources/paper.pdf"
+source_types:
+  - "academic_paper"
+sources_meta:
+  - title: "Paper Title"
+    type: "academic_paper"
+    published: "2025-02"
+    collected: "2026-05-24"
+    ingested: "2026-05-24"
+    date_precision: "month"
+    zotero_item_key: "ABCD1234"
+    citation_key: "author2025title"
+tags:
+  - "AI/ML"
+status: "active"
+---
+```
+
+Do not invent missing month/day values. If only the year is reliable, write the year and set `date_precision: "year"`.
+
+In body text, prefer a human-scannable Markdown time anchor for dated works:
+
+- Use `**[YYYY.MM] Work or event name**` for sources with known day or month precision.
+- Use `**[YYYY] Work or event name**` for sources with only year precision.
+- Use `**[YYYY.MM-YYYY.MM]**` for ranges.
+- In `### 时间定位`, lead with a native Markdown blockquote summary:
+  - `> **时间范围**：YYYY.MM-YYYY.MM`
+  - `> **阶段判断**：one concise sentence about the historical stage`
+- For `### 来源摘要` / source-note summaries, keep `**时间信息**` concise, then list 2-6 important anchors as sub-bullets when useful.
+- Apply visible anchors especially in `## 时间线`, `### 与已有知识的关系`, `## Related Pages`, and source-note summaries.
+- Keep the full machine-readable date in frontmatter (`YYYY-MM-DD`, `YYYY-MM`, or `YYYY`) and use the compact display form only for reading.
+
+### Cross-Reference Rules
+
+1. First meaningful mention of a concept creates a `[[Concept]]` link.
+2. Avoid over-linking; link the first mention within a local section.
+3. Every internal link must resolve to a real `wiki/*.md` stem by the end of ingest.
+4. Use canonical slug file names and aliases, e.g. `[[AI-Coding-Workflow|AI Coding Workflow]]`.
+5. Relationship descriptions should include temporal relation when useful: early work, follow-up, contemporary route, survey, retrospective, or outdated-but-historically-important.
+
+### Behavioral Rules
+
+- Be proactive about structural problems, source ambiguity, stale pages, missing dates, and dead links.
+- Keep changes scoped and simple.
+- Cite sources and preserve provenance.
+- Do not delete user-managed raw materials.
+- Do not write LLM-generated content into `sources/`.
+- Synchronize README language variants when user-facing behavior changes.
+- Use the project-managed Python environment (`.venv` or conda) for Python operations.
 
 ## Mandatory Pre-Flight Checklist
 
 Before executing any wiki-related task, every Agent MUST:
 
 1. **Read `SKILL.md`** — Understand the machine-readable specification, entry points, functions, and dependencies.
-2. **Read `CLAUDE.md`** — Understand the core protocol and behavioral rules.
+2. **Read this unified `AGENTS.md` / `CLAUDE.md` protocol** — Understand the core protocol, tool selection guide, and behavioral rules.
 3. **Run `python scripts/agent-bridge.py check`** — Verify the runtime environment.
 4. **Respect `sources/` integrity** — Never write LLM-generated content into `sources/`.
 
@@ -940,5 +1041,5 @@ They are not contradictory: Protocol mode implements the semantics of CLAUDE.md;
 
 ---
 
-*Agent Guide Version: 1.4.0*
-*Last Updated: 2026-04-29*
+*Agent Guide Version: 1.4.1*
+*Last Updated: 2026-05-24*

@@ -2,7 +2,7 @@
 
 > 项目演进计划和待办事项
 
-## 当前状态：v1.4.0
+## 当前状态：v1.4.1
 
 **核心功能**：
 - [x] 基于协议的 wiki 工作流
@@ -67,6 +67,21 @@
 - [ ] **关系图可视化**：基于链接数据生成概念关系图（Mermaid / Cytoscape）
 - [ ] **知识冲突检测**：自动发现不同来源的矛盾陈述并标记
 - [ ] **智能摘要**：长页面自动生成 TOC 摘要
+- [ ] **时间感知知识整理**：
+  - [ ] 区分 wiki 维护时间（`created` / `updated`）和知识对象时间（发表、发布、收藏、摄入）
+  - [ ] 在 frontmatter 中记录 `sources_meta` / `source_events`
+  - [ ] 在综述页和收藏夹入口页生成 `## 时间线`
+  - [ ] Link / relink 时优先标注“早期工作、后续改进、同一时期路线、复盘材料”等时间关系
+
+### 文献资产集成
+
+- [ ] **Zotero MCP 接入**：
+  - [ ] 通过 Zotero MCP 搜索 library、collection、tag、recent items 和 semantic results
+  - [ ] 使用 Zotero metadata/fulltext/annotations 作为 ingest 输入
+  - [ ] 在 wiki 页面 frontmatter 中保存 Zotero item key、citation key、library id、URI、DOI/arXiv 等标识
+  - [ ] 支持从 wiki 页反查 Zotero 原始文献、附件和批注
+  - [ ] 可选向 Zotero 写回 `llm-wiki`、`wiki:<PageSlug>` 标签或 note 回链
+  - [ ] 遵守 `sources/` 完整性红线：不把 Agent 生成摘要写入原始资料目录
 
 ---
 
@@ -169,6 +184,22 @@
 - 无 embedding → light 模式（标题/标签/关键词匹配）
 - 无需用户手动指定，零配置体验
 
+### 2026-05-24：Zotero MCP 与时间感知整理进入中期规划
+
+**决定**：把 Zotero MCP 作为 llm-wiki 中期集成方向，同时把“发表/发布/收藏/摄入时间”提升为 ingest 协议的一等元数据。
+
+**理由**：
+
+- Zotero 已经是成熟的文献、PDF、批注、collection、tag 和 citation key 管理工具
+- llm-wiki 更适合沉淀跨来源、跨概念的 Markdown 知识页，而不应重复实现文献管理系统
+- 时间信息能帮助区分早期工作、后续改进、复盘材料和过时结论，避免只有语义链接而缺少历史顺序
+
+**实现方向**：
+
+- 优先做只读接入：Zotero MCP → Agent ingest → wiki
+- 再做标识链接：wiki frontmatter 保存 Zotero key、citation key、DOI/arXiv、published date
+- 最后做可选写回：Zotero tag/note 记录 wiki 回链
+
 ---
 
-*最后更新：2026-05-07*
+*最后更新：2026-05-24*
