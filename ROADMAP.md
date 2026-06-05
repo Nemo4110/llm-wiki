@@ -18,6 +18,7 @@
 - [x] **双向内容合并** — 安全回写现有页面，自动备份
 - [x] **执行可追溯性** — 文件级日志 `agent_logger.py`
 - [x] **自动模式选择** — 根据 embedding 可用性自动切换 light/deep 模式
+- [x] **Zotero 文献层工作流** — 可使用 OpenAI Plugins Zotero skill 搜索、导出 citation、读取附件路径/全文、导入 BibTeX/RIS
 
 **CLI 工具**：
 
@@ -75,13 +76,11 @@
 
 ### 文献资产集成
 
-- [ ] **Zotero MCP 接入**：
-  - [ ] 通过 Zotero MCP 搜索 library、collection、tag、recent items 和 semantic results
-  - [ ] 使用 Zotero metadata/fulltext/annotations 作为 ingest 输入
-  - [ ] 在 wiki 页面 frontmatter 中保存 Zotero item key、citation key、library id、URI、DOI/arXiv 等标识
-  - [ ] 支持从 wiki 页反查 Zotero 原始文献、附件和批注
-  - [ ] 可选向 Zotero 写回 `llm-wiki`、`wiki:<PageSlug>` 标签或 note 回链
-  - [ ] 遵守 `sources/` 完整性红线：不把 Agent 生成摘要写入原始资料目录
+Zotero 不作为 llm-wiki 原生待开发模块。可使用 OpenAI Plugins Zotero skill（<https://github.com/openai/plugins/tree/main/plugins/zotero/skills/zotero>）或等价的 Zotero-capable skill 承担文献层工作流：探测或启用 Zotero Desktop 本地 API，搜索本地条目、collection 和 tag，导出 BibTeX/citation，按需读取附件 file URL 或索引全文，并在确认后导入 BibTeX/RIS 记录。
+
+llm-wiki 的职责是把这些 Zotero 结果作为来源发现和 provenance：读取 metadata、全文、批注或附件路径，综合生成 Markdown wiki 页面，并在可用时保存 `zotero_item_key`、`citation_key`、`library_id`、`zotero_uri`、DOI、arXiv ID 等标识。
+
+任意文档上传/附件管理尚未作为 llm-wiki 工作流验证；除非某个 Zotero-capable Agent 明确支持该操作，否则文档所有权继续交给 Zotero。
 
 ---
 
@@ -200,6 +199,21 @@
 - 再做标识链接：wiki frontmatter 保存 Zotero key、citation key、DOI/arXiv、published date
 - 最后做可选写回：Zotero tag/note 记录 wiki 回链
 
+### 2026-06-05：Zotero 改为外部 Agent skill 工作流
+
+**决定**：不在 llm-wiki TODO 中实现原生 Zotero MCP server/client 封装；Zotero 连接由外部 Agent/Zotero skill 承担，推荐使用 OpenAI Plugins Zotero skill（<https://github.com/openai/plugins/tree/main/plugins/zotero/skills/zotero>）。llm-wiki 只规范如何使用 Zotero 结果作为来源发现和 provenance。
+
+**理由**：
+
+- 已有 Zotero skill 能连接 Zotero Desktop 本地 API，覆盖搜索、collection/tag、BibTeX/citation、附件路径/全文读取，以及经确认后的 BibTeX/RIS 导入。
+- llm-wiki 的边界应保持为 Markdown 知识层，避免重复实现文献管理器。
+- 任意文档上传/附件管理能力尚未在 llm-wiki 工作流中验证，因此不写成项目已支持能力。
+
+**文档调整**：
+
+- `README.md`、`docs/README.cn.md` 和 `SKILL.md` 改为说明“通过 Agent Skills 使用 Zotero”。
+- 当前 TODO 删除不再需要的原生封装、Zotero 原生接入和 Obsidian 插件条目；Obsidian 使用方式保持为直接打开 `wiki/` 目录。
+
 ---
 
-*最后更新：2026-05-24*
+*最后更新：2026-06-05*

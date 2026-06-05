@@ -12,7 +12,7 @@
 - **原生集成** — 通过 Claude Code 直接执行命令，无需中间件或协议转换
 - **纯文本数据** — 纯 Markdown 文件，原生支持 Git，没有专有格式或厂商锁定
 - **编辑器自由** — 可使用 Obsidian、VS Code 或任何你喜欢的文本编辑器
-- **极轻量** — 仅约 2.5k 行轻量级胶水代码，复杂度极低
+- **极轻量** — 在纯 Markdown wiki 外只保留小型 Python 辅助/CLI 层，复杂度低
 
 ## 快速开始
 
@@ -86,6 +86,7 @@ python -c "from src.llm_wiki.core import WikiManager; print('✓ 安装成功')"
 | `httpx` | >=0.27.0 | HTTP 客户端 | Ollama 本地服务通信 |
 | `mcp` | >=1.0.0 | MCP SDK | 通过 MCP 调用远程 embedding |
 | `openai` | >=1.0.0 | OpenAI SDK | OpenAI embedding API |
+| `pytest` | >=7.0.0 | 测试运行器 | 用于仓库内置测试套件 |
 
 **回退依赖**（仅在 PyMuPDF 表格提取效果不佳时使用）：
 - `pdfplumber >= 0.11.8` — 表格提取（需安全版本修复 CVE-2025-64512）
@@ -129,7 +130,28 @@ Claude 会：
 "检查 wiki 健康状况"
 ```
 
-### CLI 模式（可选）
+### Agent Bridge（推荐给 Agent）
+
+安装依赖后，Agent 应优先使用 `scripts/agent-bridge.py` 作为所有工具辅助操作的统一入口，包括检查、状态、链接、合并、语义查询和索引：
+
+```bash
+# 验证运行环境和 wiki 可用性
+python scripts/agent-bridge.py check
+
+# 查看 wiki 状态和健康状况
+python scripts/agent-bridge.py status
+python scripts/agent-bridge.py lint
+
+# 发现并应用页面关系
+python scripts/agent-bridge.py link --source "NewPage" --mode light
+python scripts/agent-bridge.py merge --source "NewPage" --target "OldPage" --strategy append_related --dry-run
+
+# 在 config.yaml 启用 embedding 后建立/查询索引
+python scripts/agent-bridge.py index
+python scripts/agent-bridge.py query "优化方法" --semantic
+```
+
+### 旧版 CLI 模式（可选）
 
 安装依赖后，可使用命令行工具：
 
@@ -157,11 +179,12 @@ python -m src.llm_wiki --help
 ```text
 llm-wiki/
 ├── CLAUDE.md           # ⭐ 核心协议：Agent 的行为准则
-├── AGENTS.md           # Agent 实现指南（CLI 使用说明）
+├── AGENTS.md           # Agent 实现指南和工具选择协议
 ├── README.md           # 本文件（英文）
 ├── docs/
 │   └── README.cn.md    # 本文件（简体中文）
 ├── log.md              # 时间线日志（追加式）
+├── config.yaml.example # 可选 embedding/provider 配置示例
 ├── sources/            # 原始资料（用户管理，Agent 只读，默认不进 git）
 │   └── README.md
 ├── wiki/               # 生成的知识页面（Agent 管理）
@@ -174,6 +197,7 @@ llm-wiki/
 │   ├── llm_wiki/
 │   └── requirements.txt
 ├── scripts/            # 辅助脚本
+├── tests/              # pytest 测试：CLI、bridge、linker、merge、embedding
 ├── hooks/              # 平台钩子（可选）
 ├── SKILL.md            # 规范格式的技能描述
 └── examples/           # 示例 wiki
@@ -205,7 +229,7 @@ llm-wiki/
 3. **双向链接**：`[[PageName]]` 格式，与 Obsidian 兼容
 4. **累积式学习**：每次查询可以产生新的 wiki 页面，知识不断积累
 5. **时间上下文**：保留发表、发布、收藏和摄入时间，让相关工作能按历史顺序阅读
-6. **规划中的 Zotero 集成**：Zotero 负责文献资产管理，llm-wiki 负责沉淀后的 Markdown 知识层
+6. **Zotero 作为文献层**：通过已有 Agent/Zotero skill 访问 Zotero 文献库，llm-wiki 负责沉淀 Markdown 知识
 
 ## 查询机制详解
 
@@ -331,16 +355,25 @@ Claude：已创建 [[LoRA vs Full Fine-tuning]]
 2. 享受图谱视图、快速导航、美观渲染
 3. Claude Code 负责维护，Obsidian 负责阅读和思考
 
-## 规划中的 Zotero MCP 集成
+## 通过 Agent Skills 使用 Zotero
 
-Zotero 将作为未来优先接入的文献资产层，负责管理文献元数据、PDF、批注、收藏夹、标签和 citation key。llm-wiki 继续作为沉淀后的 Markdown 知识层。规划中的 Zotero MCP 集成包括：
+llm-wiki 不需要自己变成 Zotero 客户端。只要 Agent 已安装 Zotero skill，Zotero 就可以继续作为文献资产层，llm-wiki 继续作为 Markdown 知识层。
 
-- 使用 Zotero MCP 的搜索、元数据、全文、批注和 collection 工具发现待摄入材料。
-- 在 wiki frontmatter 中记录 `zotero_item_key`、`citation_key`、`library_id`、`zotero_uri` 等标识。
-- 保持 `sources/` 完整性：Zotero 管理的原始文件可作为来源资产，但 Agent 生成的摘要仍然禁止写入 `sources/`。
-- 后续可选择向 Zotero 写回轻量标签或回链，例如 `llm-wiki` 和 `wiki:<PageSlug>`。
+推荐的公开来源是 OpenAI Plugins 的 Zotero skill：[plugins/zotero/skills/zotero](https://github.com/openai/plugins/tree/main/plugins/zotero/skills/zotero)。Agent 可以使用该 skill，或其他等价的 Zotero-capable skill，而不必在 llm-wiki 内新增原生 Zotero 客户端。
 
-实现分析见 [Zotero MCP 集成方案](ZOTERO_MCP_INTEGRATION.md)。
+当前 Zotero skill 工作流可以：
+
+- 探测或启用 Zotero Desktop 本地 API。
+- 搜索本地条目、collection 和 tag。
+- 导出 BibTeX/citation，并把 citation key 插入草稿。
+- 在明确请求时读取附件 file URL 或索引全文。
+- 经确认后将 BibTeX/RIS 记录导入 Zotero。
+
+对 llm-wiki 来说，Zotero 结果应作为来源发现和 provenance：读取 Zotero metadata、全文、批注或附件路径；综合生成 wiki 页面；并在可用时把 `zotero_item_key`、`citation_key`、`library_id`、`zotero_uri`、DOI、arXiv ID 等标识保存到 frontmatter。
+
+这能保持 `sources/` 完整性：Zotero 管理的原始文件可作为来源资产，但 Agent 生成的摘要仍禁止写入 `sources/`。任意文档上传/附件管理不属于已验证的 llm-wiki 工作流；除非某个 Zotero-capable Agent 明确支持该操作，否则文档所有权应留给 Zotero。
+
+早期实现分析见 [早期 Zotero 分析方案](ZOTERO_MCP_INTEGRATION.md)。
 
 ## 进阶配置
 
@@ -398,10 +431,13 @@ tags:
 
 ### 当前 TODO
 
-- [ ] MCP 服务器封装（让其他 Agent 也能用）
-- [ ] Zotero MCP 集成，用于文献发现、摄入、元数据链接和可选回链同步
-- [ ] 来源发表/发布/收藏时间的元数据规范和时间线视图
-- [ ] Obsidian 插件（一键同步状态）
+- [ ] Lint 自动修复常见 wiki 健康问题
+- [ ] 查询结果存档的引导式工作流
+- [ ] 领域模板包和更完整的示例 wiki
+- [x] Agent Bridge 统一入口，供其他 Agent 使用
+- [x] 通过外部 Agent/Zotero skills 支持 Zotero 文献工作流
+- [x] 时间元数据协议和可见时间线锚点
+- [x] 直接用 Obsidian 打开 `wiki/` 目录即可兼容
 - [x] 增量 embedding 加速检索
 - [x] 多语言支持（英文 + 中文）
 

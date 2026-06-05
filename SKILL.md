@@ -58,6 +58,9 @@ dependencies:
     - name: mcp
       version: ">=1.0.0"
       reason: "MCP SDK for remote embedding providers"
+    - name: pytest
+      version: ">=7.0.0"
+      reason: "Test suite"
 
 # Installation methods
 installation:
@@ -154,6 +157,26 @@ functions:
       - non-canonical links
       - draft pages
       - contradictions
+
+# External integrations available through host Agent skills
+integrations:
+  zotero:
+    status: "external-agent-skill"
+    source_url: "https://github.com/openai/plugins/tree/main/plugins/zotero/skills/zotero"
+    description: "Use Zotero Desktop and installed Agent/Zotero skills as the literature layer; llm-wiki remains the Markdown knowledge layer."
+    verified_capabilities:
+      - "Probe or enable Zotero Desktop local API"
+      - "Search local Zotero items, collections, and tags"
+      - "Export BibTeX/citations and insert citation keys into drafts"
+      - "Read attachment file URLs or indexed full text when explicitly requested"
+      - "Import BibTeX/RIS records into Zotero after confirmation"
+    llm_wiki_workflow:
+      - "Use Zotero metadata, full text, annotations, or attachment paths as source discovery and provenance"
+      - "Preserve Zotero identifiers in wiki frontmatter when available: zotero_item_key, citation_key, library_id, zotero_uri, DOI, arXiv ID"
+      - "Keep Zotero-managed originals as source assets; never write Agent-generated summaries into sources/"
+    unverified_or_out_of_scope:
+      - "Arbitrary document upload or attachment management is not part of the verified llm-wiki workflow"
+      - "Do not build an llm-wiki-native Zotero client unless repeated manual workflows prove the need"
 
 # File structure
 structure:
@@ -277,7 +300,7 @@ We chose the SKILL form because it brings these advantages:
 - **Native integration** — Direct command execution via Claude Code, no middleware or protocol translation needed
 - **Plain-text data** — Pure Markdown files, git-native, with no proprietary formats or vendor lock-in
 - **Editor freedom** — Use Obsidian, VS Code, or any text editor you prefer
-- **Minimal footprint** — ~500 lines of core protocol, keeping complexity low
+- **Minimal footprint** — A small Python helper/CLI layer around a plain Markdown wiki, keeping complexity low
 
 ## Features
 
@@ -286,6 +309,7 @@ We chose the SKILL form because it brings these advantages:
 - **Wiki-style links**: `[[PageName]]` format with canonical page files; avoid duplicate shell pages
 - **Cumulative learning**: Every query can create new knowledge
 - **Temporal knowledge**: Preserve publication/release/collection dates so related works can be read in historical order
+- **Zotero-ready**: Use external Agent/Zotero skills for literature discovery and provenance
 - **Health checks**: Orphan pages, dead links, stale content detection
 - **Optional CLI**: Python scripts for automation and batch operations
 
@@ -365,6 +389,7 @@ python -c "from src.llm_wiki.core import WikiManager; print('✓ Installation su
 - `httpx >=0.27.0` — HTTP client for Ollama/local services
 - `openai >=1.0.0` — OpenAI embedding API
 - `mcp >=1.0.0` — MCP SDK for remote embedding providers
+- `pytest >=7.0.0` — Test runner for the included test suite
 
 **Fallback PDF dependency**:
 - `pdfplumber >=0.11.8` — Table extraction fallback (security version required for CVE-2025-64512)
@@ -375,9 +400,10 @@ python -c "from src.llm_wiki.core import WikiManager; print('✓ Installation su
 ```
 llm-wiki/
 ├── CLAUDE.md           # ⭐ Core protocol: Agent behavior guidelines
-├── AGENTS.md           # Agent implementation guide (CLI usage)
+├── AGENTS.md           # Agent implementation guide and tool-selection protocol
 ├── SKILL.md            # This file, machine-readable specification
 ├── log.md              # Timeline log (append-only)
+├── config.yaml.example # Optional embedding/provider configuration
 ├── sources/            # Raw materials (user-managed + tool-fetched; Agent forbidden from writing LLM-generated content)
 │   └── README.md
 ├── wiki/               # Generated knowledge pages (Agent-managed)
@@ -390,6 +416,7 @@ llm-wiki/
 │   ├── llm_wiki/
 │   └── requirements.txt
 ├── scripts/            # Auxiliary scripts
+├── tests/              # pytest suite for CLI, bridge, linker, merge, embedding
 ├── hooks/              # Platform hooks (optional)
 └── examples/           # Example wiki
 ```
@@ -419,6 +446,7 @@ llm-wiki/
 2. **Pure Markdown**: No database, no lock-in, native git version control
 3. **Bidirectional Links**: `[[PageName]]` format, compatible with Obsidian when the link target matches the canonical page file
 4. **Cumulative Learning**: Each query can generate new wiki pages, knowledge continuously accumulates
+5. **Zotero as Literature Layer**: Use existing Agent/Zotero skills to reach the Zotero library; llm-wiki keeps distilled Markdown knowledge
 
 ## Query Mechanism
 
@@ -543,6 +571,24 @@ Claude: Created [[LoRA vs Full Fine-tuning]]
 2. Enjoy graph view, quick navigation, beautiful rendering
 3. Claude Code handles maintenance, Obsidian handles reading and thinking
 
+## Using Zotero Through Agent Skills
+
+llm-wiki does not need to become a Zotero client. When an Agent has a Zotero skill available, Zotero can remain the literature layer while llm-wiki remains the Markdown knowledge layer.
+
+A recommended public source is the OpenAI Plugins Zotero skill: [plugins/zotero/skills/zotero](https://github.com/openai/plugins/tree/main/plugins/zotero/skills/zotero). Agents can use that skill, or an equivalent Zotero-capable skill, instead of adding a native Zotero client to llm-wiki.
+
+The current Zotero skill workflow can:
+
+- Probe or enable the local Zotero Desktop API.
+- Search local items, collections, and tags.
+- Export BibTeX/citations and insert citation keys into drafts.
+- Retrieve attachment file URLs or indexed full text when explicitly requested.
+- Import BibTeX/RIS records into Zotero after confirmation.
+
+For llm-wiki ingest, use Zotero results as source discovery and provenance: read Zotero metadata, full text, annotations, or attachment paths; synthesize wiki pages; and preserve identifiers such as `zotero_item_key`, `citation_key`, `library_id`, `zotero_uri`, DOI, and arXiv ID in frontmatter when available.
+
+This keeps `sources/` integrity intact. Zotero-managed originals can be referenced as source assets, but Agent-generated summaries must never be written into `sources/`. Arbitrary document upload/attachment management is not part of the verified llm-wiki workflow; leave document ownership to Zotero unless a Zotero-capable Agent explicitly supports that operation.
+
 ## Comparison with Alternatives
 
 | Solution | Characteristics | Best For |
@@ -565,12 +611,15 @@ Issues and PRs welcome!
 
 ### Current TODO
 
-- [ ] MCP server wrapper (for other Agents)
-- [ ] Zotero MCP integration for literature discovery, ingest, metadata linking, and optional backlink sync
-- [ ] Temporal metadata and timeline views for source publication/release/collection order
-- [ ] Obsidian plugin (one-click sync)
+- [ ] Lint auto-fix for common wiki health issues
+- [ ] Query result archiving as a guided workflow
+- [ ] Domain template packs and richer example wikis
+- [x] Agent Bridge unified entry point for other Agents
+- [x] Zotero literature workflow via external Agent/Zotero skills
+- [x] Temporal metadata protocol and visible timeline anchors
+- [x] Obsidian compatibility by opening the `wiki/` directory directly
 - [x] Incremental embedding for faster retrieval
-- [ ] Multi-language support
+- [x] Multi-language support (English + Chinese)
 
 ## License
 
