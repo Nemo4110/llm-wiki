@@ -1,630 +1,147 @@
 ---
 name: llm-wiki
-description: "Karpathy's llm-wiki pattern implementation — cumulative knowledge management for AI agents"
-version: 1.4.1
-author: "@yourname"
-license: MIT
-repository: "https://github.com/Nemo4110/llm-wiki.git"
-
-# Supported platforms
-platforms:
-  - claude-code
-  - openclaw
-  - generic-llm-agent
-
-# Required capabilities from host agent
-capabilities:
-  - filesystem-read
-  - filesystem-write
-  - llm-completion
-
-# Entry points for different modes
-entryPoints:
-  protocol: "CLAUDE.md"
-  agent-guide: "AGENTS.md"
-  agent-bridge: "scripts/agent-bridge.py"
-  cli: "src/llm_wiki/commands.py"
-
-# Hooks (optional integration)
-hooks:
-  available: false
-  note: "Protocol mode requires no hooks. CLI mode available for scripting."
-
-# Dependencies
-dependencies:
-  required: []
-  optional:
-    - name: python
-      version: ">=3.8"
-      reason: "CLI mode only"
-    - name: click
-      version: ">=8.0.0"
-      reason: "CLI framework"
-    - name: pyyaml
-      version: ">=6.0"
-      reason: "YAML parsing"
-    - name: pymupdf
-      version: ">=1.25.0"
-      reason: "PDF processing (recommended)"
-    - name: numpy
-      version: ">=1.24.0"
-      reason: "Vector operations for embedding retrieval"
-    - name: httpx
-      version: ">=0.27.0"
-      reason: "HTTP client for Ollama/local embedding services"
-    - name: openai
-      version: ">=1.0.0"
-      reason: "OpenAI embedding API"
-    - name: mcp
-      version: ">=1.0.0"
-      reason: "MCP SDK for remote embedding providers"
-    - name: pytest
-      version: ">=7.0.0"
-      reason: "Test suite"
-
-# Installation methods
-installation:
-  - method: uv
-    command: "uv venv && uv pip install -r src/requirements.txt --python .venv/Scripts/python.exe"
-    note: "Fastest, recommended if uv available"
-  - method: conda
-    command: "conda create -n llm-wiki python=3.11 && pip install -r src/requirements.txt"
-    note: "For data science environments"
-  - method: pip
-    command: "python -m venv .venv && pip install -r src/requirements.txt"
-    note: "Standard Python"
-  - method: none
-    command: null
-    note: "Protocol mode requires no installation"
-
-# Core functions exposed to agent
-functions:
-  ingest:
-    description: "Ingest source material into wiki"
-    trigger: "Please ingest material"
-    inputs:
-      - name: source_path
-        type: string
-        description: "Path to source file in sources/"
-    workflow:
-      - Read source content
-      - Extract source time metadata: publication/release/post date, collection date, ingest date, and date precision when available
-      - Extract key insights
-      - Identify/create affected wiki pages
-      - Dynamic linking: run `python scripts/agent-bridge.py link --source <new_page> --mode light` to discover related pages
-      - For high-confidence relations (score >= 0.5), apply merge strategy to backward-update existing pages
-      - Update cross-references
-      - Preserve temporal relations in page frontmatter (`sources_meta`) and, when useful, a `## 时间线` / `## Timeline` section
-      - Create stub pages for any new [[Dead Link]] introduced in the content
-      - Append to log.md
-      - For batch ingest (>=2 sources), run `python scripts/agent-bridge.py relink --since <date> --mode deep`
-
-  link:
-    description: "Discover and merge relationships between wiki pages"
-    trigger: "Link wiki pages"
-    inputs:
-      - name: source
-        type: string
-        description: "Source page title"
-      - name: target
-        type: string
-        description: "Target page title (optional, for merge execution)"
-      - name: mode
-        type: string
-        description: "light or deep"
-    workflow:
-      - Run `python scripts/agent-bridge.py link --source <page> --mode light` to discover relations
-      - Run `python scripts/agent-bridge.py link --source <page> --target <page> --strategy <strategy>` to merge
-      - Review diff before applying
-
-  relink:
-    description: "Batch global relationship discovery for recent pages"
-    trigger: "Global linking"
-    inputs:
-      - name: since
-        type: string
-        description: "Date cutoff (YYYY-MM-DD)"
-      - name: mode
-        type: string
-        description: "light or deep"
-    workflow:
-      - Run `python scripts/agent-bridge.py relink --since <date> --mode deep` to batch-link all recent pages
-      - Review the generated relation report for high-confidence connections
-      - For each high-confidence pair, run `python scripts/agent-bridge.py link --source <new> --target <old> --strategy <strategy>`
-
-  query:
-    description: "Query wiki knowledge base"
-    trigger: "Query wiki"
-    inputs:
-      - name: question
-        type: string
-        description: "User question about wiki content"
-    workflow:
-      - Read wiki/index.md
-      - Navigate through [[links]]
-      - Synthesize answer with citations
-      - Optional: archive response
-
-  lint:
-    description: "Health check for wiki"
-    trigger: "Check wiki health"
-    checks:
-      - orphan pages
-      - dead links: link targets must be real wiki file stems
-      - stale pages
-      - empty pages
-      - duplicate titles
-      - non-canonical links
-      - draft pages
-      - contradictions
-
-# External integrations available through host Agent skills
-integrations:
-  zotero:
-    status: "external-agent-skill"
-    source_url: "https://github.com/openai/plugins/tree/main/plugins/zotero/skills/zotero"
-    description: "Use Zotero Desktop and installed Agent/Zotero skills as the literature layer; llm-wiki remains the Markdown knowledge layer."
-    verified_capabilities:
-      - "Probe or enable Zotero Desktop local API"
-      - "Search local Zotero items, collections, and tags"
-      - "Export BibTeX/citations and insert citation keys into drafts"
-      - "Read attachment file URLs or indexed full text when explicitly requested"
-      - "Import BibTeX/RIS records into Zotero after confirmation"
-    llm_wiki_workflow:
-      - "Use Zotero metadata, full text, annotations, or attachment paths as source discovery and provenance"
-      - "Preserve Zotero identifiers in wiki frontmatter when available: zotero_item_key, citation_key, library_id, zotero_uri, DOI, arXiv ID"
-      - "Keep Zotero-managed originals as source assets; never write Agent-generated summaries into sources/"
-    unverified_or_out_of_scope:
-      - "Arbitrary document upload or attachment management is not part of the verified llm-wiki workflow"
-      - "Do not build an llm-wiki-native Zotero client unless repeated manual workflows prove the need"
-
-# File structure
-structure:
-  protocol: "CLAUDE.md"
-  agent-guide: "AGENTS.md"
-  specification: "SKILL.md"
-  changelog: "log.md"
-  agent-bridge: "scripts/agent-bridge.py"
-  sources: "sources/"
-  wiki: "wiki/"
-  assets: "assets/"
-  scripts: "scripts/"
-  src: "src/"
-  examples: "examples/"
-
-# Related resources
-related:
-  - name: "Karpathy's llm-wiki gist"
-    url: "https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f"
-  - name: "Sage-Wiki"
-    url: "https://github.com/xoai/sage-wiki"
-    note: "Alternative full-featured implementation"
+description: "Use when Codex needs to operate an llm-wiki knowledge base: ingest source files into Markdown wiki pages, answer questions from wiki/index.md and linked pages, run agent-bridge status/lint/link/relink/merge/query/index tasks, preserve provenance and temporal metadata, or use Zotero as a literature-discovery layer."
 ---
-
-# CLI Reference
-
-## Temporal Metadata Requirement
-
-Agents should distinguish wiki maintenance dates from source/work dates:
-
-- `created` / `updated`: when the wiki page was created or edited.
-- `sources_meta[].published`: when the paper, post, release, documentation, or work appeared.
-- `sources_meta[].collected`: when the user saved, collected, or imported it.
-- `sources_meta[].ingested`: when llm-wiki processed it.
-- `sources_meta[].date_precision`: `day`, `month`, `year`, or `unknown`.
-
-When multiple works are discussed, preserve historical order in the prose or in a `## 时间线` / `## Timeline` section. Do not infer missing months or days.
-
-### Visible Time Anchor Format
-
-Use native Markdown to make time visible without relying on HTML, colors, or wide tables:
-
-- Start `### 时间定位` / `### Temporal Position` with a blockquote summary:
-  - `> **时间范围**：YYYY.MM-YYYY.MM`
-  - `> **阶段判断**：one concise sentence about the historical stage`
-- For dated nodes, prefer list items that start with a bold bracketed anchor:
-  - `- **[2025.09] Work or event name**: why it matters.`
-  - `- **[2026.01] Follow-up work**: what changed.`
-- Use `**[YYYY.MM-YYYY.MM]**` for ranges and `**[YYYY]**` when only year precision is reliable.
-- Apply this especially in `### 时间定位`, `## 时间线`, `### 与已有知识的关系`, `## Related Pages`, and source-note summaries.
-- Prefer readable lists over wide Markdown tables when rows contain wiki links or long relationship text. Use tables only for short, dense, comparison-oriented metadata.
-
-## Agent Bridge (Recommended for Agents)
-
-Use `scripts/agent-bridge.py` as the single entry point for all tool-assisted operations:
-
-```bash
-# Environment check
-python scripts/agent-bridge.py check
-
-# Discover relations for a new page
-python scripts/agent-bridge.py link --source "NewPage" --mode light
-
-# Execute merge with diff review
-python scripts/agent-bridge.py link --source "NewPage" --target "OldPage" --strategy append_related
-
-# Batch global linking for recent pages
-python scripts/agent-bridge.py relink --since 2026-04-20 --mode deep
-
-# Health check
-python scripts/agent-bridge.py lint
-
-# Status overview
-python scripts/agent-bridge.py status
-```
-
-**Why Agent Bridge?**
-- Single obvious entry point — no guessing whether to use protocol mode or CLI mode
-- Structured Markdown output — human-readable and machine-parseable
-- Execution traceability — detailed logging with file:line references to stderr
-- Auto-detects Python environment (uv venv / conda / system)
-
-## Protocol Mode (Natural Language)
-
-For tasks requiring LLM judgment (content extraction, synthesis, strategy selection):
-
-```
-"Please ingest sources/paper.pdf into wiki"
-"Query wiki: What is the difference between Transformer and RNN?"
-"Check wiki health"
-```
-
-## Legacy CLI Mode (Optional)
-
-Direct library access for scripting or debugging:
-
-```bash
-# Show wiki status overview
-python -m src.llm_wiki status
-
-# Run health check
-python -m src.llm_wiki lint
-
-# Show help
-python -m src.llm_wiki --help
-```
-
-**Note**: `ingest` and `query` commands in legacy CLI only provide auxiliary functions (like listing pages). Actual content processing requires natural language interaction with the agent.
 
 # LLM-Wiki
 
-Karpathy's llm-wiki pattern implementation — cumulative knowledge management for AI agents.
+## Core Principle
 
-> **Core Philosophy**: LLM as programmer, Wiki as codebase, User as product manager.
+Treat the LLM as the programmer and the wiki as the codebase. The user provides materials and judgment; the Agent extracts durable knowledge, preserves provenance, maintains links, and keeps the Markdown wiki structurally consistent.
 
-## Why SKILL Form?
+Keep this file as the operational skill. Use `README.md` for user-facing overview, `AGENTS.md` / `CLAUDE.md` for the full protocol, and `ROADMAP.md` for project plans.
 
-We chose the SKILL form because it brings these advantages:
+## Start Every Wiki Task
 
-- **Zero deployment** — No services to run, no databases to configure; works the moment you clone the repository
-- **Native integration** — Direct command execution via Claude Code, no middleware or protocol translation needed
-- **Plain-text data** — Pure Markdown files, git-native, with no proprietary formats or vendor lock-in
-- **Editor freedom** — Use Obsidian, VS Code, or any text editor you prefer
-- **Minimal footprint** — A small Python helper/CLI layer around a plain Markdown wiki, keeping complexity low
+1. Read `AGENTS.md` or `CLAUDE.md` when the task touches wiki behavior, source handling, or ingest/query protocol.
+2. Use the project Python: `.venv\Scripts\python.exe` on Windows, `.venv/bin/python` on Unix, or `uv run python` when configured.
+3. Run `<PY> scripts/agent-bridge.py check` before wiki operations. If it reports missing dependencies, state the exact blocker and continue only with tasks that do not require the unavailable runtime.
+4. Protect `sources/`: never write Agent-generated summaries, drafts, or speculative content there. Only user-provided files or verified network/Zotero fetches may be source assets.
+5. Check `git status --short` before editing. Do not revert user changes.
 
-## Features
+## Choose the Work Mode
 
-- **Protocol-driven**: Works with natural language (no installation required)
-- **Pure Markdown**: No database, no lock-in, git-native
-- **Wiki-style links**: `[[PageName]]` format with canonical page files; avoid duplicate shell pages
-- **Cumulative learning**: Every query can create new knowledge
-- **Temporal knowledge**: Preserve publication/release/collection dates so related works can be read in historical order
-- **Zotero-ready**: Use external Agent/Zotero skills for literature discovery and provenance
-- **Health checks**: Orphan pages, dead links, stale content detection
-- **Optional CLI**: Python scripts for automation and batch operations
+| Task | Use | Notes |
+| --- | --- | --- |
+| Status, lint, link discovery, relink, merge, semantic query, embedding index | `scripts/agent-bridge.py` | Algorithmic tasks. Prefer dry-run before writing. |
+| Ingest source material | Protocol mode | Requires LLM judgment: read source, extract metadata, create/update pages. |
+| Answer wiki questions | Protocol mode | Read `wiki/index.md`, relevant pages, and link neighbors; synthesize with `[[PageName]]` citations. |
+| Apply relation updates | Hybrid | Let `agent-bridge.py` discover candidates, then review and merge only safe changes. |
 
-## Quick Start
+Agent Bridge quick commands:
 
 ```bash
-# 1. Clone
-git clone https://github.com/Nemo4110/llm-wiki.git
-cd llm-wiki
-
-# 2. Add source material
-cp ~/Downloads/paper.pdf sources/
-
-# 3. Tell your agent
-"Please ingest sources/paper.pdf into wiki"
+<PY> scripts/agent-bridge.py check
+<PY> scripts/agent-bridge.py status
+<PY> scripts/agent-bridge.py lint
+<PY> scripts/agent-bridge.py link --source "PageName" --mode light
+<PY> scripts/agent-bridge.py merge --source "NewPage" --target "OldPage" --strategy append_related --dry-run
+<PY> scripts/agent-bridge.py relink --since 2026-04-20 --mode deep --dry-run
+<PY> scripts/agent-bridge.py index
+<PY> scripts/agent-bridge.py query "question" --semantic
 ```
 
-## Installation
+Use legacy `python -m src.llm_wiki ...` only for human scripting or debugging. Do not use the legacy CLI as a substitute for LLM judgment during ingest.
 
-### Protocol Mode (Recommended)
-No installation needed. Agent reads `CLAUDE.md` and operates directly.
+## Ingest Workflow
 
-### CLI Mode (Optional)
+1. Verify the source exists in `sources/` or came from a real verified network/Zotero operation.
+2. Extract source metadata when available: title, authors/creator, URL, DOI, arXiv ID, Zotero item key, citation key, and source type.
+3. Extract time metadata separately from wiki maintenance dates:
+   - `published`: paper/post/release/documentation date.
+   - `updated_at_source`: source-side update time when available.
+   - `collected`: user save/import/Zotero collection time.
+   - `ingested`: llm-wiki processing date.
+   - `date_precision`: `day`, `month`, `year`, or `unknown`.
+4. Create or update the smallest useful set of `wiki/*.md` pages. Every non-index page should have frontmatter, a one-sentence definition, knowledge content, related pages, sources, and changelog.
+5. Add visible time anchors for dated works, especially on overview pages:
+   - `**[YYYY.MM] Work name**` for day/month precision.
+   - `**[YYYY] Work name**` for year-only precision.
+   - `**[YYYY.MM-YYYY.MM]**` for ranges.
+6. Use `## 时间线` / `## Timeline` when historical order matters. Start `### 时间定位` / `### Temporal Position` with:
+   - `> **时间范围**：...`
+   - `> **阶段判断**：...`
+7. Run `agent-bridge.py link` for new pages. For high-confidence relations, preview `merge --dry-run`, review the diff, then apply only safe backward updates.
+8. Update `wiki/index.md` and append `log.md`.
 
-#### Using uv (Fastest)
-```bash
-# Create virtual environment and install dependencies
-uv venv
-uv pip install -r src/requirements.txt --python .venv/Scripts/python.exe
+Never treat `created` or `updated` as publication dates. They are wiki maintenance dates only.
 
-# Activate environment (Windows)
-.venv\Scripts\activate
-# Or Linux/macOS
-source .venv/bin/activate
+## Query Workflow
+
+1. Read `wiki/index.md` first.
+2. Read relevant pages and their link neighbors. Semantic query may discover candidates, but page content is the source of truth.
+3. Answer with citations to wiki pages using `[[PageName]]`.
+4. If the answer creates reusable synthesis, ask or decide whether to archive it into the wiki according to user intent.
+
+## Linking Rules
+
+- Link the first meaningful mention of a concept in a local section.
+- Keep every internal link resolvable to a real `wiki/*.md` stem by the end of ingest.
+- Use canonical file stems and aliases, e.g. `[[AI-Coding-Workflow|AI Coding Workflow]]`.
+- Avoid over-linking. Prefer one useful link over repeated noise.
+- Describe temporal relationships when useful: early work, follow-up, contemporary route, survey, retrospective, or outdated-but-historically-important.
+
+## Zotero Workflow
+
+Use Zotero as the literature layer and llm-wiki as the distilled Markdown knowledge layer. A recommended public Zotero skill source is:
+
+<https://github.com/openai/plugins/tree/main/plugins/zotero/skills/zotero>
+
+When an Agent has that skill, or an equivalent Zotero-capable skill, it can search the local Zotero library, list collections/tags, export BibTeX/citations, read attachment paths or indexed full text on request, and import BibTeX/RIS records after confirmation.
+
+For llm-wiki, Zotero results are source discovery and provenance. Preserve Zotero identifiers in frontmatter when available:
+
+```yaml
+sources_meta:
+  - title: "Paper Title"
+    type: "academic_paper"
+    published: "2025-02"
+    collected: "2026-05-24"
+    ingested: "2026-05-24"
+    date_precision: "month"
+    zotero_item_key: "ABCD1234"
+    citation_key: "author2025title"
+    library_id: "0"
+    zotero_uri: "zotero://select/items/ABCD1234"
 ```
 
-#### Using conda
-```bash
-# Create environment
-conda create -n llm-wiki python=3.11
+Do not build a native llm-wiki Zotero client unless repeated manual workflows prove the need. Arbitrary document upload or attachment management is not part of the verified llm-wiki workflow.
 
-# Activate environment
-conda activate llm-wiki
+## Source Fetch Safety
 
-# Install dependencies
-pip install -r src/requirements.txt
-```
+After any network fetch, verify before ingest:
 
-#### Using pip
-```bash
-# Create virtual environment
-python -m venv .venv
+- File is readable and non-empty.
+- Content is not an error page, login wall, paywall notice, or JavaScript placeholder.
+- Format matches extension, e.g. PDF begins with `%PDF`.
+- Title and identifiers match the requested source.
+- DOI, arXiv ID, author names, or URL match when provided.
 
-# Activate environment
-source .venv/bin/activate  # Linux/macOS
-.venv\Scripts\activate     # Windows
+If verification fails, do not create source-derived wiki pages. Record the failure in `log.md` when appropriate and ask the user for a correct source.
 
-# Install dependencies
-pip install -r src/requirements.txt
-```
+## File Handling
 
-#### Verify Installation
-```bash
-python -c "from src.llm_wiki.core import WikiManager; print('✓ Installation successful')"
-```
+- Text and Markdown: read directly.
+- PDF: use project Python with PyMuPDF or `scripts/read_pdf.py`; fall back to OCR only when necessary.
+- Images: use visual inspection tools when needed.
+- Office files and other binaries: use the relevant parser/tooling before extracting knowledge.
 
-**Important Dependency Notes**:
+Prefer the project-managed Python environment: `.venv`, `uv run`, or the configured conda environment. Do not use global `pip` casually.
 
-| Dependency | Version | Purpose | Notes |
-|------------|---------|---------|-------|
-| `click` | >=8.0.0 | CLI framework | - |
-| `pyyaml` | >=6.0 | YAML parsing | - |
-| `pymupdf` | >=1.25.0 | PDF processing | Primary PDF engine, best for CJK |
+## Verification Before Finishing
 
-**Optional dependencies** (for enhanced features):
-- `numpy >=1.24.0` — Vector operations for embedding retrieval
-- `httpx >=0.27.0` — HTTP client for Ollama/local services
-- `openai >=1.0.0` — OpenAI embedding API
-- `mcp >=1.0.0` — MCP SDK for remote embedding providers
-- `pytest >=7.0.0` — Test runner for the included test suite
-
-**Fallback PDF dependency**:
-- `pdfplumber >=0.11.8` — Table extraction fallback (security version required for CVE-2025-64512)
-- `pdfminer.six >=20251107` — PDF underlying library fallback
-
-## Project Structure
-
-```
-llm-wiki/
-├── CLAUDE.md           # ⭐ Core protocol: Agent behavior guidelines
-├── AGENTS.md           # Agent implementation guide and tool-selection protocol
-├── SKILL.md            # This file, machine-readable specification
-├── log.md              # Timeline log (append-only)
-├── config.yaml.example # Optional embedding/provider configuration
-├── sources/            # Raw materials (user-managed + tool-fetched; Agent forbidden from writing LLM-generated content)
-│   └── README.md
-├── wiki/               # Generated knowledge pages (Agent-managed)
-│   ├── index.md        # Entry index
-│   └── *.md            # Topic pages
-├── assets/             # Templates and configuration
-│   ├── page_template.md
-│   └── ingest_rules.md
-├── src/                # SKILL implementation (optional, for CLI)
-│   ├── llm_wiki/
-│   └── requirements.txt
-├── scripts/            # Auxiliary scripts
-├── tests/              # pytest suite for CLI, bridge, linker, merge, embedding
-├── hooks/              # Platform hooks (optional)
-└── examples/           # Example wiki
-```
-
-**About `sources/`**: Excluded from git by default to avoid repository bloat. Wiki only retains extracted knowledge; original files are managed separately (cloud storage, Zotero, etc.). See `sources/README.md` for tracking specific files.
-
-## How It Works
-
-### Data Flow
-
-```
-+----------+     +--------------------+     +--------------+
-| sources/ |---->|   LLM Processing   |---->|    wiki/     |
-|  (Raw)   |     | (Extract + Link)   |     | (Structured) |
-+----------+     +--------------------+     +--------------+
-                          |
-                          v
-                    +----------+
-                    |  log.md  |
-                    | (Record) |
-                    +----------+
-```
-
-### Key Design
-
-1. **CLAUDE.md as Protocol**: Defines Agent behavior standards, anyone/any Agent can follow
-2. **Pure Markdown**: No database, no lock-in, native git version control
-3. **Bidirectional Links**: `[[PageName]]` format, compatible with Obsidian when the link target matches the canonical page file
-4. **Cumulative Learning**: Each query can generate new wiki pages, knowledge continuously accumulates
-5. **Zotero as Literature Layer**: Use existing Agent/Zotero skills to reach the Zotero library; llm-wiki keeps distilled Markdown knowledge
-
-## Query Mechanism
-
-### Current Implementation: Symbolic Navigation + LLM Synthesis (Default)
-
-By default, this SKILL **does not require Embedding/vector retrieval**. Queries are completed through:
-
-```
-User asks question
-         |
-         v
-+-------------------------------+
-|  1. Read index.md             |  <-- Human/Agent-maintained category index
-|     Locate relevant topics    |
-+-------------------------------+
-         |
-         v
-+-------------------------------+
-|  2. Read relevant pages       |  <-- Discover associations through [[links]]
-|     and their link neighbors  |
-+-------------------------------+
-         |
-         v
-+-------------------------------+
-|  3. LLM Synthesis             |  <-- Generate answers based on read content
-|     Generate with citations   |  Citation format: [[PageName]]
-+-------------------------------+
-```
-
-**Optional Enhancement**: After enabling `config.yaml` embedding settings, CLI `query --semantic` adds hybrid search (Keyword Match + Vector Search + Link Traversal) for faster, more accurate retrieval.
-
-**Example Flow**:
-
-User asks: "What is LoRA?"
-
-1. **Agent reads** `wiki/index.md`, finds `[[LoRA]]` under "AI/ML" topic
-2. **Agent reads** `wiki/LoRA.md`, discovers links to `[[Fine-tuning]]`, `[[Adapter]]`
-3. **Agent synthesizes** answer:
-   > LoRA (Low-Rank Adaptation) is a parameter-efficient fine-tuning method — see [[LoRA]].
-   > Compared to traditional [[Fine-tuning]], it only trains low-rank matrices...
-
-### Why is Embedding Optional?
-
-| Consideration | Current Solution | Embedding Solution |
-|---------------|------------------|-------------------|
-| **Dependencies** | Zero external dependencies | Requires Embedding API or local model |
-| **Cost** | No additional fees | Charged per token/request |
-| **Privacy** | Data not uploaded | Must send content to external service |
-| **Accuracy** | Precise links, explainable | Approximate similarity, may retrieve irrelevant content |
-| **Scale** | Suitable for 0-500 pages | Essential for large scale (1000+ pages) |
-
-**Conclusion**: For personal/small team knowledge bases, maintaining `index.md` and page links is simpler and more effective than introducing Embedding. Embedding is available as an opt-in CLI enhancement when scale demands it.
-
-### When to Use Embedding?
-
-Consider enabling `config.yaml` embedding settings when your wiki shows:
-- [ ] Page count > 500, manual indexing hard to maintain
-- [ ] Queries are mostly fuzzy semantic ("that paper about optimization...")
-- [ ] Need cross-topic associations (user didn't mention keywords, but semantically related)
-
-See [ROADMAP.md](ROADMAP.md) for details.
-
-## Example Workflows
-
-### Scenario 1: Researching New Domain
+For documentation-only edits, run:
 
 ```bash
-# Day 1: Add materials
-sources/
-├── 2026-04-10-transformer-paper.pdf
-└── 2026-04-10-lora-blog.md
+git diff --check -- <changed-files>
 ```
 
-```
-User: Please ingest new materials
-Claude: Processed 2 materials
-  - Created [[Transformer]] — Attention mechanism architecture
-  - Created [[LoRA]] — Low-rank adaptation
-  - Created [[Self-Attention]] — Self-attention details
-  - Updated wiki/index.md
-```
+For wiki/runtime operations, also run the relevant `agent-bridge.py` command (`check`, `lint`, `link`, `merge --dry-run`, `status`, or `query`) and report exact blockers if dependencies are missing.
 
-### Scenario 2: Deep Exploration
+For code changes, run the focused pytest target or the full suite when the change touches shared behavior:
 
-```
-User: What's the difference between LoRA and full fine-tuning?
-
-Claude (reads wiki/index.md → finds [[LoRA]] → synthesizes answer):
-
-Based on our wiki:
-
-**LoRA** — [[LoRA]]
-- Freezes pre-trained weights, only trains low-rank matrices
-- Parameter count reduced ~10,000x
-
-**Full Fine-tuning**
-- Updates all parameters
-- High computational cost
-
-Key differences:
-1. Parameters: LoRA only trains 0.1%~1% of parameters [[Parameter Efficiency]]
-2. Storage: LoRA only saves adapters, not full model
-3. Composition: Multiple LoRAs can be stacked [[LoRA Composition]]
-
-Was this helpful? Should I archive this answer to wiki?
+```bash
+.venv\Scripts\python.exe -m pytest tests/
 ```
 
-### Scenario 3: Knowledge Accumulation
-
-```
-User: Yes, archive this answer
-
-Claude: Created [[LoRA vs Full Fine-tuning]]
-- Extracted comparison points from conversation
-- Linked to [[LoRA]] and [[Fine-tuning]]
-- Added to FAQ section in wiki/index.md
-```
-
-## Using with Obsidian
-
-1. Open `wiki/` directory in Obsidian
-2. Enjoy graph view, quick navigation, beautiful rendering
-3. Claude Code handles maintenance, Obsidian handles reading and thinking
-
-## Using Zotero Through Agent Skills
-
-llm-wiki does not need to become a Zotero client. When an Agent has a Zotero skill available, Zotero can remain the literature layer while llm-wiki remains the Markdown knowledge layer.
-
-A recommended public source is the OpenAI Plugins Zotero skill: [plugins/zotero/skills/zotero](https://github.com/openai/plugins/tree/main/plugins/zotero/skills/zotero). Agents can use that skill, or an equivalent Zotero-capable skill, instead of adding a native Zotero client to llm-wiki.
-
-The current Zotero skill workflow can:
-
-- Probe or enable the local Zotero Desktop API.
-- Search local items, collections, and tags.
-- Export BibTeX/citations and insert citation keys into drafts.
-- Retrieve attachment file URLs or indexed full text when explicitly requested.
-- Import BibTeX/RIS records into Zotero after confirmation.
-
-For llm-wiki ingest, use Zotero results as source discovery and provenance: read Zotero metadata, full text, annotations, or attachment paths; synthesize wiki pages; and preserve identifiers such as `zotero_item_key`, `citation_key`, `library_id`, `zotero_uri`, DOI, and arXiv ID in frontmatter when available.
-
-This keeps `sources/` integrity intact. Zotero-managed originals can be referenced as source assets, but Agent-generated summaries must never be written into `sources/`. Arbitrary document upload/attachment management is not part of the verified llm-wiki workflow; leave document ownership to Zotero unless a Zotero-capable Agent explicitly supports that operation.
-
-## Comparison with Alternatives
-
-| Solution | Characteristics | Best For |
-|----------|----------------|----------|
-| **This SKILL** | Zero dependencies, pure text, Claude Code native | Personal knowledge management, research notes |
-| Sage-Wiki | Full-featured, multimodal, standalone app | Team knowledge base, enterprise deployment |
-| Obsidian + Plugins | Strong visualization, rich community | Existing Obsidian workflow |
-| Notion/Logseq | Collaborative, real-time sync | Multi-user collaboration, mobile access |
-
-## Documentation
-
-- [CLAUDE.md](CLAUDE.md) — User-facing protocol (read this first)
-- [AGENTS.md](AGENTS.md) — Implementation guide for agent developers
-- [SKILL.md](SKILL.md) — This file, machine-readable specification
-- [ROADMAP.md](ROADMAP.md) — Future plans
-
-## Contributing
-
-Issues and PRs welcome!
-
-### Current TODO
-
-- [ ] Lint auto-fix for common wiki health issues
-- [ ] Query result archiving as a guided workflow
-- [ ] Domain template packs and richer example wikis
-- [x] Agent Bridge unified entry point for other Agents
-- [x] Zotero literature workflow via external Agent/Zotero skills
-- [x] Temporal metadata protocol and visible timeline anchors
-- [x] Obsidian compatibility by opening the `wiki/` directory directly
-- [x] Incremental embedding for faster retrieval
-- [x] Multi-language support (English + Chinese)
-
-## License
-
-MIT — free to use, modify, and distribute.
-
----
-
-*Inspired by [Karpathy's llm-wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)*
+End by summarizing changed files, verification output, and any skipped checks with the reason.
