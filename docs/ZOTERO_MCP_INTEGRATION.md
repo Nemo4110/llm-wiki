@@ -1,25 +1,33 @@
-# Zotero MCP Integration Plan
+# Zotero Literature Workflow Notes
 
-> Status: mid-term planning. This document analyzes how llm-wiki should integrate with the local Zotero MCP project at `C:\Users\041\OneDrive\Projects\zotero-mcp`.
+> Status: historical analysis and workflow notes. llm-wiki no longer plans a native Zotero MCP/server wrapper; use an external Agent/Zotero skill as the literature layer instead.
 
 ## Goal
 
 Use Zotero as the mature literature and attachment manager, and use llm-wiki as the distilled Markdown knowledge layer. Zotero should own bibliographic metadata, PDFs, annotations, collections, tags, citation keys, and related-item links. llm-wiki should own reusable concepts, cross-source synthesis, wiki links, temporal interpretation, and agent-maintained indexes.
 
+## Available Zotero Skill
+
+A recommended public source is the OpenAI Plugins Zotero skill:
+
+- <https://github.com/openai/plugins/tree/main/plugins/zotero/skills/zotero>
+
+Agents can use that skill, or an equivalent Zotero-capable skill, to operate Zotero Desktop. This avoids adding a Zotero client or MCP wrapper inside llm-wiki.
+
 ## Current Project Fit
 
-llm-wiki already has the pieces needed for a conservative integration:
+llm-wiki already has the pieces needed for a conservative Zotero workflow:
 
 - `sources/` is reserved for real original material and must not receive Agent-generated summaries.
 - `wiki/*.md` pages already support YAML frontmatter and source lists.
 - `agent-bridge.py` provides a single Agent entry point for status, lint, link, relink, query, merge, and index.
-- Embedding and linking are already optional, so Zotero search can be added as a source-discovery layer without replacing the existing wiki retrieval path.
+- Embedding and linking are already optional, so Zotero search can be used as a source-discovery layer without replacing the existing wiki retrieval path.
 
-The main missing pieces are stable source metadata fields, Zotero identifiers in wiki pages, and a clear ingestion workflow for MCP-sourced material.
+The main llm-wiki responsibilities are stable source metadata fields, Zotero identifiers in wiki pages, and a clear ingestion workflow for Zotero-sourced material.
 
-## Zotero MCP Capabilities Observed
+## Historical Zotero MCP Capabilities Observed
 
-The local `zotero-mcp` project provides both MCP tools and a standalone CLI. Relevant capabilities include:
+Earlier analysis of a local `zotero-mcp` project found both MCP tools and a standalone CLI. Relevant capabilities included:
 
 - Search: `zotero_search_items`, `zotero_advanced_search`, `zotero_search_by_tag`, `zotero_semantic_search`, `zotero_get_recent`.
 - Library navigation: `zotero_get_collections`, `zotero_get_collection_items`, `zotero_get_tags`, `zotero_list_libraries`, `zotero_switch_library`.
@@ -28,7 +36,7 @@ The local `zotero-mcp` project provides both MCP tools and a standalone CLI. Rel
 - Import and management: `zotero_add_by_doi`, `zotero_add_by_url`, `zotero_add_from_file`, `zotero_update_item`, `zotero_manage_collections`, duplicate tools.
 - Related items: `zotero_get_item_related`, `zotero_add_item_relation`, `zotero_remove_item_relation`.
 
-The standalone `zotero-cli` is useful for scripts and agent pipelines because it can perform the same search/get/add flows without exposing large MCP tool schemas.
+The current preferred path is to use an external Zotero skill directly. A standalone `zotero-cli` or MCP server can still be useful in an environment that already has one, but llm-wiki should not depend on it.
 
 ## Recommended Architecture
 
@@ -37,7 +45,7 @@ The standalone `zotero-cli` is useful for scripts and agent pipelines because it
 Add a protocol workflow, not a new runtime dependency:
 
 1. User asks to ingest a Zotero collection, tag, item key, citation key, DOI, or topic.
-2. Agent uses Zotero MCP or `zotero-cli` to find candidate items.
+2. Agent uses the Zotero skill, or an equivalent Zotero-capable tool, to find candidate items.
 3. Agent reads metadata first, then full text or annotations only for selected items.
 4. Agent creates or updates wiki pages through the existing protocol mode.
 5. Agent runs `agent-bridge.py link` / `relink` to connect new pages.
@@ -123,7 +131,7 @@ The recent Zhihu collection ingest exposed a gap: pages captured semantic themes
 ## Safety Constraints
 
 - Do not write Agent-generated summaries into `sources/`.
-- Do not treat Zotero MCP output as a verified original file unless it came from Zotero metadata, attachment text, annotation text, or a real fetched file.
+- Do not treat Zotero tool output as a verified original file unless it came from Zotero metadata, attachment text, annotation text, or a real fetched file.
 - Do not overwrite Zotero metadata automatically.
 - Do not import large full-text batches without user confirmation.
 - Do not invent missing publication months or days.
@@ -132,9 +140,9 @@ The recent Zhihu collection ingest exposed a gap: pages captured semantic themes
 
 ### Option A: Protocol-Only Integration
 
-Document Zotero MCP workflows and let Agents call Zotero MCP/CLI directly.
+Document Zotero skill workflows and let Agents call their installed Zotero-capable skill directly.
 
-Pros: lowest complexity, no new llm-wiki dependency, works with current MCP clients.
+Pros: lowest complexity, no new llm-wiki dependency, works with current Agent skill systems.
 
 Cons: less automation, harder to lint or batch.
 
@@ -142,11 +150,11 @@ Recommendation: start here.
 
 ### Option B: Agent Bridge Wrapper
 
-Add `agent-bridge.py zotero-search`, `zotero-ingest-plan`, and `zotero-sync` commands that shell out to `zotero-cli` or call a small adapter.
+Add `agent-bridge.py zotero-search`, `zotero-ingest-plan`, and `zotero-sync` commands that call an installed Zotero skill, shell out to `zotero-cli`, or use a small adapter.
 
 Pros: consistent Agent UX and structured Markdown output.
 
-Cons: adds dependency on Zotero MCP installation/config and requires more tests.
+Cons: adds dependency on Zotero tooling installation/config and requires more tests.
 
 Recommendation: phase 2, after protocol-only usage stabilizes.
 
@@ -164,7 +172,7 @@ Recommendation: defer until there is repeated demand.
 
 1. Document the workflow and metadata schema.
 2. Update templates and ingest rules to require source time metadata.
-3. Trial manual Zotero MCP ingest on a small collection.
+3. Trial manual Zotero skill ingest on a small collection.
 4. Add lint checks for missing `sources_meta` dates.
 5. Add optional `agent-bridge.py` helpers if the manual workflow repeats often.
 6. Add opt-in Zotero tag/note backlink sync with dry-run output.
