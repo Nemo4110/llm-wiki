@@ -21,8 +21,9 @@ class TestWikiPage:
             frontmatter={},
             path=Path("test.md"),
         )
-        # links property extracts raw bracket content including pipe aliases
-        assert page.links == {"LoRA", "Transformer|TF"}
+        # links property returns canonical targets; aliases are exposed by link_occurrences.
+        assert page.links == {"LoRA", "Transformer"}
+        assert page.link_occurrences == [("LoRA", "LoRA"), ("Transformer", "TF")]
 
     def test_status_defaults_to_draft(self):
         page = WikiPage(title="T", content="", frontmatter={}, path=Path("t.md"))

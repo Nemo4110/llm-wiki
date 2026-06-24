@@ -27,7 +27,15 @@ cd llm-wiki
 
 ### 2. Install Dependencies (Optional)
 
-The CLI tool requires Python 3.8+. Choose your preferred installation method:
+The CLI tool currently supports Python 3.12-3.13. The actively verified local development matrix is:
+
+| Platform | Python | Status |
+|----------|--------|--------|
+| Windows | 3.13 | Verified |
+| Windows | 3.12 | Supported target |
+| Linux/macOS | 3.12-3.13 | Supported target, not the primary local verification platform |
+
+Python 3.8-3.11 are not part of the current support matrix. Choose your preferred installation method:
 
 #### Using uv (Recommended if you have uv)
 
@@ -46,7 +54,7 @@ source .venv/bin/activate
 
 ```bash
 # Create environment
-conda create -n llm-wiki python=3.11
+conda create -n llm-wiki python=3.13
 
 # Activate
 conda activate llm-wiki

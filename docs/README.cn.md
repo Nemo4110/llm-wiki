@@ -25,7 +25,15 @@ cd llm-wiki
 
 ### 2. 安装依赖（可选）
 
-CLI 工具需要 Python 3.8+。根据你的工具选择安装方式：
+CLI 工具当前支持 Python 3.12-3.13。当前主动验证的本地开发矩阵是：
+
+| 平台 | Python | 状态 |
+|-----|--------|------|
+| Windows | 3.13 | 已验证 |
+| Windows | 3.12 | 支持目标 |
+| Linux/macOS | 3.12-3.13 | 支持目标，但不是当前主要本地验证平台 |
+
+Python 3.8-3.11 不属于当前支持矩阵。根据你的工具选择安装方式：
 
 #### 使用 uv（推荐，如果你有 uv）
 
@@ -44,7 +52,7 @@ source .venv/bin/activate
 
 ```bash
 # 创建环境
-conda create -n llm-wiki python=3.11
+conda create -n llm-wiki python=3.13
 
 # 激活环境
 conda activate llm-wiki
