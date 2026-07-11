@@ -89,6 +89,8 @@ Use Zotero as the literature layer and llm-wiki as the distilled Markdown knowle
 
 When an Agent has that skill, or an equivalent Zotero-capable skill, it can search the local Zotero library, list collections/tags, export BibTeX/citations, read attachment paths or indexed full text on request, and import BibTeX/RIS records after confirmation.
 
+Before any Zotero operation, verify a Zotero-capable MCP/tool is available and can access the target library. For read workflows, confirm collection search, item metadata, and attachment path/fulltext access work. For write workflows, confirm the exact capability is supported before acting: child note create/update, incremental tag update, and related-item linking are separate gates. If Zotero Desktop, MCP access, or write capability is unavailable, report the blocker and continue only with wiki-local work.
+
 For llm-wiki, Zotero results are source discovery and provenance. Preserve Zotero identifiers in frontmatter when available:
 
 ```yaml
@@ -106,6 +108,22 @@ sources_meta:
 ```
 
 Do not build a native llm-wiki Zotero client unless repeated manual workflows prove the need. Arbitrary document upload or attachment management is not part of the verified llm-wiki workflow.
+
+### Zotero-Linked Sources
+
+Use Zotero item keys and attachment keys as cross-device stable identifiers. Store private Zotero source bindings in `sources/zotero/metadata.yaml`; this file is user-local/private and must not be committed. Treat `sources/zotero/` as a generated local symlink cache. Agents may use `scripts/zotero_sources.py --dry-run` to preview and `scripts/zotero_sources.py` to materialize aliases declared in that metadata.
+
+`sources/zotero/metadata.yaml` may contain local absolute paths because it is private operational metadata, not shared wiki content. Do not write LLM-generated summaries, drafts, or synthesized knowledge into `sources/zotero/` or its metadata. Keep generated knowledge in `wiki/`.
+
+For Zotero-backed ingest:
+
+1. Use Zotero MCP to find the collection/item/attachment keys and local attachment paths.
+2. Record source bindings in `sources/zotero/metadata.yaml`.
+3. Materialize `sources/zotero/...` symlinks with `scripts/zotero_sources.py`.
+4. Ingest through normal Protocol mode from the symlink alias path.
+5. Preserve `zotero_item_key`, `zotero_attachment_key`, `library_id`, and `zotero_uri` in page frontmatter when available.
+6. Create or update Zotero child notes only as index cards: wiki page path, short summary, sync hash/time, and reviewed relation notes. Do not mirror full wiki pages into Zotero notes.
+7. After relation review, optionally use Zotero MCP to add `llm-wiki:*` / `rel:*` tags and related-item links.
 
 ## Source Fetch Safety
 

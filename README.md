@@ -214,7 +214,7 @@ llm-wiki/
 └── examples/           # Example wiki
 ```
 
-**About `sources/`**: Excluded from `.gitignore` by default to avoid repository bloat. Wiki only retains extracted knowledge; original files are managed separately (cloud storage, Zotero, etc.). See `sources/README.md` for tracking specific files.
+**About `sources/`**: Excluded from `.gitignore` by default to avoid repository bloat. Wiki only retains extracted knowledge; original files are managed separately (cloud storage, Zotero, etc.). See `sources/README.md` for tracking specific files. `sources/zotero/` is reserved for private Zotero bindings and local symlink aliases; do not commit it.
 
 ## How It Works
 
@@ -381,6 +381,15 @@ The current Zotero skill workflow can:
 - Import BibTeX/RIS records into Zotero after confirmation.
 
 For llm-wiki ingest, use Zotero results as source discovery and provenance: read Zotero metadata, full text, annotations, or attachment paths; synthesize wiki pages; and preserve identifiers such as `zotero_item_key`, `citation_key`, `library_id`, `zotero_uri`, DOI, and arXiv ID in frontmatter when available.
+
+For Zotero-managed originals, use `sources/zotero/metadata.yaml` as a private, ignored binding file and materialize local source aliases with:
+
+```bash
+python scripts/zotero_sources.py --dry-run
+python scripts/zotero_sources.py
+```
+
+The metadata records Zotero item/attachment keys and local paths for the current machine; the generated `sources/zotero/...` aliases are a local cache. Agents may create Zotero child notes as index cards that point back to wiki pages, and may sync reviewed relation tags or related-item links when a Zotero MCP write gate is available.
 
 This keeps `sources/` integrity intact. Zotero-managed originals can be referenced as source assets, but Agent-generated summaries must never be written into `sources/`. Arbitrary document upload/attachment management is not part of the verified llm-wiki workflow; leave document ownership to Zotero unless a Zotero-capable Agent explicitly supports that operation.
 

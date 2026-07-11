@@ -211,7 +211,7 @@ llm-wiki/
 └── examples/           # 示例 wiki
 ```
 
-**关于 `sources/`**：默认被 `.gitignore` 排除，避免仓库臃肿。wiki 只保留提取的知识，原始文件由你另行管理（网盘、Zotero 等）。如需追踪特定文件，见 `sources/README.md`。
+**关于 `sources/`**：默认被 `.gitignore` 排除，避免仓库臃肿。wiki 只保留提取的知识，原始文件由你另行管理（网盘、Zotero 等）。如需追踪特定文件，见 `sources/README.md`。`sources/zotero/` 保留给私有 Zotero 绑定和本机 symlink 别名，不要提交。
 
 ## 工作原理
 
@@ -378,6 +378,15 @@ llm-wiki 不需要自己变成 Zotero 客户端。只要 Agent 已安装 Zotero 
 - 经确认后将 BibTeX/RIS 记录导入 Zotero。
 
 对 llm-wiki 来说，Zotero 结果应作为来源发现和 provenance：读取 Zotero metadata、全文、批注或附件路径；综合生成 wiki 页面；并在可用时把 `zotero_item_key`、`citation_key`、`library_id`、`zotero_uri`、DOI、arXiv ID 等标识保存到 frontmatter。
+
+对于 Zotero 管理的原始文件，使用 `sources/zotero/metadata.yaml` 作为私有且被忽略的绑定文件，并用以下命令物化本机 source 别名：
+
+```bash
+python scripts/zotero_sources.py --dry-run
+python scripts/zotero_sources.py
+```
+
+metadata 记录 Zotero item/attachment key 和当前机器的本地路径；生成的 `sources/zotero/...` 别名只是本机缓存。Agent 可以创建 Zotero child note 作为指向 wiki 页面的索引卡，并在 Zotero MCP 写入能力可用时同步经过审查的关系 tag 或 related item 链接。
 
 这能保持 `sources/` 完整性：Zotero 管理的原始文件可作为来源资产，但 Agent 生成的摘要仍禁止写入 `sources/`。任意文档上传/附件管理不属于已验证的 llm-wiki 工作流；除非某个 Zotero-capable Agent 明确支持该操作，否则文档所有权应留给 Zotero。
 

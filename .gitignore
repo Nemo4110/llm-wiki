@@ -57,6 +57,8 @@ Thumbs.db
 sources/*
 !sources/README.md
 !sources/.gitkeep
+# Private Zotero source bindings and local symlink cache
+sources/zotero/
 
 wiki/*
 !wiki/.gitkeep
@@ -76,6 +78,7 @@ docs/superpowers/
 release/
 
 # Sensitive config and auto-generated logs
+.mcp.json
 config.yaml
 log.md
 
