@@ -77,6 +77,10 @@ docs/superpowers/
 # Release builds
 release/
 
+# Local experiment worktrees and generated comparison artifacts
+/.worktrees/
+/temp/
+
 # Sensitive config and auto-generated logs
 .mcp.json
 config.yaml
