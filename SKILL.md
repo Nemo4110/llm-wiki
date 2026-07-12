@@ -45,24 +45,18 @@ Use legacy `python -m src.llm_wiki ...` only for human scripting or debugging. D
 
 ## Ingest Workflow
 
-1. Verify the source exists in `sources/` or came from a real verified network/Zotero operation.
-2. Extract source metadata when available: title, authors/creator, URL, DOI, arXiv ID, Zotero item key, citation key, and source type.
-3. Extract time metadata separately from wiki maintenance dates:
-   - `published`: paper/post/release/documentation date.
-   - `updated_at_source`: source-side update time when available.
-   - `collected`: user save/import/Zotero collection time.
-   - `ingested`: llm-wiki processing date.
-   - `date_precision`: `day`, `month`, `year`, or `unknown`.
-4. Create or update the smallest useful set of `wiki/*.md` pages. Every non-index page should have frontmatter, a one-sentence definition, knowledge content, related pages, sources, and changelog.
-5. Add visible time anchors for dated works, especially on overview pages:
-   - `**[YYYY.MM] Work name**` for day/month precision.
-   - `**[YYYY] Work name**` for year-only precision.
-   - `**[YYYY.MM-YYYY.MM]**` for ranges.
-6. Use `## 时间线` / `## Timeline` when historical order matters. Start `### 时间定位` / `### Temporal Position` with:
-   - `> **时间范围**：...`
-   - `> **阶段判断**：...`
-7. Run `agent-bridge.py link` for new pages. For high-confidence relations, preview `merge --dry-run`, review the diff, then apply only safe backward updates.
-8. Update `wiki/index.md` and append `log.md`.
+1. Verify every source and extraction path before interpreting it.
+2. Build a temporary source content map before drafting. Record major topic units, mechanisms, equations, quantitative evidence, comparisons, procedures, failure modes, decision rules, open questions, and extraction uncertainty.
+3. Allocate each important unit deliberately: include it in the target page, merge it into an existing page, create a separately reusable concept page, or record a concrete omission reason. Do not omit material merely to fit a summary template.
+4. Choose a page archetype and headings from the knowledge shape. The definition, provenance, related pages, sources, and changelog are invariants; mechanism, derivation, comparison, data flow, decision guide, failure modes, evidence, disputes, and open questions are conditional sections.
+5. Compose the smallest page that preserves the source-defining reasoning. Explain why, how, under what assumptions, and where a claim fails. Preserve central formulas, numerical context, version differences, and engineering trade-offs when the source depends on them.
+6. Run a coverage review before marking the page active. Every important source unit must be present, allocated elsewhere, or intentionally omitted with a reason in working notes.
+7. Run a depth review: reject pages that merely restate an abstract, replace causal mechanisms with labels, list comparisons without dimensions, or use generic boundary statements.
+8. When ingesting a batch, compare the drafts for template collapse. Similar heading and bullet patterns are acceptable only when the underlying knowledge structure is genuinely similar.
+9. Add temporal metadata and visible time anchors where historical order matters.
+10. Run link discovery and safe backward merges only after content review passes, then update `wiki/index.md` and `log.md`.
+
+Source maps and coverage notes are temporary Agent working state. Keep them outside `sources/`; retain them under `temp/` only when the user requests an ingest audit or experiment.
 
 Never treat `created` or `updated` as publication dates. They are wiki maintenance dates only.
 

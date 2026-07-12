@@ -27,15 +27,21 @@ Use Protocol mode for ingest because it requires LLM judgment. The Agent must:
    - `collected`: user collection, Zotero import, or saved time if available.
    - `ingested`: llm-wiki processing date.
    - `date_precision`: `day`, `month`, `year`, or `unknown`.
-5. Extract key insights and decide whether to create a new page or update an existing concept page.
-6. Preserve `sources_meta` in frontmatter when source-level metadata is available.
-7. Add a `## 时间线` / `## Timeline` section for overview pages or multi-source pages where historical order matters.
-   - For papers, arXiv works, named methods, released systems, benchmark reports, or technical posts with a clear source date, show a compact visible date as a Markdown time anchor before the work name, e.g. `**[2024.02] FlashAttention V3**` or `**[2025.08] GRPO training discussion**`.
-   - If only a year is reliable, use `YYYY`; do not invent a month.
-   - Start `### 时间定位` / `### Temporal Position` with a blockquote summary using `> **时间范围**：...` and `> **阶段判断**：...` when the page has multiple dated nodes.
-   - Prefer readable lists over wide Markdown tables when the row contains wiki links or long relationship text. Tables must not force narrow columns to wrap wiki links into broken fragments.
-8. Run dynamic linking with `agent-bridge.py link` or `relink`, review diffs, and append safe backward updates.
-9. Update `wiki/index.md` and append `log.md`.
+5. Build a source content map before page drafting. Enumerate major topic units and source-supported mechanisms, equations, numerical evidence, comparisons, procedures, failure modes, trade-offs, decision rules, and open questions.
+6. Allocate every important unit to the target page, another existing page, a new independently reusable page, or an explicit omission reason. A fixed summary budget is not an omission reason.
+7. Select a page archetype and source-dependent headings. Required page invariants do not imply a fixed knowledge-body outline.
+8. Draft at the depth required to preserve the source's defining reasoning. Keep central formulas, causal chains, implementation details, version differences, and evidence context when they determine the source's value.
+9. Run coverage, depth, and batch-template-collapse reviews before setting `status: active`.
+10. Preserve `sources_meta`, add temporal structure when useful, run dynamic linking, update `wiki/index.md`, and append `log.md` only after the content reviews pass.
+
+The coverage review must account for each important source unit as included, allocated elsewhere, or intentionally omitted. The depth review must reject abstract-only paraphrases, unexplained method-name lists, comparisons without dimensions, unsupported generalization, and generic applicability statements. For batch ingest, compare drafts for suspiciously identical structure or length; investigate rather than automatically padding pages.
+
+When a timeline is useful:
+
+- For papers, arXiv works, named methods, released systems, benchmark reports, or technical posts with a clear source date, show a compact visible date as a Markdown time anchor before the work name, e.g. `**[2024.02] FlashAttention V3**` or `**[2025.08] GRPO training discussion**`.
+- If only a year is reliable, use `YYYY`; do not invent a month.
+- Start `### 时间定位` / `### Temporal Position` with a blockquote summary using `> **时间范围**：...` and `> **阶段判断**：...` when the page has multiple dated nodes.
+- Prefer readable lists over wide Markdown tables when the row contains wiki links or long relationship text. Tables must not force narrow columns to wrap wiki links into broken fragments.
 
 Never treat `created` / `updated` as publication dates. They are wiki maintenance dates only.
 

@@ -233,6 +233,8 @@ llm-wiki/
                     +----------+
 ```
 
+Ingest is adaptive rather than template-sized. Before drafting, the Agent maps the source's mechanisms, evidence, comparisons, implementation details, failure modes, and open questions; allocates each important unit; then chooses headings that fit the knowledge. A short source can produce a short page, while a long technical source should not collapse into a fixed summary card.
+
 ### Key Design
 
 1. **CLAUDE.md as Protocol**: Defines Agent behavior standards; anyone/any Agent can follow
