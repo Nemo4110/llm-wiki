@@ -112,7 +112,15 @@ def build_release(version: str) -> tuple[Path, Path]:
     if sources_readme.exists():
         shutil.copy2(sources_readme, sources_dir / "README.md")
 
-    for name in ["SKILL.md", "CLAUDE.md", "AGENTS.md", "README.md", "ROADMAP.md", ".gitignore"]:
+    for name in [
+        "SKILL.md",
+        "CLAUDE.md",
+        "AGENTS.md",
+        "README.md",
+        "ROADMAP.md",
+        "config.yaml.example",
+        ".gitignore",
+    ]:
         copy_file(name, package_dir)
 
     if (ROOT / "log.md").exists():
