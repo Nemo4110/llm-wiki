@@ -40,6 +40,20 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "link_weight": 0.2,
         "enable_link_traversal": True,
     },
+    "lint": {
+        "depth": {
+            "enabled": True,
+            "min_knowledge_chars": 500,
+            "min_meaningful_paragraphs": 3,
+            "multi_source_threshold": 3,
+            "multi_source_min_knowledge_chars": 800,
+            "source_volume_threshold": 10_000,
+            "compression_ratio_warning": 0.01,
+            "extreme_source_volume_threshold": 20_000,
+            "extreme_compression_max_knowledge_chars": 1_500,
+            "skip_tags": ["QRF"],
+        },
+    },
     "linking": {
         "enabled": True,
         "light_mode": {

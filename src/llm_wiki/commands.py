@@ -488,13 +488,17 @@ def lint(ctx, fix: bool):
       - 重复标题（多个文件声明同一页面）
       - 非 canonical 链接（链接目标未指向真实文件 stem）
       - 草稿页面
+      - 浅内容页面（启发式告警，不改变退出行为）
     """
     LOG.info("lint: fix=%s", fix)
     wiki = ctx.obj['wiki']
+    root = ctx.obj['root']
 
     click.echo("正在检查 wiki 健康状况...\n")
 
-    issues = wiki.lint()
+    config = load_config(root)
+    depth_config = config.get('lint', {}).get('depth')
+    issues = wiki.lint(depth_config)
 
     has_issues = any(issues.values())
 
@@ -539,6 +543,14 @@ def lint(ctx, fix: bool):
         click.echo(f"\n[DRAFT] 草稿页面 ({len(issues['drafts'])}):")
         for p in issues['drafts'][:5]:
             click.echo(f"    - {p}")
+
+    if issues['shallow_pages']:
+        click.echo(f"\n[DEPTH] 浅内容页面 ({len(issues['shallow_pages'])}，仅告警):")
+        for finding in issues['shallow_pages'][:5]:
+            click.echo(f"    - {finding}")
+        if len(issues['shallow_pages']) > 5:
+            click.echo(f"    ... 还有 {len(issues['shallow_pages']) - 5} 个")
+        click.echo("    请检查来源覆盖和缺失推理，不要为满足阈值机械填充内容。")
 
     click.echo(f"\n请使用自然语言指令修复：")
     click.echo(f'  "请修复 wiki 中的问题"')

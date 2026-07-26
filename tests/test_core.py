@@ -180,6 +180,47 @@ class TestWikiManagerLint:
         # Orphans may still exist (Docker is not linked), but dead_links should be empty
         assert issues["dead_links"] == []
 
+    def test_lint_reports_shallow_active_page_with_source_context(
+        self, temp_wiki_root, wiki_manager
+    ):
+        source_dir = temp_wiki_root / "sources"
+        source_dir.mkdir()
+        (source_dir / "large.md").write_text(
+            "mechanism evidence tradeoff decision rule " * 600,
+            encoding="utf-8",
+        )
+        wiki_manager.create_page(
+            "Thin",
+            "# Thin\n\nOnly a tiny summary.",
+            {
+                "created": "2026-07-25",
+                "status": "active",
+                "sources": ["sources/large.md"],
+            },
+        )
+
+        legacy_issues = wiki_manager.lint()
+
+        assert any("Thin" in finding for finding in legacy_issues["shallow_pages"])
+        assert any(
+            "short-knowledge-body" in finding
+            for finding in legacy_issues["shallow_pages"]
+        )
+        assert "shallow_page_details" not in legacy_issues
+
+        issues = wiki_manager.lint(include_depth_details=True)
+        details = next(
+            finding
+            for finding in issues["shallow_page_details"]
+            if finding["page_stem"] == "Thin"
+        )
+        assert details["page_title"] == "Thin"
+        assert details["knowledge_chars"] > 0
+        assert details["local_source_chars"] > 0
+        assert details["compression_ratio"] is not None
+        assert "short-knowledge-body" in details["reasons"]
+        assert all(isinstance(finding, str) for finding in issues["shallow_pages"])
+
 
 class TestWikiManagerLog:
     def test_append_and_read_log(self, wiki_manager):
