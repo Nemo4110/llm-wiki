@@ -89,7 +89,7 @@ def _find_python() -> Tuple[str, bool]:
     # Pick first that can import src.llm_wiki
     for py_path, is_venv in candidates:
         result = subprocess.run(
-            [py_path, "-c", "import src.llm_wiki"],
+            [py_path, "-B", "-c", "import src.llm_wiki"],
             capture_output=True,
             cwd=PROJECT_ROOT,
         )

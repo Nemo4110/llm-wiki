@@ -194,8 +194,8 @@ python -m src.llm_wiki --help
 
 ```text
 llm-wiki/
-├── CLAUDE.md           # ⭐ Core protocol: Agent behavior guidelines
-├── AGENTS.md           # Agent implementation guide and tool-selection protocol
+├── AGENTS.md           # ⭐ Canonical Agent protocol and tool-selection guide
+├── CLAUDE.md -> AGENTS.md # Relative symbolic link to the canonical protocol
 ├── README.md           # This file
 ├── docs/
 │   ├── README.cn.md    # Simplified Chinese README
@@ -243,7 +243,7 @@ Ingest is adaptive rather than template-sized. Before drafting, the Agent maps t
 
 ### Key Design
 
-1. **CLAUDE.md as Protocol**: Defines Agent behavior standards; anyone/any Agent can follow
+1. **AGENTS.md as Canonical Protocol**: Defines Agent behavior standards; `CLAUDE.md` is a relative symbolic link that keeps every Agent entry point identical
 2. **Pure Markdown**: No database, no lock-in, native git version control
 3. **Bidirectional Links**: `[[PageName]]` format, compatible with Obsidian
 4. **Cumulative Learning**: Each query can generate new wiki pages, knowledge continuously accumulates

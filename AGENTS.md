@@ -1,7 +1,7 @@
 # LLM-Wiki Unified Agent Protocol
 
 > This document guides Claude Code, OpenClaw, and other AI Agents on how to use llm-wiki.
-> `AGENTS.md` and `CLAUDE.md` are intended to be hard links to the same unified protocol file. Update one content body only.
+> `AGENTS.md` is the canonical protocol file. `CLAUDE.md` must be a relative symbolic link to `AGENTS.md`; edit `AGENTS.md` only.
 > **All Agents operating in this project directory MUST read and understand `SKILL.md` before performing any task.**
 
 ## Design Philosophy
@@ -112,6 +112,11 @@ In body text, prefer a human-scannable Markdown time anchor for dated works:
 - Synchronize README language variants when user-facing behavior changes.
 - Use the project-managed Python environment (`.venv` or conda) for Python operations.
 - Treat `sources/zotero/metadata.yaml` and `sources/zotero/**` as private Zotero binding state and local symlink cache; do not commit them and do not write synthesized knowledge there.
+
+### Release Artifact Verification
+
+- Run Python smoke checks inside a generated release directory with bytecode writes disabled: use `python -B ...` or set `PYTHONDONTWRITEBYTECODE=1`.
+- After smoke checks, verify both the expanded release directory and its archive contain no `__pycache__/` directories or `.pyc` files before recording checksums or publishing artifacts.
 
 ## Mandatory Pre-Flight Checklist
 
@@ -1060,13 +1065,13 @@ def check_dep(module_name, python_path=None):
 
 ### Relationship with CLAUDE.md
 
-- `CLAUDE.md`: Defines **user-visible** working protocol
-- `AGENTS.md`: Defines **Agent-internal** implementation strategy
-- `SKILL.md`: Machine-readable specification that **ALL Agents MUST read** before operating
+- `AGENTS.md`: Canonical unified protocol for user-visible behavior and Agent implementation strategy.
+- `CLAUDE.md`: Relative symbolic link to `AGENTS.md`; never maintain a second content body.
+- `SKILL.md`: Machine-readable operational specification that **ALL Agents MUST read** before operating.
 
-They are not contradictory: Protocol mode implements the semantics of CLAUDE.md; agent-bridge.py provides a unified interface for all algorithmic tasks.
+Edit `AGENTS.md` only. The symlink keeps Claude Code and other Agent entry points byte-identical.
 
 ---
 
-*Agent Guide Version: 1.4.1*
-*Last Updated: 2026-05-24*
+*Agent Guide Version: 1.5.0*
+*Last Updated: 2026-07-26*
