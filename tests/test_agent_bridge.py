@@ -8,6 +8,7 @@ Note: agent-bridge.py is imported dynamically (filename contains a hyphen).
 """
 
 import argparse
+import re
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -109,6 +110,49 @@ class TestCmdLint:
         out = capsys.readouterr().out
         assert rc == 0  # lint always returns 0 even if issues found
         assert "Wiki Health Check" in out
+
+    def test_lint_reports_shallow_pages_with_reasons(
+        self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys
+    ):
+        from llm_wiki.core import WikiManager
+
+        source_dir = temp_wiki_root / "sources"
+        source_dir.mkdir()
+        (source_dir / "large.md").write_text("x" * 12_000, encoding="utf-8")
+
+        wiki = WikiManager(temp_wiki_root / "wiki")
+        wiki.create_page(
+            "Thin",
+            "# Thin\n\nOnly a tiny summary.",
+            {
+                "created": "2026-07-25",
+                "status": "active",
+                "sources": ["sources/large.md"],
+            },
+        )
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+
+        rc = agent_bridge_module.cmd_lint(_args())
+        out = capsys.readouterr().out
+
+        assert agent_bridge_module._md_table_cell("A|B\nC") == r"A\|B C"
+        assert rc == 0
+        assert "Shallow pages" in out
+        assert "### Shallow Pages (advisory)" in out
+        assert (
+            "| Page | Knowledge | Paragraphs | Sections | Sources | "
+            "Source chars | Compression | Reasons |"
+        ) in out
+        assert "| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |" in out
+        assert "[Thin](wiki/Thin.md)" in out
+        assert "`short-knowledge-body`" in out
+        assert "12,000" in out
+        assert re.search(r"\d+\.\d{2}%", out)
+
+        shallow_section = out.split("### Shallow Pages (advisory)", 1)[1].split(
+            "> **[ACTION]**", 1
+        )[0]
+        assert "```" not in shallow_section
 
     def test_lint_no_wiki(self, agent_bridge_module, monkeypatch, capsys, tmp_path):
         monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", tmp_path)

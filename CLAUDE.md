@@ -258,7 +258,7 @@ python scripts/agent-bridge.py lint
 ```
 
 **Output sections**:
-- `## Summary` — count table for orphans, dead links, stale, empty pages, duplicate titles, non-canonical links, drafts
+- `## Summary` — count table for orphans, dead links, stale, empty pages, duplicate titles, non-canonical links, drafts, and shallow pages
 - `## Orphan Pages` — pages not referenced by any other
 - `## Dead Links` — `[[...]]` targets that are not real `wiki/*.md` file stems
 - `## Stale Pages` — >90 days since last update
@@ -266,8 +266,11 @@ python scripts/agent-bridge.py lint
 - `## Duplicate Titles` — multiple files declaring the same `# Title`
 - `## Non-Canonical Links` — wiki links whose target does not point to the real page file stem
 - `## Draft Pages`
+- `## Shallow Pages` — advisory, source-aware depth findings with knowledge size, structure, source volume, compression ratio, and reasons
 
-**Your action**: For dead links, create canonical page files or rewrite the link target to an existing file stem. For empty pages, fill them or remove duplicate shells. For duplicate titles, keep the canonical slug file (`Title-With-Spaces.md`) and merge or delete accidental variants. For non-canonical links, rewrite `[[Page Name]]` as `[[Page-Name|Page Name]]`. For orphans, consider adding backlinks from relevant pages.
+Depth lint excludes `Related Pages` / `相关页面`, `Sources` / `来源`, and `Changelog` / `变更日志`. It is warning-only: findings do not change the command exit behavior. `QRF` pages are skipped by default, and an intentionally concise page may use `lint_depth: skip` only after a coverage audit records why the warning is a false positive. Passing the heuristic never replaces source-unit coverage review, and Agents must not pad pages mechanically to satisfy thresholds.
+
+**Your action**: For dead links, create canonical page files or rewrite the link target to an existing file stem. For empty pages, fill them or remove duplicate shells. For duplicate titles, keep the canonical slug file (`Title-With-Spaces.md`) and merge or delete accidental variants. For non-canonical links, rewrite `[[Page Name]]` as `[[Page-Name|Page Name]]`. For orphans, consider adding backlinks from relevant pages. For shallow pages, inspect the allocated sources and restore missing mechanisms, evidence, comparisons, procedures, failure modes, and decision rules; do not add generic filler.
 
 ### 4. Status Overview
 

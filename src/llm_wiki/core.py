@@ -10,10 +10,11 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional, Set, Dict, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Set, Tuple
 import yaml
 
 from .agent_logger import get_logger
+from .depth_lint import DepthLintConfig, analyze_depth
 
 LOG = get_logger("core")
 
@@ -184,8 +185,13 @@ class WikiManager:
         LOG.debug("Read %d log entries", len(entries))
         return entries[-n:] if entries else []
 
-    def lint(self) -> Dict[str, List[str]]:
-        """运行健康检查"""
+    def lint(
+        self,
+        depth_config: Optional[Mapping[str, Any]] = None,
+        *,
+        include_depth_details: bool = False,
+    ) -> Dict[str, List[Any]]:
+        """运行健康检查，包括默认仅告警的内容深度检测。"""
         LOG.info("Running lint...")
         issues = {
             'orphans': [],
@@ -195,7 +201,11 @@ class WikiManager:
             'duplicate_titles': [],
             'noncanonical_links': [],
             'drafts': [],
+            'shallow_pages': [],
         }
+        if include_depth_details:
+            issues['shallow_page_details'] = []
+        resolved_depth_config = DepthLintConfig.from_mapping(depth_config)
 
         pages = self.list_pages()
         title_to_paths: Dict[str, List[Path]] = {}
@@ -233,6 +243,19 @@ class WikiManager:
             if page.status == 'draft':
                 issues['drafts'].append(page.title)
 
+            depth_issue = analyze_depth(
+                page_title=page.title,
+                page_stem=page.path.stem,
+                content=page.content,
+                frontmatter=page.frontmatter,
+                project_root=self.wiki_dir.parent,
+                config=resolved_depth_config,
+            )
+            if depth_issue:
+                issues['shallow_pages'].append(depth_issue.render())
+                if include_depth_details:
+                    issues['shallow_page_details'].append(depth_issue.to_dict())
+
             # 检查陈旧页面（90天未更新）
             updated = page.frontmatter.get('updated')
             if updated:
@@ -258,11 +281,18 @@ class WikiManager:
             if link not in wiki_file_stems:
                 issues['dead_links'].append(link)
 
-        LOG.info("Lint complete: orphans=%d dead_links=%d stale=%d empty_pages=%d duplicate_titles=%d noncanonical_links=%d drafts=%d",
-                 len(issues['orphans']), len(issues['dead_links']),
-                 len(issues['stale']), len(issues['empty_pages']),
-                 len(issues['duplicate_titles']), len(issues['noncanonical_links']),
-                 len(issues['drafts']))
+        LOG.info(
+            "Lint complete: orphans=%d dead_links=%d stale=%d empty_pages=%d "
+            "duplicate_titles=%d noncanonical_links=%d drafts=%d shallow_pages=%d",
+            len(issues['orphans']),
+            len(issues['dead_links']),
+            len(issues['stale']),
+            len(issues['empty_pages']),
+            len(issues['duplicate_titles']),
+            len(issues['noncanonical_links']),
+            len(issues['drafts']),
+            len(issues['shallow_pages']),
+        )
         return issues
 
     def _load_page(self, path: Path) -> Optional[WikiPage]:

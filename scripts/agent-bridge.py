@@ -167,12 +167,28 @@ def _md_header(title: str, level: int = 2) -> str:
     return f"{'#' * level} {title}"
 
 
-def _md_table(headers: List[str], rows: List[List[str]]) -> str:
+def _md_table(
+    headers: List[str],
+    rows: List[List[str]],
+    alignments: Optional[List[str]] = None,
+) -> str:
+    resolved_alignments = alignments or ["left"] * len(headers)
+    separators = {
+        "left": "---",
+        "right": "---:",
+        "center": ":---:",
+    }
+    separator_row = [separators[value] for value in resolved_alignments]
+
     lines = ["| " + " | ".join(headers) + " |"]
-    lines.append("|" + "|".join([" --- " for _ in headers]) + "|")
+    lines.append("| " + " | ".join(separator_row) + " |")
     for row in rows:
         lines.append("| " + " | ".join(row) + " |")
     return "\n".join(lines)
+
+
+def _md_table_cell(value: Any) -> str:
+    return str(value).replace("\r", " ").replace("\n", " ").replace("|", r"\|")
 
 
 def _md_code_block(content: str, lang: str = "") -> str:
@@ -518,6 +534,7 @@ def cmd_lint(args: argparse.Namespace) -> int:
     """Run wiki health check."""
     LOG.info("cmd_lint")
 
+    from src.llm_wiki.config import load_config
     from src.llm_wiki.core import WikiManager, find_wiki_root
 
     wiki_root = find_wiki_root(PROJECT_ROOT)
@@ -525,13 +542,18 @@ def cmd_lint(args: argparse.Namespace) -> int:
         print(_md_info("Error: Cannot find wiki root."))
         return 1
 
+    config = load_config(wiki_root)
     wiki = WikiManager(wiki_root / "wiki")
-    issues = wiki.lint()
-    LOG.info("Lint complete: orphans=%d dead_links=%d stale=%d empty_pages=%d duplicate_titles=%d noncanonical_links=%d drafts=%d",
-             len(issues["orphans"]), len(issues["dead_links"]),
-             len(issues["stale"]), len(issues["empty_pages"]),
-             len(issues["duplicate_titles"]), len(issues["noncanonical_links"]),
-             len(issues["drafts"]))
+    depth_config = config.get("lint", {}).get("depth")
+    issues = wiki.lint(depth_config, include_depth_details=True)
+    LOG.info(
+        "Lint complete: orphans=%d dead_links=%d stale=%d empty_pages=%d "
+        "duplicate_titles=%d noncanonical_links=%d drafts=%d shallow_pages=%d",
+        len(issues["orphans"]), len(issues["dead_links"]),
+        len(issues["stale"]), len(issues["empty_pages"]),
+        len(issues["duplicate_titles"]), len(issues["noncanonical_links"]),
+        len(issues["drafts"]), len(issues["shallow_pages"]),
+    )
 
     lines: List[str] = []
     lines.append(_md_header("Wiki Health Check"))
@@ -543,7 +565,6 @@ def cmd_lint(args: argparse.Namespace) -> int:
         print("\n".join(lines))
         return 0
 
-    # Summary table
     lines.append(_md_header("Summary", level=3))
     lines.append(_md_table(
         ["Check", "Count", "Status"],
@@ -555,11 +576,11 @@ def cmd_lint(args: argparse.Namespace) -> int:
             ["Duplicate titles", str(len(issues["duplicate_titles"])), "⚠️" if issues["duplicate_titles"] else "✅"],
             ["Non-canonical links", str(len(issues["noncanonical_links"])), "⚠️" if issues["noncanonical_links"] else "✅"],
             ["Draft pages", str(len(issues["drafts"])), "⚠️" if issues["drafts"] else "✅"],
+            ["Shallow pages", str(len(issues["shallow_pages"])), "⚠️" if issues["shallow_pages"] else "✅"],
         ],
     ))
     lines.append("")
 
-    # Details
     if issues["orphans"]:
         lines.append(_md_header("Orphan Pages (not referenced)", level=3))
         lines.append(_md_code_block("\n".join(f"- [[{p}]]" for p in issues["orphans"])))
@@ -605,9 +626,62 @@ def cmd_lint(args: argparse.Namespace) -> int:
         lines.append(_md_code_block("\n".join(f"- [[{p}]]" for p in issues["drafts"])))
         lines.append("")
 
+    if issues["shallow_pages"]:
+        lines.append(_md_header("Shallow Pages (advisory)", level=3))
+        shallow_rows: List[List[str]] = []
+        for finding in issues["shallow_page_details"]:
+            ratio = finding["compression_ratio"]
+            compression = "n/a" if ratio is None else f"{ratio:.2%}"
+            reasons = ", ".join(
+                f"`{_md_table_cell(reason)}`" for reason in finding["reasons"]
+            )
+            title = _md_table_cell(finding["page_title"])
+            stem = _md_table_cell(finding["page_stem"])
+            shallow_rows.append(
+                [
+                    f"[{title}](wiki/{stem}.md)",
+                    str(finding["knowledge_chars"]),
+                    str(finding["meaningful_paragraphs"]),
+                    str(finding["substantive_sections"]),
+                    str(finding["source_count"]),
+                    f"{finding['local_source_chars']:,}",
+                    compression,
+                    reasons,
+                ]
+            )
+        lines.append(
+            _md_table(
+                [
+                    "Page",
+                    "Knowledge",
+                    "Paragraphs",
+                    "Sections",
+                    "Sources",
+                    "Source chars",
+                    "Compression",
+                    "Reasons",
+                ],
+                shallow_rows,
+                alignments=[
+                    "left",
+                    "right",
+                    "right",
+                    "right",
+                    "right",
+                    "right",
+                    "right",
+                    "left",
+                ],
+            )
+        )
+        lines.append("")
+        lines.append(_md_action(
+            "Investigate source coverage and missing reasoning; do not pad pages mechanically to satisfy thresholds."
+        ))
+        lines.append("")
+
     print("\n".join(lines))
     return 0
-
 
 def cmd_status(args: argparse.Namespace) -> int:
     """Show wiki status overview."""
