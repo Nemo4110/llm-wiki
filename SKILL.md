@@ -43,6 +43,12 @@ Agent Bridge quick commands:
 
 Use legacy `python -m src.llm_wiki ...` only for human scripting or debugging. Do not use the legacy CLI as a substitute for LLM judgment during ingest.
 
+### Interpret depth lint correctly
+
+`agent-bridge.py lint` reports `Shallow Pages` as warning-only findings. The detector excludes related-page, source, and changelog sections, then combines normalized knowledge size, paragraph and section structure, local text-source volume, source count, and compression ratio. `QRF` is skipped by default; `lint_depth: skip` is reserved for deliberately concise pages whose source-coverage audit explains the exemption.
+
+A clean depth result is not proof of source coverage. Re-read allocated sources and account for important mechanisms, equations, evidence, comparisons, procedures, failure modes, trade-offs, and decision rules. Never pad a page mechanically to satisfy a threshold.
+
 ## Ingest Workflow
 
 1. Verify every source and extraction path before interpreting it.

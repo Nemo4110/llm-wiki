@@ -161,6 +161,12 @@ python scripts/agent-bridge.py index
 python scripts/agent-bridge.py query "optimization methods" --semantic
 ```
 
+#### Depth lint warnings
+
+`agent-bridge.py lint` also reports **Shallow Pages** as advisory warnings. The detector excludes `Related Pages` / `相关页面`, `Sources` / `来源`, and `Changelog` / `变更日志`, then combines normalized knowledge length, meaningful paragraph and section counts, local text-source volume, source count, and source-to-synthesis compression ratio. Findings do not change the command's exit behavior.
+
+Pages tagged `QRF` are skipped by default. A deliberately concise, already-reviewed page may set `lint_depth: skip` in frontmatter, but the exemption should be justified by a source-coverage audit. Passing the heuristic does not replace unit-level coverage review, and pages must never be padded mechanically just to cross a threshold. Thresholds and skipped tags are configurable under `lint.depth` in `config.yaml`.
+
 ### Legacy CLI Mode (Optional)
 
 After installing dependencies, you can use the command line tool:

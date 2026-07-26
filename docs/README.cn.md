@@ -159,6 +159,12 @@ python scripts/agent-bridge.py index
 python scripts/agent-bridge.py query "优化方法" --semantic
 ```
 
+#### 内容深度 lint 告警
+
+`agent-bridge.py lint` 还会以 advisory warning 的形式报告 **Shallow Pages**。检测器会排除 `Related Pages` / `相关页面`、`Sources` / `来源` 和 `Changelog` / `变更日志`，再综合规范化知识正文长度、有意义段落与章节数量、本地文本来源体量、来源数量及来源到综合内容的压缩比。该告警不会改变命令退出行为。
+
+默认跳过带 `QRF` 标签的页面。经过来源覆盖审计、确实需要保持精简的页面可在 frontmatter 中设置 `lint_depth: skip`，但必须记录豁免理由。通过启发式检测不能替代逐单元来源覆盖审查，也不得为跨过阈值而机械填充页面。阈值和跳过标签可在 `config.yaml` 的 `lint.depth` 下配置。
+
 ### 旧版 CLI 模式（可选）
 
 安装依赖后，可使用命令行工具：
