@@ -20,16 +20,17 @@ We chose the SKILL form because it brings these advantages:
 
 ### Option A — One-command install with `uv` (Recommended, no clone needed)
 
-Install the CLI as an isolated tool and scaffold a knowledge base anywhere:
+Install the CLI as an isolated tool directly from the repository and scaffold a
+knowledge base anywhere — you never run `git clone` yourself:
 
 ```bash
 # 1. Install uv once (https://docs.astral.sh/uv/)
 #    Windows:  powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 #    macOS/Linux: curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# 2. Install llm-wiki (isolated, no project checkout required)
-uv tool install llm-wiki
-# or run without installing:  uvx llm-wiki --help
+# 2. Install llm-wiki straight from GitHub (uv fetches it for you)
+uv tool install git+https://github.com/Nemo4110/llm-wiki.git
+# or run without installing:  uvx --from git+https://github.com/Nemo4110/llm-wiki.git llm-wiki --help
 
 # 3. Create a knowledge base in any directory
 llm-wiki init my-kb
@@ -41,14 +42,10 @@ llm-wiki status
 
 `llm-wiki init` materializes `wiki/`, `sources/`, `AGENTS.md`, `CLAUDE.md`, and
 `config.yaml.example` from templates bundled inside the installed package — so
-you never need to `git clone` just to get started.
+there is no checkout to manage at all.
 
-> **Note**: `uv tool install llm-wiki` pulls from PyPI. Until the package is
-> published, install directly from the repository:
->
-> ```bash
-> uv tool install git+https://github.com/Nemo4110/llm-wiki.git
-> ```
+> Upgrading later is one command: `uv tool upgrade llm-wiki` (re-fetches the
+> latest commit from the default branch).
 
 ### Option B — Clone and install from source
 
