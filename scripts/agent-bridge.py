@@ -57,6 +57,18 @@ LOG = get_logger("agent_bridge")
 # ---------------------------------------------------------------------------
 
 
+def _probe_imports(py_path: str) -> bool:
+    """True if py_path can import llm-wiki either as an installed package
+    (llm_wiki, from `uv tool install`) or from a source checkout (src.llm_wiki)."""
+    probe = "import importlib.util, sys; sys.exit(0 if (importlib.util.find_spec('llm_wiki') or importlib.util.find_spec('src.llm_wiki')) else 1)"
+    result = subprocess.run(
+        [py_path, "-B", "-c", probe],
+        capture_output=True,
+        cwd=PROJECT_ROOT,
+    )
+    return result.returncode == 0
+
+
 def _find_python() -> Tuple[str, bool]:
     """
     Find the best Python interpreter for running llm-wiki code.
@@ -71,7 +83,7 @@ def _find_python() -> Tuple[str, bool]:
         if py.exists():
             candidates.append((str(py), True))
 
-    # 2. local virtual environments
+    # 2. local virtual environments (created by `uv venv` or python -m venv)
     for venv_name in (".venv", "venv"):
         venv = PROJECT_ROOT / venv_name
         if not venv.exists():
@@ -83,21 +95,17 @@ def _find_python() -> Tuple[str, bool]:
         if py.exists():
             candidates.append((str(py), True))
 
-    # 3. system Python (current interpreter)
+    # 3. current interpreter — under `uv run` or an activated uv tool venv this
+    #    is already an environment that can import llm_wiki.
     candidates.append((sys.executable, False))
 
-    # Pick first that can import src.llm_wiki
+    # Pick first that can import the library (installed or source layout)
     for py_path, is_venv in candidates:
-        result = subprocess.run(
-            [py_path, "-B", "-c", "import src.llm_wiki"],
-            capture_output=True,
-            cwd=PROJECT_ROOT,
-        )
-        if result.returncode == 0:
+        if _probe_imports(py_path):
             LOG.debug("Selected Python: %s (venv=%s)", py_path, is_venv)
             return py_path, is_venv
 
-    LOG.warning("No Python interpreter found that can import src.llm_wiki")
+    LOG.warning("No Python interpreter found that can import llm_wiki or src.llm_wiki")
     return sys.executable, False
 
 

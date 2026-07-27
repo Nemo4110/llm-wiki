@@ -1,0 +1,72 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "llm-wiki"
+dynamic = ["version"]
+description = "Karpathy's llm-wiki pattern: LLM as programmer, Wiki as codebase"
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+license = { text = "MIT" }
+authors = [{ name = "Nemo4110" }]
+keywords = ["llm", "wiki", "knowledge-base", "claude-code", "skill"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Text Processing :: Markup :: Markdown",
+]
+# Runtime dependencies mirror src/requirements.txt, minus pytest (dev-only).
+dependencies = [
+    "click>=8.0.0",
+    "pyyaml>=6.0",
+    "pymupdf>=1.25.0",
+    "numpy>=1.24.0",
+    "httpx>=0.27.0",
+    "mcp>=1.0.0",
+    "openai>=1.0.0",
+]
+
+[project.optional-dependencies]
+pdf = [
+    "pdfplumber>=0.11.8",
+    "pdfminer.six>=20251107",
+]
+dev = [
+    "pytest>=7.0.0",
+    "build>=1.0.0",
+    "uv>=0.4.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/Nemo4110/llm-wiki"
+Repository = "https://github.com/Nemo4110/llm-wiki"
+Issues = "https://github.com/Nemo4110/llm-wiki/issues"
+
+# Console entry point installed by `uv tool install` / pipx.
+# Import path is llm_wiki (package), provided by src/llm_wiki on disk.
+[project.scripts]
+llm-wiki = "llm_wiki.commands:cli"
+
+[tool.hatch.version]
+path = "src/llm_wiki/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+# Map the on-disk src/llm_wiki package to the importable llm_wiki package.
+# The templates/ subdirectory ships inside the wheel automatically, which is
+# what lets `llm-wiki init` scaffold a knowledge base without a git clone.
+packages = ["src/llm_wiki"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/llm_wiki",
+    "README.md",
+    "SKILL.md",
+    "AGENTS.md",
+    "config.yaml.example",
+]

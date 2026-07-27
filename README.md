@@ -18,14 +18,46 @@ We chose the SKILL form because it brings these advantages:
 
 ## Quick Start
 
-### 1. Clone/Copy This Project
+### Option A — One-command install with `uv` (Recommended, no clone needed)
+
+Install the CLI as an isolated tool and scaffold a knowledge base anywhere:
+
+```bash
+# 1. Install uv once (https://docs.astral.sh/uv/)
+#    Windows:  powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+#    macOS/Linux: curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# 2. Install llm-wiki (isolated, no project checkout required)
+uv tool install llm-wiki
+# or run without installing:  uvx llm-wiki --help
+
+# 3. Create a knowledge base in any directory
+llm-wiki init my-kb
+cd my-kb
+
+# 4. Drop materials into sources/ and let your agent ingest them
+llm-wiki status
+```
+
+`llm-wiki init` materializes `wiki/`, `sources/`, `AGENTS.md`, `CLAUDE.md`, and
+`config.yaml.example` from templates bundled inside the installed package — so
+you never need to `git clone` just to get started.
+
+> **Note**: `uv tool install llm-wiki` pulls from PyPI. Until the package is
+> published, install directly from the repository:
+>
+> ```bash
+> uv tool install git+https://github.com/Nemo4110/llm-wiki.git
+> ```
+
+### Option B — Clone and install from source
+
+For development or to hack on the SKILL itself:
 
 ```bash
 git clone https://github.com/Nemo4110/llm-wiki.git
 cd llm-wiki
 ```
-
-### 2. Install Dependencies (Optional)
 
 The CLI tool currently supports Python 3.12-3.13. The actively verified local development matrix is:
 
@@ -40,9 +72,9 @@ Python 3.8-3.11 are not part of the current support matrix. Choose your preferre
 #### Using uv (Recommended if you have uv)
 
 ```bash
-# Create virtual environment and install dependencies
+# Create virtual environment and install the package (editable)
 uv venv
-uv pip install -r src/requirements.txt --python .venv/Scripts/python.exe
+uv pip install -e .
 
 # Activate (Windows)
 .venv\Scripts\activate
@@ -73,13 +105,17 @@ python -m venv .venv
 source .venv/bin/activate  # Linux/macOS
 .venv\Scripts\activate     # Windows
 
-# Install dependencies
-pip install -r src/requirements.txt
+# Install the package (editable) so the llm-wiki command is available
+pip install -e .
 ```
 
 #### Verify Installation
 
 ```bash
+# Installed as a tool / package
+llm-wiki --help
+
+# Or, from a source checkout without installing
 python -c "from src.llm_wiki.core import WikiManager; print('✓ Installation successful')"
 ```
 
@@ -104,7 +140,7 @@ The project includes the following core dependencies (defined in `src/requiremen
 
 **Pure Protocol Mode**: If you only want to use Claude Code's natural language commands (e.g. "please ingest this material") for plain text files, **no installation is required**. PyMuPDF is only needed when reading PDFs.
 
-### 3. Add Your First Material
+### 2. Add Your First Material
 
 ```bash
 # Copy any file into sources/
@@ -112,7 +148,7 @@ cp ~/Downloads/interesting-paper.pdf sources/
 cp ~/Notes/ideas.md sources/
 ```
 
-### 4. Let Claude Work
+### 3. Let Claude Work
 
 In Claude Code:
 
