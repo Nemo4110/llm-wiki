@@ -24,10 +24,22 @@ LOG = get_logger("commands")
 @click.option('--verbose', '-v', is_flag=True, help='启用详细日志输出到 stderr')
 @click.pass_context
 def cli(ctx, wiki_dir: Optional[str], verbose: bool):
-    """LLM-Wiki 命令行工具"""
+    """LLM-Wiki 命令行工具
+
+    常用入口：
+        llm-wiki init my-kb        在任意目录初始化知识库（无需 git clone）
+        llm-wiki status            查看 wiki 状态
+    """
     setup_agent_logging()
     if verbose:
         get_logger("").setLevel("DEBUG")
+
+    ctx.ensure_object(dict)
+    ctx.obj['wiki_dir'] = wiki_dir
+
+    # init 在未初始化的目录也能运行，因此仅在其他子命令需要时惰性解析 root。
+    if ctx.invoked_subcommand == 'init':
+        return
 
     if wiki_dir:
         root = Path(wiki_dir)
@@ -35,13 +47,40 @@ def cli(ctx, wiki_dir: Optional[str], verbose: bool):
         root = find_wiki_root()
 
     if not root:
-        click.echo("错误：找不到 wiki 根目录。请确保当前目录在 wiki 内，或指定 --wiki-dir")
+        click.echo("错误：找不到 wiki 根目录。请先运行 `llm-wiki init <目录>`，或指定 --wiki-dir")
         ctx.exit(1)
 
     LOG.info("CLI initialized: root=%s", root)
-    ctx.ensure_object(dict)
     ctx.obj['wiki'] = WikiManager(root / "wiki")
     ctx.obj['root'] = root
+
+
+@cli.command()
+@click.argument('target_dir', type=click.Path(), default='.')
+@click.option('--force', is_flag=True, help='覆盖已存在的文件')
+def init(target_dir: str, force: bool):
+    """
+    在 TARGET_DIR 初始化一个 llm-wiki 知识库（默认当前目录）。
+
+    适用于 `uv tool install llm-wiki` 之后、没有项目源码的场景：
+    会从安装包内置模板生成 wiki/、sources/、AGENTS.md、CLAUDE.md、
+    config.yaml.example 等骨架文件。
+
+    示例：
+        llm-wiki init my-kb
+        cd my-kb && llm-wiki status
+    """
+    from .init_cmd import scaffold
+
+    actions = scaffold(Path(target_dir), force=force)
+    click.echo(f"已在 {Path(target_dir).expanduser().resolve()} 初始化 llm-wiki 知识库：")
+    for line in actions:
+        click.echo(f"  {line}")
+    click.echo("")
+    click.echo("下一步：")
+    click.echo(f"  cd {target_dir}")
+    click.echo("  # 将原始资料放入 sources/，然后让你的 Agent 摄入：")
+    click.echo("  llm-wiki status")
 
 
 @cli.command()

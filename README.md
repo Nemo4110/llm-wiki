@@ -18,14 +18,43 @@ We chose the SKILL form because it brings these advantages:
 
 ## Quick Start
 
-### 1. Clone/Copy This Project
+### Option A — One-command install with `uv` (Recommended, no clone needed)
+
+Install the CLI as an isolated tool directly from the repository and scaffold a
+knowledge base anywhere — you never run `git clone` yourself:
+
+```bash
+# 1. Install uv once (https://docs.astral.sh/uv/)
+#    Windows:  powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+#    macOS/Linux: curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# 2. Install llm-wiki straight from GitHub (uv fetches it for you)
+uv tool install git+https://github.com/Nemo4110/llm-wiki.git
+# or run without installing:  uvx --from git+https://github.com/Nemo4110/llm-wiki.git llm-wiki --help
+
+# 3. Create a knowledge base in any directory
+llm-wiki init my-kb
+cd my-kb
+
+# 4. Drop materials into sources/ and let your agent ingest them
+llm-wiki status
+```
+
+`llm-wiki init` materializes `wiki/`, `sources/`, `AGENTS.md`, `CLAUDE.md`, and
+`config.yaml.example` from templates bundled inside the installed package — so
+there is no checkout to manage at all.
+
+> Upgrading later is one command: `uv tool upgrade llm-wiki` (re-fetches the
+> latest commit from the default branch).
+
+### Option B — Clone and install from source
+
+For development or to hack on the SKILL itself:
 
 ```bash
 git clone https://github.com/Nemo4110/llm-wiki.git
 cd llm-wiki
 ```
-
-### 2. Install Dependencies (Optional)
 
 The CLI tool currently supports Python 3.12-3.13. The actively verified local development matrix is:
 
@@ -40,9 +69,9 @@ Python 3.8-3.11 are not part of the current support matrix. Choose your preferre
 #### Using uv (Recommended if you have uv)
 
 ```bash
-# Create virtual environment and install dependencies
+# Create virtual environment and install the package (editable)
 uv venv
-uv pip install -r src/requirements.txt --python .venv/Scripts/python.exe
+uv pip install -e .
 
 # Activate (Windows)
 .venv\Scripts\activate
@@ -73,13 +102,17 @@ python -m venv .venv
 source .venv/bin/activate  # Linux/macOS
 .venv\Scripts\activate     # Windows
 
-# Install dependencies
-pip install -r src/requirements.txt
+# Install the package (editable) so the llm-wiki command is available
+pip install -e .
 ```
 
 #### Verify Installation
 
 ```bash
+# Installed as a tool / package
+llm-wiki --help
+
+# Or, from a source checkout without installing
 python -c "from src.llm_wiki.core import WikiManager; print('✓ Installation successful')"
 ```
 
@@ -104,7 +137,7 @@ The project includes the following core dependencies (defined in `src/requiremen
 
 **Pure Protocol Mode**: If you only want to use Claude Code's natural language commands (e.g. "please ingest this material") for plain text files, **no installation is required**. PyMuPDF is only needed when reading PDFs.
 
-### 3. Add Your First Material
+### 2. Add Your First Material
 
 ```bash
 # Copy any file into sources/
@@ -112,7 +145,7 @@ cp ~/Downloads/interesting-paper.pdf sources/
 cp ~/Notes/ideas.md sources/
 ```
 
-### 4. Let Claude Work
+### 3. Let Claude Work
 
 In Claude Code:
 
@@ -194,8 +227,8 @@ python -m src.llm_wiki --help
 
 ```text
 llm-wiki/
-├── CLAUDE.md           # ⭐ Core protocol: Agent behavior guidelines
-├── AGENTS.md           # Agent implementation guide and tool-selection protocol
+├── AGENTS.md           # ⭐ Canonical Agent protocol and tool-selection guide
+├── CLAUDE.md -> AGENTS.md # Relative symbolic link to the canonical protocol
 ├── README.md           # This file
 ├── docs/
 │   ├── README.cn.md    # Simplified Chinese README
@@ -243,7 +276,7 @@ Ingest is adaptive rather than template-sized. Before drafting, the Agent maps t
 
 ### Key Design
 
-1. **CLAUDE.md as Protocol**: Defines Agent behavior standards; anyone/any Agent can follow
+1. **AGENTS.md as Canonical Protocol**: Defines Agent behavior standards; `CLAUDE.md` is a relative symbolic link that keeps every Agent entry point identical
 2. **Pure Markdown**: No database, no lock-in, native git version control
 3. **Bidirectional Links**: `[[PageName]]` format, compatible with Obsidian
 4. **Cumulative Learning**: Each query can generate new wiki pages, knowledge continuously accumulates

@@ -22,6 +22,27 @@ def _args(**kwargs):
 
 
 class TestCmdCheck:
+    def test_find_python_disables_bytecode_for_probe(
+        self, agent_bridge_module, monkeypatch, tmp_path
+    ):
+        calls = []
+
+        class Result:
+            returncode = 0
+
+        def fake_run(command, **kwargs):
+            calls.append((command, kwargs))
+            return Result()
+
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", tmp_path)
+        monkeypatch.setattr(agent_bridge_module.subprocess, "run", fake_run)
+
+        python_path, is_venv = agent_bridge_module._find_python()
+
+        assert python_path == sys.executable
+        assert is_venv is False
+        assert calls[0][0] == [sys.executable, "-B", "-c", "import src.llm_wiki"]
+
     def test_ready_when_wiki_exists(self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys):
         monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
         rc = agent_bridge_module.cmd_check(_args())

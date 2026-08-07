@@ -192,8 +192,8 @@ python -m src.llm_wiki --help
 
 ```text
 llm-wiki/
-├── CLAUDE.md           # ⭐ 核心协议：Agent 的行为准则
-├── AGENTS.md           # Agent 实现指南和工具选择协议
+├── AGENTS.md           # ⭐ 规范入口：Agent 行为与工具选择协议
+├── CLAUDE.md -> AGENTS.md # 指向规范入口的相对软链接
 ├── README.md           # 本文件（英文）
 ├── docs/
 │   └── README.cn.md    # 本文件（简体中文）
@@ -240,7 +240,7 @@ llm-wiki/
 
 ### 关键设计
 
-1. **CLAUDE.md 作为协议**：定义了 Agent 的行为规范，任何人/任何 Agent 都可以遵循
+1. **AGENTS.md 作为规范入口**：定义 Agent 的行为规范；`CLAUDE.md` 使用相对软链接，确保所有 Agent 入口内容一致
 2. **纯 Markdown**：无数据库，无锁定，git 原生支持版本控制
 3. **双向链接**：`[[PageName]]` 格式，与 Obsidian 兼容
 4. **累积式学习**：每次查询可以产生新的 wiki 页面，知识不断积累
