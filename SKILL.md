@@ -1,7 +1,7 @@
 ---
 name: llm-wiki
 version: "1.5.2"
-description: "Use when Codex needs to operate an llm-wiki knowledge base: ingest source files into Markdown wiki pages, answer questions from wiki/index.md and linked pages, run agent-bridge status/lint/link/relink/merge/query/index tasks, preserve provenance and temporal metadata, or use Zotero as a literature-discovery layer."
+description: "Use when an AI Agent (Claude Code, Codex, OpenClaw, or similar) needs to operate an llm-wiki knowledge base: ingest source files into Markdown wiki pages, answer questions from wiki/index.md and linked pages, run agent-bridge status/lint/link/relink/merge/query/index tasks, preserve provenance and temporal metadata, or use Zotero as a literature-discovery layer."
 ---
 
 # LLM-Wiki
