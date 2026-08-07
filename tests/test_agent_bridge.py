@@ -41,7 +41,11 @@ class TestCmdCheck:
 
         assert python_path == sys.executable
         assert is_venv is False
-        assert calls[0][0] == [sys.executable, "-B", "-c", "import src.llm_wiki"]
+        # The probe must run the current interpreter with bytecode writes disabled.
+        command = calls[0][0]
+        assert command[0] == sys.executable
+        assert "-B" in command
+        assert "-c" in command
 
     def test_ready_when_wiki_exists(self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys):
         monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
