@@ -157,6 +157,11 @@ This produces a structured Markdown report telling you:
 
 ### Python Environment Rule
 
+Two environments exist for different purposes — do not conflate them:
+
+- **User distribution**: end users install the `llm-wiki` CLI via `uv tool install` (or `uvx`), which creates an isolated environment managed by uv. This is how the tool is **run in production**; it does not touch this repository's `.venv`.
+- **Development / testing**: work done **inside this repository** (running `agent-bridge.py`, pytest, editing code) uses the project's own virtual environment described below. Keep it; `uv tool` does not replace it.
+
 All Python operations in this project MUST use the project's own virtual environment:
 
 1. **If `.venv/` exists** in the project root → use `.venv/Scripts/python.exe` (Windows) or `.venv/bin/python` (Linux/macOS). Prefer `uv run python` when uv is available.
