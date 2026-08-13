@@ -307,7 +307,7 @@ User asks question
 - [ ] 查询多为模糊语义（"那个关于优化的论文..."）
 - [ ] 需要跨主题联想（用户没提关键词，但语义相关）
 
-见 [ROADMAP.md](ROADMAP.md) 了解升级计划。
+见 [ROADMAP.md](../ROADMAP.md) 了解升级计划。
 
 ## 示例工作流
 
@@ -452,7 +452,7 @@ tags:
 
 欢迎提交 Issue 和 PR！
 
-详细路线图见 [ROADMAP.md](ROADMAP.md)。
+详细路线图见 [ROADMAP.md](../ROADMAP.md)。
 
 ### 当前 TODO
 
