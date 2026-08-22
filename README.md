@@ -281,7 +281,7 @@ Ingest is adaptive rather than template-sized. Before drafting, the Agent maps t
 3. **Bidirectional Links**: `[[PageName]]` format, compatible with Obsidian
 4. **Cumulative Learning**: Each query can generate new wiki pages, knowledge continuously accumulates
 5. **Temporal Context**: Preserve publication, release, collection, and ingest dates so related works can be read in historical order
-6. **Zotero as Literature Layer**: Use existing Agent/Zotero skills to reach the Zotero library; llm-wiki keeps distilled Markdown knowledge
+6. **Zotero as Literature Layer**: Use the required `54yyyu/zotero-mcp` integration to reach the Zotero library; llm-wiki keeps distilled Markdown knowledge
 
 ## Query Mechanism
 
@@ -407,34 +407,11 @@ Claude: Created [[LoRA vs Full Fine-tuning]]
 2. Enjoy graph view, quick navigation, beautiful rendering
 3. Claude Code handles maintenance, Obsidian handles reading and thinking
 
-## Using Zotero Through Agent Skills
+## Using Zotero Through zotero-mcp
 
-llm-wiki does not need to become a Zotero client. When an Agent has a Zotero skill available, Zotero can remain the literature layer while llm-wiki remains the Markdown knowledge layer.
+Zotero remains the literature layer and llm-wiki remains the distilled Markdown knowledge layer. All Zotero operations performed by this skill must go through [`54yyyu/zotero-mcp`](https://github.com/54yyyu/zotero-mcp); alternate Zotero skills, direct database access, and direct Web API integrations are outside the supported workflow.
 
-A recommended public source is the OpenAI Plugins Zotero skill: [plugins/zotero/skills/zotero](https://github.com/openai/plugins/tree/main/plugins/zotero/skills/zotero). Agents can use that skill, or an equivalent Zotero-capable skill, instead of adding a native Zotero client to llm-wiki.
-
-The current Zotero skill workflow can:
-
-- Probe or enable the local Zotero Desktop API.
-- Search local items, collections, and tags.
-- Export BibTeX/citations and insert citation keys into drafts.
-- Retrieve attachment file URLs or indexed full text when explicitly requested.
-- Import BibTeX/RIS records into Zotero after confirmation.
-
-For llm-wiki ingest, use Zotero results as source discovery and provenance: read Zotero metadata, full text, annotations, or attachment paths; synthesize wiki pages; and preserve identifiers such as `zotero_item_key`, `citation_key`, `library_id`, `zotero_uri`, DOI, and arXiv ID in frontmatter when available.
-
-For Zotero-managed originals, use `sources/zotero/metadata.yaml` as a private, ignored binding file and materialize local source aliases with:
-
-```bash
-python scripts/zotero_sources.py --dry-run
-python scripts/zotero_sources.py
-```
-
-The metadata records Zotero item/attachment keys and local paths for the current machine; the generated `sources/zotero/...` aliases are a local cache. Agents may create Zotero child notes as index cards that point back to wiki pages, and may sync reviewed relation tags or related-item links when a Zotero MCP write gate is available.
-
-This keeps `sources/` integrity intact. Zotero-managed originals can be referenced as source assets, but Agent-generated summaries must never be written into `sources/`. Arbitrary document upload/attachment management is not part of the verified llm-wiki workflow; leave document ownership to Zotero unless a Zotero-capable Agent explicitly supports that operation.
-
-See [docs/ZOTERO_MCP_INTEGRATION.md](docs/ZOTERO_MCP_INTEGRATION.md) for the earlier implementation analysis.
+See the canonical [Zotero MCP operating protocol](docs/ZOTERO_MCP_INTEGRATION.md) for setup and capability gates, read/write workflows, Zotero-backed ingest, private `sources/zotero/` bindings, provenance fields, and failure handling.
 
 ## Advanced Configuration
 
@@ -496,7 +473,7 @@ Detailed roadmap at [ROADMAP.md](ROADMAP.md).
 - [ ] Query result archiving as a guided workflow
 - [ ] Domain template packs and richer example wikis
 - [x] Agent Bridge unified entry point for other Agents
-- [x] Zotero literature workflow via external Agent/Zotero skills
+- [x] Zotero literature workflow via `54yyyu/zotero-mcp`
 - [x] Temporal metadata protocol and visible timeline anchors
 - [x] Obsidian compatibility by opening the `wiki/` directory directly
 - [x] Incremental embedding for faster retrieval

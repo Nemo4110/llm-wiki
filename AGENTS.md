@@ -49,9 +49,7 @@ Never treat `created` / `updated` as publication dates. They are wiki maintenanc
 
 For wiki queries, first read `wiki/index.md`, then relevant pages and link neighbors. Use semantic query only as candidate discovery; synthesize from the actual page content and cite wiki pages with `[[PageName]]`. If a query produces a lasting new synthesis, ask or decide whether to archive it into wiki according to user intent.
 
-For questions that need source coverage, recent literature, annotations, or a specific paper, Zotero MCP may be used as a source-discovery layer. Zotero results are not the final answer; read metadata/fulltext/annotations, then synthesize with citations.
-
-Before any Zotero operation, verify that a Zotero-capable MCP/tool is installed, reachable, and authorized for the requested mode. For read-only work, verify collection search, item metadata, and attachment path/fulltext access. For write work, verify the exact write capability first: child note create/update, incremental tag update, and related-item linking are separate gates. If a gate fails, stop Zotero-side sync, state the blocker, and continue only with wiki-local work when useful.
+For questions that need Zotero source coverage, recent literature, annotations, or a specific paper, follow [`docs/ZOTERO_MCP_INTEGRATION.md`](docs/ZOTERO_MCP_INTEGRATION.md). All Zotero operations MUST use the MCP tools provided by `54yyyu/zotero-mcp`; the dedicated document is the single source of truth for capability gates, retrieval, ingest, write-back, and failure handling.
 
 ### Page Format Requirements
 
@@ -111,7 +109,7 @@ In body text, prefer a human-scannable Markdown time anchor for dated works:
 - Do not write LLM-generated content into `sources/`.
 - Synchronize README language variants when user-facing behavior changes.
 - Use the project-managed Python environment (`.venv` or conda) for Python operations.
-- Treat `sources/zotero/metadata.yaml` and `sources/zotero/**` as private Zotero binding state and local symlink cache; do not commit them and do not write synthesized knowledge there.
+- For every Zotero operation and Zotero-backed source, follow [`docs/ZOTERO_MCP_INTEGRATION.md`](docs/ZOTERO_MCP_INTEGRATION.md).
 
 ### Release Artifact Verification
 
@@ -429,27 +427,17 @@ python -m src.llm_wiki --verbose link --source "X" --mode light
 |------|-----------|--------|
 | A | User manually placed a file | Read-only, do not modify |
 | B | User provided a URL/DOI and the file is not yet in `sources/` | Use network tools to fetch, verify non-empty and correct format, then write |
-| C | User/Zotero MCP provides a Zotero-managed file | Record private binding in `sources/zotero/metadata.yaml`, then materialize a `sources/zotero/...` symlink |
+| C | `54yyyu/zotero-mcp` provides a verified Zotero-managed file | Follow [`docs/ZOTERO_MCP_INTEGRATION.md`](docs/ZOTERO_MCP_INTEGRATION.md) |
 
 ### Absolute Prohibitions
 
 - **NEVER** save LLM-generated text, summaries, or speculative content as `.md`, `.txt`, or any format into `sources/`
-- **NEVER** commit `sources/zotero/metadata.yaml` or `sources/zotero/**`; they are private Zotero bindings and local symlink cache
 - **NEVER** claim "downloaded" and create files without actually executing a network request
 - **NEVER** "fall back" to generated content when fetching fails
 
 ### Zotero-Linked Sources
 
-When using Zotero-managed files as sources, use Zotero item keys and attachment keys as stable identifiers across machines. Do not write absolute Zotero storage paths into wiki pages. Store the private local mapping in `sources/zotero/metadata.yaml`, then run:
-
-```bash
-python scripts/zotero_sources.py --dry-run
-python scripts/zotero_sources.py
-```
-
-The metadata file may contain local absolute paths because it is private and ignored by Git. The wiki page frontmatter should preserve stable Zotero identifiers such as `zotero_item_key`, `zotero_attachment_key`, `library_id`, and `zotero_uri`.
-
-Zotero child notes are index cards, not wiki mirrors. Use them to store the wiki page path, short summary, sync hash/time, and reviewed relationships. Do not copy full generated wiki pages into Zotero notes.
+All Zotero source discovery, attachment access, private bindings, provenance fields, and write-back rules are defined in [`docs/ZOTERO_MCP_INTEGRATION.md`](docs/ZOTERO_MCP_INTEGRATION.md). Use only `54yyyu/zotero-mcp` for Zotero operations.
 
 ### Standard Network Fetch Template
 

@@ -245,7 +245,7 @@ llm-wiki/
 3. **双向链接**：`[[PageName]]` 格式，与 Obsidian 兼容
 4. **累积式学习**：每次查询可以产生新的 wiki 页面，知识不断积累
 5. **时间上下文**：保留发表、发布、收藏和摄入时间，让相关工作能按历史顺序阅读
-6. **Zotero 作为文献层**：通过已有 Agent/Zotero skill 访问 Zotero 文献库，llm-wiki 负责沉淀 Markdown 知识
+6. **Zotero 作为文献层**：通过指定的 `54yyyu/zotero-mcp` 访问 Zotero 文献库，llm-wiki 负责沉淀 Markdown 知识
 
 ## 查询机制详解
 
@@ -371,34 +371,11 @@ Claude：已创建 [[LoRA vs Full Fine-tuning]]
 2. 享受图谱视图、快速导航、美观渲染
 3. Claude Code 负责维护，Obsidian 负责阅读和思考
 
-## 通过 Agent Skills 使用 Zotero
+## 通过 zotero-mcp 使用 Zotero
 
-llm-wiki 不需要自己变成 Zotero 客户端。只要 Agent 已安装 Zotero skill，Zotero 就可以继续作为文献资产层，llm-wiki 继续作为 Markdown 知识层。
+Zotero 继续作为文献层，llm-wiki 继续作为沉淀后的 Markdown 知识层。本 skill 的所有 Zotero 操作都必须通过 [`54yyyu/zotero-mcp`](https://github.com/54yyyu/zotero-mcp) 完成；其他 Zotero skill、直接数据库访问和直接 Web API 集成都不属于受支持工作流。
 
-推荐的公开来源是 OpenAI Plugins 的 Zotero skill：[plugins/zotero/skills/zotero](https://github.com/openai/plugins/tree/main/plugins/zotero/skills/zotero)。Agent 可以使用该 skill，或其他等价的 Zotero-capable skill，而不必在 llm-wiki 内新增原生 Zotero 客户端。
-
-当前 Zotero skill 工作流可以：
-
-- 探测或启用 Zotero Desktop 本地 API。
-- 搜索本地条目、collection 和 tag。
-- 导出 BibTeX/citation，并把 citation key 插入草稿。
-- 在明确请求时读取附件 file URL 或索引全文。
-- 经确认后将 BibTeX/RIS 记录导入 Zotero。
-
-对 llm-wiki 来说，Zotero 结果应作为来源发现和 provenance：读取 Zotero metadata、全文、批注或附件路径；综合生成 wiki 页面；并在可用时把 `zotero_item_key`、`citation_key`、`library_id`、`zotero_uri`、DOI、arXiv ID 等标识保存到 frontmatter。
-
-对于 Zotero 管理的原始文件，使用 `sources/zotero/metadata.yaml` 作为私有且被忽略的绑定文件，并用以下命令物化本机 source 别名：
-
-```bash
-python scripts/zotero_sources.py --dry-run
-python scripts/zotero_sources.py
-```
-
-metadata 记录 Zotero item/attachment key 和当前机器的本地路径；生成的 `sources/zotero/...` 别名只是本机缓存。Agent 可以创建 Zotero child note 作为指向 wiki 页面的索引卡，并在 Zotero MCP 写入能力可用时同步经过审查的关系 tag 或 related item 链接。
-
-这能保持 `sources/` 完整性：Zotero 管理的原始文件可作为来源资产，但 Agent 生成的摘要仍禁止写入 `sources/`。任意文档上传/附件管理不属于已验证的 llm-wiki 工作流；除非某个 Zotero-capable Agent 明确支持该操作，否则文档所有权应留给 Zotero。
-
-早期实现分析见 [早期 Zotero 分析方案](ZOTERO_MCP_INTEGRATION.md)。
+安装与能力检查、读写流程、Zotero 来源摄入、私有 `sources/zotero/` 绑定、来源追踪字段和失败处理，统一以 [Zotero MCP 操作协议](ZOTERO_MCP_INTEGRATION.md) 为准。
 
 ## 进阶配置
 
@@ -460,7 +437,7 @@ tags:
 - [ ] 查询结果存档的引导式工作流
 - [ ] 领域模板包和更完整的示例 wiki
 - [x] Agent Bridge 统一入口，供其他 Agent 使用
-- [x] 通过外部 Agent/Zotero skills 支持 Zotero 文献工作流
+- [x] 通过 `54yyyu/zotero-mcp` 支持 Zotero 文献工作流
 - [x] 时间元数据协议和可见时间线锚点
 - [x] 直接用 Obsidian 打开 `wiki/` 目录即可兼容
 - [x] 增量 embedding 加速检索

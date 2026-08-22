@@ -17,7 +17,7 @@ Keep this file as the operational skill. Use `README.md` for user-facing overvie
 1. Read `AGENTS.md` or `CLAUDE.md` when the task touches wiki behavior, source handling, or ingest/query protocol.
 2. Use the project Python: `.venv\Scripts\python.exe` on Windows, `.venv/bin/python` on Unix, or `uv run python` when configured.
 3. Run `<PY> scripts/agent-bridge.py check` before wiki operations. If it reports missing dependencies, state the exact blocker and continue only with tasks that do not require the unavailable runtime.
-4. Protect `sources/`: never write Agent-generated summaries, drafts, or speculative content there. Only user-provided files or verified network/Zotero fetches may be source assets.
+4. Protect `sources/`: never write Agent-generated summaries, drafts, or speculative content there. Only user-provided files or verified network fetches or Zotero MCP material may be source assets.
 5. Check `git status --short` before editing. Do not revert user changes.
 
 ## Choose the Work Mode
@@ -82,49 +82,11 @@ Never treat `created` or `updated` as publication dates. They are wiki maintenan
 - Avoid over-linking. Prefer one useful link over repeated noise.
 - Describe temporal relationships when useful: early work, follow-up, contemporary route, survey, retrospective, or outdated-but-historically-important.
 
-## Zotero Workflow
+## Zotero Operations
 
-Use Zotero as the literature layer and llm-wiki as the distilled Markdown knowledge layer. A recommended public Zotero skill source is:
+All Zotero operations for this skill **MUST use the MCP tools provided by [`54yyyu/zotero-mcp`](https://github.com/54yyyu/zotero-mcp)**. Before any Zotero task, read and follow [`docs/ZOTERO_MCP_INTEGRATION.md`](docs/ZOTERO_MCP_INTEGRATION.md), the single operational source of truth for availability gates, read/write workflows, source bindings, provenance, and safety.
 
-<https://github.com/openai/plugins/tree/main/plugins/zotero/skills/zotero>
-
-When an Agent has that skill, or an equivalent Zotero-capable skill, it can search the local Zotero library, list collections/tags, export BibTeX/citations, read attachment paths or indexed full text on request, and import BibTeX/RIS records after confirmation.
-
-Before any Zotero operation, verify a Zotero-capable MCP/tool is available and can access the target library. For read workflows, confirm collection search, item metadata, and attachment path/fulltext access work. For write workflows, confirm the exact capability is supported before acting: child note create/update, incremental tag update, and related-item linking are separate gates. If Zotero Desktop, MCP access, or write capability is unavailable, report the blocker and continue only with wiki-local work.
-
-For llm-wiki, Zotero results are source discovery and provenance. Preserve Zotero identifiers in frontmatter when available:
-
-```yaml
-sources_meta:
-  - title: "Paper Title"
-    type: "academic_paper"
-    published: "2025-02"
-    collected: "2026-05-24"
-    ingested: "2026-05-24"
-    date_precision: "month"
-    zotero_item_key: "ABCD1234"
-    citation_key: "author2025title"
-    library_id: "0"
-    zotero_uri: "zotero://select/items/ABCD1234"
-```
-
-Do not build a native llm-wiki Zotero client unless repeated manual workflows prove the need. Arbitrary document upload or attachment management is not part of the verified llm-wiki workflow.
-
-### Zotero-Linked Sources
-
-Use Zotero item keys and attachment keys as cross-device stable identifiers. Store private Zotero source bindings in `sources/zotero/metadata.yaml`; this file is user-local/private and must not be committed. Treat `sources/zotero/` as a generated local symlink cache. Agents may use `scripts/zotero_sources.py --dry-run` to preview and `scripts/zotero_sources.py` to materialize aliases declared in that metadata.
-
-`sources/zotero/metadata.yaml` may contain local absolute paths because it is private operational metadata, not shared wiki content. Do not write LLM-generated summaries, drafts, or synthesized knowledge into `sources/zotero/` or its metadata. Keep generated knowledge in `wiki/`.
-
-For Zotero-backed ingest:
-
-1. Use Zotero MCP to find the collection/item/attachment keys and local attachment paths.
-2. Record source bindings in `sources/zotero/metadata.yaml`.
-3. Materialize `sources/zotero/...` symlinks with `scripts/zotero_sources.py`.
-4. Ingest through normal Protocol mode from the symlink alias path.
-5. Preserve `zotero_item_key`, `zotero_attachment_key`, `library_id`, and `zotero_uri` in page frontmatter when available.
-6. Create or update Zotero child notes only as index cards: wiki page path, short summary, sync hash/time, and reviewed relation notes. Do not mirror full wiki pages into Zotero notes.
-7. After relation review, optionally use Zotero MCP to add `llm-wiki:*` / `rel:*` tags and related-item links.
+Do not substitute another Zotero skill/client or bypass Zotero MCP with direct SQLite/Web API access. If the required Zotero MCP capability is unavailable, report the blocker, stop Zotero-side work, and continue only with useful wiki-local work.
 
 ## Source Fetch Safety
 
