@@ -42,7 +42,9 @@ llm-wiki status
 
 `llm-wiki init` materializes `wiki/`, `sources/`, `AGENTS.md`, `CLAUDE.md`, and
 `config.yaml.example` from templates bundled inside the installed package — so
-there is no checkout to manage at all.
+there is no checkout to manage at all. It also creates or non-destructively extends
+`.gitignore` so private/local state such as `var/`, `temp/`, `.mcp.json`, and
+`config.yaml` cannot be committed accidentally.
 
 > Upgrading later is one command: `uv tool upgrade llm-wiki` (re-fetches the
 > latest commit from the default branch).

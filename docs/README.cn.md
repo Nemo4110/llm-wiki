@@ -23,6 +23,8 @@ git clone https://github.com/Nemo4110/llm-wiki.git
 cd llm-wiki
 ```
 
+如果通过已安装的 CLI 创建独立知识库，可运行 `llm-wiki init my-kb`。该命令还会创建或非破坏性补充 `.gitignore`，确保 `var/`、`temp/`、`.mcp.json`、`config.yaml` 等私人/本地状态不会被意外提交。
+
 ### 2. 安装依赖（可选）
 
 CLI 工具当前支持 Python 3.12-3.13。当前主动验证的本地开发矩阵是：

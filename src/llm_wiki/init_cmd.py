@@ -77,6 +77,43 @@ def _copy_template(template_name: str, dest: Path, force: bool) -> bool:
     return True
 
 
+def _ensure_gitignore(path: Path) -> str:
+    """Create or non-destructively extend the target project's .gitignore."""
+    template = _template_text("gitignore").rstrip() + "\n"
+    template_lines = template.splitlines()
+    rules = [line for line in template_lines if line and not line.startswith("#")]
+
+    if not path.exists():
+        path.write_text(template, encoding="utf-8")
+        return "created  .gitignore"
+
+    existing = path.read_text(encoding="utf-8")
+    existing_lines = set(existing.splitlines())
+    existing_rules = {
+        line.strip().lstrip("/")
+        for line in existing_lines
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+    missing = [rule for rule in rules if rule.lstrip("/") not in existing_rules]
+    if not missing:
+        return "kept     .gitignore"
+
+    header = template_lines[0]
+    append_lines: list[str] = []
+    if header not in existing_lines:
+        append_lines.append(header)
+    append_lines.extend(missing)
+
+    separator = "" if not existing or existing.endswith("\n") else "\n"
+    if existing.strip():
+        separator += "\n"
+    path.write_text(
+        existing + separator + "\n".join(append_lines) + "\n",
+        encoding="utf-8",
+    )
+    return "updated  .gitignore"
+
+
 def scaffold(target_dir: Path, force: bool = False) -> list[str]:
     """Create the wiki skeleton under target_dir. Returns human actions taken."""
     from datetime import date
@@ -88,6 +125,8 @@ def scaffold(target_dir: Path, force: bool = False) -> list[str]:
 
     def mark(created: bool, label: str) -> None:
         actions.append(("created" if created else "kept   ") + f"  {label}")
+
+    actions.append(_ensure_gitignore(target_dir / ".gitignore"))
 
     # Protocol + entry-point sentinel
     mark(_copy_template("AGENTS.md", target_dir / "AGENTS.md", force), "AGENTS.md")
