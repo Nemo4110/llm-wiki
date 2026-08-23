@@ -24,7 +24,7 @@ Keep this file as the operational skill. Use `README.md` for user-facing overvie
 
 | Task | Use | Notes |
 | --- | --- | --- |
-| Status, lint, link discovery, relink, merge, semantic query, embedding index | `scripts/agent-bridge.py` | Algorithmic tasks. Prefer dry-run before writing. |
+| Status, lint, link discovery, relink, merge, semantic query, embedding index, Zotero sync planning | `scripts/agent-bridge.py` | Algorithmic/read-only tasks. Prefer dry-run before writing. |
 | Ingest source material | Protocol mode | Requires LLM judgment: read source, extract metadata, create/update pages. |
 | Answer wiki questions | Protocol mode | Read `wiki/index.md`, relevant pages, and link neighbors; synthesize with `[[PageName]]` citations. |
 | Apply relation updates | Hybrid | Let `agent-bridge.py` discover candidates, then review and merge only safe changes. |
@@ -40,6 +40,8 @@ Agent Bridge quick commands:
 <PY> scripts/agent-bridge.py relink --since 2026-04-20 --mode deep --dry-run
 <PY> scripts/agent-bridge.py index
 <PY> scripts/agent-bridge.py query "question" --semantic
+<PY> scripts/agent-bridge.py zotero-plan --snapshot temp/zotero-snapshot.yaml --manifest-out temp/zotero-mutation-manifest.yaml
+<PY> scripts/agent-bridge.py zotero-refresh --collection-key A9VNJUPI --manifest-out temp/zotero-refresh.yaml
 ```
 
 Use legacy `python -m src.llm_wiki ...` only for human scripting or debugging. Do not use the legacy CLI as a substitute for LLM judgment during ingest.
@@ -62,6 +64,7 @@ A clean depth result is not proof of source coverage. Re-read allocated sources 
 8. When ingesting a batch, compare the drafts for template collapse. Similar heading and bullet patterns are acceptable only when the underlying knowledge structure is genuinely similar.
 9. Add temporal metadata and visible time anchors where historical order matters.
 10. Run link discovery and safe backward merges only after content review passes, then update `wiki/index.md` and `log.md`.
+11. For Zotero-backed ingest, optionally run `agent-bridge.py zotero-plan` from an MCP-produced snapshot, review DOI/publication checks and managed-tag changes, then apply approved Zotero writes through MCP and verify both write-back and synchronization state.
 
 Source maps and coverage notes are temporary Agent working state. Keep them outside `sources/`; retain them under `temp/` only when the user requests an ingest audit or experiment.
 

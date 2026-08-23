@@ -22,6 +22,7 @@ Usage:
     python scripts/agent-bridge.py lint
     python scripts/agent-bridge.py status
     python scripts/agent-bridge.py query "What is LoRA?" --semantic
+    python scripts/agent-bridge.py zotero-plan --snapshot temp/zotero-snapshot.yaml
     python scripts/agent-bridge.py merge --source "NewPage" --target "OldPage" \
         --strategy append_related --dry-run
 """
@@ -976,6 +977,308 @@ def cmd_index(args: argparse.Namespace) -> int:
         return 1
 
 
+def cmd_zotero_plan(args: argparse.Namespace) -> int:
+    """Build a read-only Zotero metadata and managed-tag synchronization plan."""
+    LOG.info("cmd_zotero_plan: snapshot=%s item_keys=%s", args.snapshot, args.item_keys)
+
+    from src.llm_wiki.core import WikiManager, find_wiki_root
+    from src.llm_wiki.zotero_plan import (
+        build_zotero_plan,
+        collect_zotero_bindings,
+        load_snapshot,
+        plan_to_manifest,
+    )
+
+    wiki_root = find_wiki_root(PROJECT_ROOT)
+    if not wiki_root:
+        print(_md_info("Error: Cannot find wiki root."))
+        return 1
+
+    wiki = WikiManager(wiki_root / "wiki")
+    bindings = collect_zotero_bindings(wiki)
+    selected_keys = set(args.item_keys or []) or None
+
+    library_id = ""
+    collection_name = ""
+    collection_key = ""
+    snapshot_items = None
+    if args.snapshot:
+        snapshot_path = Path(args.snapshot)
+        if not snapshot_path.is_absolute():
+            snapshot_path = wiki_root / snapshot_path
+        if not snapshot_path.exists():
+            print(_md_info(f"Error: Snapshot not found: {snapshot_path}"))
+            return 1
+        try:
+            library_id, collection_name, collection_key, snapshot_items = load_snapshot(snapshot_path)
+        except (OSError, ValueError, TypeError) as exc:
+            LOG.error("Cannot load Zotero snapshot: %s", exc)
+            print(_md_info(f"Error: Cannot load Zotero snapshot: {exc}"))
+            return 1
+
+    plan = build_zotero_plan(
+        bindings,
+        snapshot_items,
+        library_id=library_id,
+        collection_name=collection_name,
+        collection_key=collection_key,
+        item_keys=selected_keys,
+    )
+
+    if not plan.items:
+        print(_md_info("No Zotero items matched the requested scope."))
+        return 0
+
+    bound_count = sum(bool(item.wiki_pages) for item in plan.items)
+    add_tag_count = sum(bool(item.add_tags) for item in plan.items)
+    remove_tag_count = sum(bool(item.remove_candidates) for item in plan.items)
+    relation_count = sum(bool(item.relation_candidates) for item in plan.items)
+    doi_counts: Dict[str, int] = {}
+    for item in plan.items:
+        doi_counts[item.doi_state] = doi_counts.get(item.doi_state, 0) + 1
+
+    lines: List[str] = []
+    title = "Zotero Sync Plan"
+    if plan.collection_name:
+        title += f": {plan.collection_name}"
+    lines.append(_md_header(title))
+    lines.append("")
+    lines.append(_md_info(
+        "Read-only plan. This command does not connect to Zotero and does not mutate Zotero or wiki files."
+    ))
+    lines.append("")
+    lines.append(_md_header("Scope", level=3))
+    lines.append(_md_table(
+        ["Field", "Value"],
+        [
+            ["Library ID", plan.library_id or "Not provided"],
+            ["Collection", plan.collection_name or "Wiki bindings only"],
+            ["Collection Key", plan.collection_key or "Not provided"],
+            ["Items", str(len(plan.items))],
+            ["Wiki-bound Items", str(bound_count)],
+            ["Items with Tag Additions", str(add_tag_count)],
+            ["Items with Removal Candidates", str(remove_tag_count)],
+            ["Items with Relation Candidates", str(relation_count)],
+        ],
+    ))
+    lines.append("")
+
+    lines.append(_md_header("DOI Audit", level=3))
+    lines.append(_md_table(
+        ["State", "Count"],
+        [[state, str(count)] for state, count in sorted(doi_counts.items())],
+    ))
+    lines.append("")
+
+    lines.append(_md_header("Items", level=3))
+    rows = []
+    for item in plan.items:
+        title_text = item.title if len(item.title) <= 64 else f"{item.title[:61]}..."
+        rows.append([
+            item.item_key,
+            title_text,
+            ", ".join(item.wiki_pages) or "—",
+            item.doi_state,
+            ", ".join(sorted(item.add_tags)) or "—",
+            ", ".join(sorted(item.remove_candidates)) or "—",
+            ", ".join(item.relation_candidates) or "—",
+            "; ".join(item.actions) or "none",
+        ])
+    lines.append(_md_table(
+        ["Item Key", "Title", "Wiki Pages", "DOI", "Add Tags", "Review Removals", "Relation Candidates", "Actions"],
+        rows,
+    ))
+    lines.append("")
+
+    if plan.warnings:
+        lines.append(_md_header("Warnings", level=3))
+        lines.extend(f"- {warning}" for warning in plan.warnings)
+        lines.append("")
+
+    lines.append(_md_header("Actionable Items", level=3))
+    lines.append(_md_action(
+        "Agent: verify DOI candidates and publication identities through approved external metadata sources, "
+        "then use Zotero MCP incremental writes only after reviewing this plan."
+    ))
+    lines.append(_md_action(
+        "Agent: do not remove user-managed tags; collection-equivalent tags are review candidates, not automatic mutations."
+    ))
+    lines.append("")
+
+    if args.manifest_out:
+        manifest_path = Path(args.manifest_out)
+        if manifest_path.is_absolute():
+            resolved_manifest = manifest_path.resolve()
+        else:
+            resolved_manifest = (wiki_root / manifest_path).resolve()
+        allowed_root = (wiki_root / "temp").resolve()
+        if resolved_manifest != allowed_root and allowed_root not in resolved_manifest.parents:
+            print(_md_info("Error: --manifest-out must stay under the project temp/ directory."))
+            return 1
+        resolved_manifest.parent.mkdir(parents=True, exist_ok=True)
+        import yaml
+        resolved_manifest.write_text(
+            yaml.safe_dump(plan_to_manifest(plan), allow_unicode=True, sort_keys=False),
+            encoding="utf-8",
+        )
+        lines.append(_md_info(f"Review manifest written to: {resolved_manifest}"))
+        lines.append("")
+
+    print("\n".join(lines))
+    return 0
+
+
+def cmd_zotero_refresh(args: argparse.Namespace) -> int:
+    """Run one-shot DOI, citation, and publication freshness checks."""
+    import asyncio
+
+    import yaml
+
+    from src.llm_wiki.config import load_config
+    from src.llm_wiki.core import find_wiki_root
+    from src.llm_wiki.zotero_refresh import (
+        report_to_manifest,
+        run_live_refresh,
+        settings_from_config,
+    )
+
+    wiki_root = find_wiki_root(PROJECT_ROOT)
+    if not wiki_root:
+        print(_md_info("Error: Cannot find wiki root."))
+        return 1
+
+    config = load_config(wiki_root)
+    enrichment_config = config.get("zotero_enrichment") or {}
+    settings = settings_from_config(config)
+
+    cache_path = Path(str(enrichment_config.get("cache_path") or "var/zotero-enrichment.sqlite"))
+    if not cache_path.is_absolute():
+        cache_path = wiki_root / cache_path
+    cache_path = cache_path.resolve()
+    allowed_cache_root = (wiki_root / "var").resolve()
+    if cache_path != allowed_cache_root and allowed_cache_root not in cache_path.parents:
+        print(_md_info("Error: Zotero enrichment cache must stay under the project var/ directory."))
+        return 1
+
+    mcp_config_path = Path(args.mcp_config or ".mcp.json")
+    if not mcp_config_path.is_absolute():
+        mcp_config_path = wiki_root / mcp_config_path
+    if not mcp_config_path.exists():
+        print(_md_info(f"Error: MCP config not found: {mcp_config_path}"))
+        return 1
+
+    try:
+        report = asyncio.run(
+            run_live_refresh(
+                wiki_root,
+                collection_key=args.collection_key,
+                settings=settings,
+                cache_path=cache_path,
+                mcp_config_path=mcp_config_path,
+                mcp_server_name=args.mcp_server,
+                item_keys=set(args.item_keys or []) or None,
+                limit=args.limit,
+                force=args.force,
+                apply_safe=args.apply_safe,
+            )
+        )
+    except Exception as exc:
+        LOG.exception("Zotero refresh failed")
+        print(_md_info(f"Error: Zotero refresh failed: {exc}"))
+        return 1
+
+    manifest_path = None
+    if args.manifest_out:
+        manifest_path = Path(args.manifest_out)
+        if not manifest_path.is_absolute():
+            manifest_path = wiki_root / manifest_path
+        manifest_path = manifest_path.resolve()
+        allowed_manifest_root = (wiki_root / "temp").resolve()
+        if manifest_path != allowed_manifest_root and allowed_manifest_root not in manifest_path.parents:
+            print(_md_info("Error: --manifest-out must stay under the project temp/ directory."))
+            return 1
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(
+            yaml.safe_dump(report_to_manifest(report), allow_unicode=True, sort_keys=False),
+            encoding="utf-8",
+        )
+
+    status_counts: Dict[str, int] = {}
+    for item in report.items:
+        status_counts[item.doi_status] = status_counts.get(item.doi_status, 0) + 1
+    safe_count = sum(item.has_safe_changes for item in report.items)
+    review_count = sum(bool(item.metadata_review) for item in report.items)
+    error_count = sum(bool(item.errors) for item in report.items)
+
+    lines: List[str] = []
+    lines.append(_md_header(f"Zotero Refresh: {report.collection_name}"))
+    lines.append("")
+    mode = "Applied safe updates through Zotero MCP with write-back verification." if args.apply_safe else "Dry-run only. No Zotero fields or tags were modified."
+    lines.append(_md_info(mode))
+    lines.append("")
+    lines.append(_md_header("Summary", level=3))
+    lines.append(_md_table(
+        ["Metric", "Value"],
+        [
+            ["Collection Key", report.collection_key],
+            ["Items", str(len(report.items))],
+            ["Items with Safe Updates", str(safe_count)],
+            ["Items Requiring Review", str(review_count)],
+            ["Items with Errors", str(error_count)],
+            ["Items Applied", str(report.applied_count)],
+            ["Cache", str(cache_path)],
+        ],
+    ))
+    lines.append("")
+    lines.append(_md_header("DOI Status", level=3))
+    lines.append(_md_table(
+        ["Status", "Count"],
+        [[key, str(value)] for key, value in sorted(status_counts.items())],
+    ))
+    lines.append("")
+    lines.append(_md_header("Items", level=3))
+    rows = []
+    for item in report.items:
+        title = item.title if len(item.title) <= 54 else f"{item.title[:51]}..."
+        safe_parts = []
+        if item.safe_set_keys:
+            safe_parts.append(f"Extra:{len(item.safe_set_keys)}")
+        if item.add_tags:
+            safe_parts.append(f"+tags:{len(item.add_tags)}")
+        if item.remove_tags:
+            safe_parts.append(f"-tags:{len(item.remove_tags)}")
+        if item.safe_fields:
+            safe_parts.append(f"fields:{len(item.safe_fields)}")
+        rows.append([
+            item.item_key,
+            title,
+            item.doi_status,
+            f"{item.citation_provider}:{item.citation_count}" if item.citation_provider else "—",
+            ", ".join(safe_parts) or "—",
+            ", ".join(item.metadata_review) or "—",
+            "; ".join(item.errors) or "—",
+        ])
+    lines.append(_md_table(
+        ["Item", "Title", "DOI", "Citations", "Safe Updates", "Review", "Errors"],
+        rows,
+    ))
+    lines.append("")
+    if manifest_path:
+        lines.append(_md_info(f"Review manifest written to: {manifest_path}"))
+        lines.append("")
+    if review_count:
+        lines.append(_md_action("Agent: review DOI and published-version candidates before changing bibliographic identity."))
+    if not args.apply_safe and safe_count:
+        lines.append(_md_action("Agent: re-run with --apply-safe only after reviewing the safe update set."))
+    lines.append("")
+    print("\n".join(lines))
+    apply_failed = any(
+        any(error.startswith("safe apply failed:") for error in item.errors)
+        for item in report.items
+    )
+    return 1 if args.apply_safe and apply_failed else 0
+
+
 # ---------------------------------------------------------------------------
 # CLI argument parser
 # ---------------------------------------------------------------------------
@@ -1025,6 +1328,60 @@ def main(argv: Optional[List[str]] = None) -> int:
     index_parser = subparsers.add_parser("index", help="Build/update embedding index")
     index_parser.add_argument("--force", action="store_true", help="Force rebuild all")
 
+    # zotero-plan
+    zotero_parser = subparsers.add_parser(
+        "zotero-plan",
+        help="Build a read-only Zotero metadata/tag synchronization plan",
+    )
+    zotero_parser.add_argument(
+        "--snapshot",
+        help="MCP-produced Zotero collection snapshot in YAML or JSON",
+    )
+    zotero_parser.add_argument(
+        "--item-key",
+        dest="item_keys",
+        action="append",
+        help="Restrict the plan to a Zotero item key (repeatable)",
+    )
+    zotero_parser.add_argument(
+        "--manifest-out",
+        help="Write a review-only YAML mutation manifest under temp/",
+    )
+
+    # zotero-refresh
+    refresh_parser = subparsers.add_parser(
+        "zotero-refresh",
+        help="Refresh DOI, citation, journal, and preprint publication state through Zotero MCP",
+    )
+    refresh_parser.add_argument("--collection-key", required=True, help="Zotero collection key")
+    refresh_parser.add_argument(
+        "--item-key",
+        dest="item_keys",
+        action="append",
+        help="Restrict refresh to an item key (repeatable)",
+    )
+    refresh_parser.add_argument("--limit", type=int, help="Limit items for a smoke test")
+    refresh_parser.add_argument("--force", action="store_true", help="Ignore freshness timestamps and cache age")
+    refresh_parser.add_argument(
+        "--apply-safe",
+        action="store_true",
+        help="Apply only Extra, llm-wiki status tag, and safe URL updates through MCP",
+    )
+    refresh_parser.add_argument(
+        "--manifest-out",
+        help="Write a review-only refresh manifest under temp/",
+    )
+    refresh_parser.add_argument(
+        "--mcp-config",
+        default=".mcp.json",
+        help="MCP configuration file (default: .mcp.json)",
+    )
+    refresh_parser.add_argument(
+        "--mcp-server",
+        default="zotero",
+        help="Configured MCP server name (default: zotero)",
+    )
+
     args = parser.parse_args(argv)
 
     LOG.info("Agent Bridge invoked: command=%s args=%s", args.command, vars(args))
@@ -1038,6 +1395,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         "query": cmd_query,
         "merge": cmd_merge,
         "index": cmd_index,
+        "zotero-plan": cmd_zotero_plan,
+        "zotero-refresh": cmd_zotero_refresh,
     }
 
     handler = dispatch.get(args.command)

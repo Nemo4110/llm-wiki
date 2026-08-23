@@ -47,6 +47,38 @@ embedding:
     # 工具名（可选，留空则自动发现）
     tool_name: embed
 
+zotero_enrichment:
+  # 显式运行 zotero-refresh 时可用；enabled 供后续调度器判断是否启用。
+  enabled: false
+  cache_path: var/zotero-enrichment.sqlite
+  request_timeout_seconds: 20
+  max_concurrency: 3
+  candidate_threshold: 0.92
+  candidate_margin: 0.05
+  verification_threshold: 0.72
+
+  crossref:
+    # 推荐使用联系邮箱进入 Crossref polite pool。
+    mailto: "${CROSSREF_MAILTO:-}"
+
+  openalex:
+    # 当前无 key 也可尝试请求；配置 key 可获得更稳定的额度。
+    api_key: "${OPENALEX_API_KEY:-}"
+    mailto: "${OPENALEX_MAILTO:-}"
+
+  stale_after_days:
+    citations: 90
+    missing_doi: 30
+    verified_doi: 365
+    preprint_publication: 30
+    journal_metrics: 365
+
+  apply:
+    # 只管理 llm-wiki:* 状态标签，不触碰用户标签。
+    add_status_tags: true
+    # 仅规范空 URL 或错误的 doi.org URL；保留 publisher/arXiv URL。
+    normalize_doi_url: true
+
 retrieval:
   # 混合搜索返回的 top-k 结果数
   top_k: 10

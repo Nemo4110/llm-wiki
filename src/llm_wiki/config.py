@@ -33,6 +33,33 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "tool_name": None,
         },
     },
+    "zotero_enrichment": {
+        "enabled": False,
+        "cache_path": "var/zotero-enrichment.sqlite",
+        "request_timeout_seconds": 20.0,
+        "max_concurrency": 3,
+        "candidate_threshold": 0.92,
+        "candidate_margin": 0.05,
+        "verification_threshold": 0.72,
+        "crossref": {
+            "mailto": "",
+        },
+        "openalex": {
+            "api_key": "",
+            "mailto": "",
+        },
+        "stale_after_days": {
+            "citations": 90,
+            "missing_doi": 30,
+            "verified_doi": 365,
+            "preprint_publication": 30,
+            "journal_metrics": 365,
+        },
+        "apply": {
+            "add_status_tags": True,
+            "normalize_doi_url": True,
+        },
+    },
     "retrieval": {
         "top_k": 10,
         "keyword_weight": 0.3,

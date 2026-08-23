@@ -192,7 +192,21 @@ python scripts/agent-bridge.py merge --source "NewPage" --target "OldPage" --str
 # Build/search embedding index when enabled in config.yaml
 python scripts/agent-bridge.py index
 python scripts/agent-bridge.py query "optimization methods" --semantic
+
+# Build a read-only Zotero metadata/tag plan from an MCP snapshot
+python scripts/agent-bridge.py zotero-plan --snapshot temp/zotero-snapshot.yaml \
+  --manifest-out temp/zotero-mutation-manifest.yaml
+
+# Refresh DOI/citation/publication state through Zotero MCP (dry-run by default)
+python scripts/agent-bridge.py zotero-refresh --collection-key A9VNJUPI \
+  --manifest-out temp/zotero-refresh.yaml
 ```
+
+#### Zotero review manifests
+
+`agent-bridge.py zotero-plan` is a read-only bridge between wiki provenance and Zotero MCP. It compares an MCP-produced YAML/JSON snapshot with `sources_meta`, reports DOI/publication audits and managed-tag changes, and leaves all Zotero writes to the reviewed MCP workflow. With `--manifest-out`, it may write a deterministic `mode: review-only` YAML manifest only under `temp/`; the manifest is not directly executable, and tag-removal or relation candidates still require review before any Zotero MCP mutation.
+
+`agent-bridge.py zotero-refresh` is a one-shot enrichment worker inspired by Zotero plugin freshness workflows. It reads the collection through `54yyyu/zotero-mcp`, uses Crossref for DOI identity/publication candidates and OpenAlex for citation and open journal metrics, stores only a small ignored SQLite cache under `var/`, and defaults to dry-run. `--apply-safe` may incrementally upsert `LLM-Wiki ...` Extra keys, manage only `llm-wiki:*` status tags, and normalize an empty or conflicting `doi.org` URL; DOI candidates and preprint-to-published changes remain review-only. The first collection-wide apply can take minutes because Zotero writes remain serial and incremental; verification is batched after writes, and later runs normally become no-ops until freshness windows expire.
 
 #### Depth lint warnings
 

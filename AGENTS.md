@@ -188,6 +188,9 @@ Every wiki task falls into exactly one of three categories. **The category deter
 | **A** | Embedding index | No | `agent-bridge.py index` | Skip semantic search |
 | **A** | Safe merge | No | `agent-bridge.py merge` | Manual edit with diff review |
 | **A** | Semantic query | No | `agent-bridge.py query --semantic` | Fallback to keyword listing |
+| **A** | Zotero sync plan | No | `agent-bridge.py zotero-plan` | Manually compare wiki provenance with MCP reads |
+| **A** | Zotero enrichment dry-run | No | `agent-bridge.py zotero-refresh` | Review provider results and the generated manifest |
+| **C** | Apply safe Zotero enrichment | Agent reviews | `zotero-refresh --apply-safe` | Use MCP tools manually if the worker cannot verify write-back |
 | **B** | Ingest material | **Yes** | Protocol mode (direct file ops) | N/A |
 | **B** | Query & synthesize | **Yes** | Protocol mode (direct file ops) | N/A |
 | **C** | Apply link results | **Agent judges** | `merge` (after reviewing diff) | Manual edit |
@@ -323,6 +326,32 @@ python scripts/agent-bridge.py merge --source "NewPage" --target "OldPage" \
 ```bash
 python scripts/agent-bridge.py index
 ```
+
+### 8. Zotero Sync and Metadata Plan
+
+**When**: Before post-ingest Zotero tag synchronization or a collection-level DOI/publication audit.
+
+1. Use Zotero MCP to create a minimal verified snapshot under ignored `temp/`.
+2. Run the read-only planner:
+
+```bash
+python scripts/agent-bridge.py zotero-plan --snapshot temp/zotero-snapshot.yaml \
+  --manifest-out temp/zotero-mutation-manifest.yaml
+```
+
+3. Review managed-tag additions, collection-equivalent removal candidates, DOI states, and preprint publication checks.
+4. Apply approved mutations only through Zotero MCP, then re-read the write backend and pass the local synchronization barrier.
+
+The planner never connects to Zotero and never mutates Zotero or wiki files. An omitted `doi` means unobserved; `doi: ""` means the Zotero DOI field was read and is missing. A `--manifest-out` target must stay under `temp/`; the emitted `mode: review-only` manifest is not an executable mutation script, and `remove_tags_review` / `relation_candidates_review` still require Agent and MCP review.
+
+For one-shot enrichment, run:
+
+```bash
+python scripts/agent-bridge.py zotero-refresh --collection-key A9VNJUPI \
+  --manifest-out temp/zotero-refresh.yaml
+```
+
+The refresh command reads Zotero only through the configured MCP server, uses Crossref/OpenAlex provider lookups, and stores its private freshness cache under ignored `var/`. It is dry-run by default. Before using `--apply-safe`, review the manifest; safe apply is limited to incremental `LLM-Wiki ...` Extra keys, `llm-wiki:*` status tags, and conservative DOI URL normalization. New DOI values, bibliographic identity changes, item-type migration, and preprint/published relations remain review-only.
 
 ---
 

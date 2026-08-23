@@ -157,7 +157,21 @@ python scripts/agent-bridge.py merge --source "NewPage" --target "OldPage" --str
 # 在 config.yaml 启用 embedding 后建立/查询索引
 python scripts/agent-bridge.py index
 python scripts/agent-bridge.py query "优化方法" --semantic
+
+# 根据 MCP 快照生成只读的 Zotero metadata/tag 同步计划
+python scripts/agent-bridge.py zotero-plan --snapshot temp/zotero-snapshot.yaml \
+  --manifest-out temp/zotero-mutation-manifest.yaml
+
+# 通过 Zotero MCP 刷新 DOI、引用量与发表状态（默认 dry-run）
+python scripts/agent-bridge.py zotero-refresh --collection-key A9VNJUPI \
+  --manifest-out temp/zotero-refresh.yaml
 ```
+
+#### Zotero 审核 manifest
+
+`agent-bridge.py zotero-plan` 是 wiki provenance 与 Zotero MCP 之间的只读规划桥。它比较 MCP 生成的 YAML/JSON 快照与 `sources_meta`，报告 DOI/正式发表核验和 managed-tag 变更；所有 Zotero 写入仍须经过审核后的 MCP 工作流。使用 `--manifest-out` 时，只能在 `temp/` 下生成确定性的 `mode: review-only` YAML manifest；它不能直接执行，其中的 tag 删除或 relation 候选仍须审核后才能通过 Zotero MCP 写入。
+
+`agent-bridge.py zotero-refresh` 是借鉴 Zotero 插件 freshness 模式的一次性 enrichment worker：通过 `54yyyu/zotero-mcp` 读取 collection，以 Crossref 核验 DOI 和发现正式发表候选，以 OpenAlex 获取引用量及开放期刊指标，并只在忽略提交的 `var/` 下保存轻量 SQLite cache。默认 dry-run；`--apply-safe` 只会增量 upsert `LLM-Wiki ...` Extra、管理 `llm-wiki:*` 状态 tag，并规范空或冲突的 `doi.org` URL。新 DOI、item type 迁移和 preprint 合并仍为 review-only。 collection 首次全量 apply 仍可能耗时数分钟，因为 Zotero 写入保持串行、增量；实现会在全部写入后批量回读验证，后续运行通常会在 freshness 到期前收敛为 no-op。
 
 #### 内容深度 lint 告警
 

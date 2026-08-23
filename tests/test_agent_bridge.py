@@ -306,3 +306,216 @@ class TestMain:
         out = capsys.readouterr().out
         assert rc == 0
         assert "Relation Discovery" in out
+
+
+class TestCmdZoteroPlan:
+    def test_zotero_plan_snapshot_is_read_only(
+        self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys
+    ):
+        page = temp_wiki_root / "wiki" / "Graph-Neural-Networks.md"
+        page.write_text(
+            """---
+created: 2026-08-23
+updated: 2026-08-23
+sources: []
+source_types:
+  - academic_paper
+sources_meta:
+  - title: Graph Paper
+    type: academic_paper
+    zotero_item_key: ITEM0001
+    library_id: "0"
+coverage_verified: true
+tags:
+  - AI/ML
+status: active
+---
+
+# Graph Neural Networks
+
+Knowledge body.
+""",
+            encoding="utf-8",
+        )
+        snapshot = temp_wiki_root / "gnn.yaml"
+        snapshot.write_text(
+            """version: 1
+library_id: "0"
+collection:
+  name: GNN
+  key: A9VNJUPI
+items:
+  - item_key: ITEM0001
+    title: Graph Paper
+    item_type: conferencePaper
+    doi: ""
+    tags: [GNN]
+""",
+            encoding="utf-8",
+        )
+        original = snapshot.read_text(encoding="utf-8")
+
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        rc = agent_bridge_module.main(["zotero-plan", "--snapshot", "gnn.yaml"])
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert "Zotero Sync Plan: GNN" in out
+        assert "llm-wiki:Graph-Neural-Networks" in out
+        assert "llm-wiki:ingested" in out
+        assert "GNN" in out
+        assert "Read-only plan" in out
+        assert snapshot.read_text(encoding="utf-8") == original
+
+        rc = agent_bridge_module.main([
+            "zotero-plan",
+            "--snapshot",
+            "gnn.yaml",
+            "--manifest-out",
+            "temp/gnn-manifest.yaml",
+        ])
+        assert rc == 0
+        manifest = temp_wiki_root / "temp" / "gnn-manifest.yaml"
+        assert manifest.exists()
+        manifest_text = manifest.read_text(encoding="utf-8")
+        assert "mode: review-only" in manifest_text
+        assert "remove_tags_review" in manifest_text
+
+    def test_zotero_plan_missing_snapshot(
+        self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys
+    ):
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        rc = agent_bridge_module.main(["zotero-plan", "--snapshot", "missing.yaml"])
+        out = capsys.readouterr().out
+
+        assert rc == 1
+        assert "Snapshot not found" in out
+
+
+    def test_zotero_plan_rejects_manifest_outside_temp(
+        self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys
+    ):
+        snapshot = temp_wiki_root / "gnn.yaml"
+        snapshot.write_text(
+            """version: 1
+collection: {name: GNN, key: A9VNJUPI}
+items:
+  - item_key: ITEMX
+    title: Example
+    item_type: conferencePaper
+    doi: ""
+    tags: []
+""",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        rc = agent_bridge_module.main([
+            "zotero-plan",
+            "--snapshot",
+            "gnn.yaml",
+            "--manifest-out",
+            "outside.yaml",
+        ])
+        out = capsys.readouterr().out
+
+        assert rc == 1
+        assert "must stay under" in out
+
+
+class TestCmdZoteroRefresh:
+    def test_refresh_dry_run_writes_review_manifest_under_temp(
+        self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys
+    ):
+        from src.llm_wiki.zotero_refresh import RefreshMutation, RefreshReport
+        import src.llm_wiki.zotero_refresh as refresh_module
+
+        (temp_wiki_root / ".mcp.json").write_text(
+            '{"mcpServers":{"zotero":{"command":"ignored"}}}',
+            encoding="utf-8",
+        )
+
+        async def fake_run(*args, **kwargs):
+            return RefreshReport(
+                collection_key="A9VNJUPI",
+                collection_name="GNN",
+                items=[
+                    RefreshMutation(
+                        item_key="ITEM0001",
+                        title="Graph Paper",
+                        doi_status="verified",
+                        citation_provider="OpenAlex",
+                        citation_count=12,
+                        safe_set_keys={"LLM-Wiki Citations OpenAlex": "12"},
+                    )
+                ],
+            )
+
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        monkeypatch.setattr(refresh_module, "run_live_refresh", fake_run)
+        rc = agent_bridge_module.main([
+            "zotero-refresh",
+            "--collection-key",
+            "A9VNJUPI",
+            "--manifest-out",
+            "temp/refresh.yaml",
+        ])
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert "Zotero Refresh: GNN" in out
+        assert "Dry-run only" in out
+        assert (temp_wiki_root / "temp" / "refresh.yaml").exists()
+
+    def test_refresh_rejects_cache_outside_var(
+        self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys
+    ):
+        (temp_wiki_root / ".mcp.json").write_text(
+            '{"mcpServers":{"zotero":{"command":"ignored"}}}',
+            encoding="utf-8",
+        )
+        (temp_wiki_root / "config.yaml").write_text(
+            "zotero_enrichment:\n  cache_path: outside.sqlite\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        rc = agent_bridge_module.main([
+            "zotero-refresh",
+            "--collection-key",
+            "A9VNJUPI",
+        ])
+        out = capsys.readouterr().out
+
+        assert rc == 1
+        assert "must stay under" in out
+
+    def test_refresh_rejects_manifest_outside_temp(
+        self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys
+    ):
+        from src.llm_wiki.zotero_refresh import RefreshReport
+        import src.llm_wiki.zotero_refresh as refresh_module
+
+        (temp_wiki_root / ".mcp.json").write_text(
+            '{"mcpServers":{"zotero":{"command":"ignored"}}}',
+            encoding="utf-8",
+        )
+
+        async def fake_run(*args, **kwargs):
+            return RefreshReport(
+                collection_key="A9VNJUPI",
+                collection_name="GNN",
+                items=[],
+            )
+
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        monkeypatch.setattr(refresh_module, "run_live_refresh", fake_run)
+        rc = agent_bridge_module.main([
+            "zotero-refresh",
+            "--collection-key",
+            "A9VNJUPI",
+            "--manifest-out",
+            "outside.yaml",
+        ])
+        out = capsys.readouterr().out
+
+        assert rc == 1
+        assert "must stay under" in out

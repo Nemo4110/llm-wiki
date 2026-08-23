@@ -202,6 +202,35 @@ Prefer the narrowest exposed MCP tool that satisfies the request:
 
 Use metadata and targeted reads before full-text extraction. Full text is resource-intensive and should be read only when the user requests paper-level analysis or metadata, abstracts, annotations, outlines, and selected pages are insufficient.
 
+For deterministic local planning, Agents may export a minimal, verified MCP snapshot to an ignored temporary path and run:
+
+```bash
+<PY> scripts/agent-bridge.py zotero-plan --snapshot temp/zotero-snapshot.yaml \
+  --manifest-out temp/zotero-mutation-manifest.yaml
+```
+
+`zotero-plan` is read-only. It does not connect to Zotero or external metadata providers and does not modify wiki files. It compares the snapshot with wiki `sources_meta`, reports desired llm-wiki-managed tags, collection-equivalent tag removal candidates, DOI audit state, and preprint publication checks. The Agent must still use Zotero MCP for every read/write and must review the plan before mutation. When `--manifest-out` is provided, the resolved path must remain under the project `temp/` directory. The generated YAML declares `mode: review-only`; it is not an executable mutation script, and `remove_tags_review` or `relation_candidates_review` entries still require explicit Agent review and incremental MCP write-back verification.
+
+## One-Shot Metadata Refresh
+
+Use the project-managed worker when a collection needs provider freshness checks:
+
+```bash
+<PY> scripts/agent-bridge.py zotero-refresh --collection-key A9VNJUPI \
+  --manifest-out temp/zotero-refresh.yaml
+```
+
+The command starts the configured `54yyyu/zotero-mcp` server through the MCP Python SDK; it is not a direct Zotero Web API or SQLite client. It reads item metadata through MCP, queries Crossref for DOI identity and publication candidates, queries OpenAlex for citation counts and open source-level metrics, and keeps only the latest provider cache under ignored `var/zotero-enrichment.sqlite`. Crossref requests are serialized and retried with bounded backoff.
+
+The default is dry-run. After reviewing the manifest, `--apply-safe` may only:
+
+- upsert namespaced `LLM-Wiki ...` lines in Extra;
+- add or remove `llm-wiki:*` status tags;
+- normalize an empty URL or an already-DOI URL that conflicts with a verified existing DOI;
+- re-read every modified item and fail if the expected Extra keys, tags, or fields are not present.
+
+It must not automatically add a newly discovered DOI, overwrite creators/title/venue/date, migrate item type, merge a preprint, modify attachments/notes/collections/citation keys, or write Zotero Related links. These remain in `metadata_review` until an Agent and user approve the bibliographic identity change. Cache paths must remain below project `var/`; manifests must remain below project `temp/`.
+
 ## Read Workflows
 
 ### Find and Inspect One Item
@@ -230,6 +259,101 @@ Use metadata and targeted reads before full-text extraction. Full text is resour
 3. Read the actual metadata/content behind selected Zotero results.
 4. Synthesize the answer from wiki pages and verified Zotero material; Zotero search results alone are not the final answer.
 5. Archive durable new synthesis into the wiki only according to user intent.
+
+
+## Metadata Enrichment and Publication Tracking
+
+Metadata enrichment is a reviewed evidence workflow, not an unconditional field refresh. Keep three states separate:
+
+1. **Bibliographic identity:** title, creators, DOI, arXiv ID, item type, venue, publication date, volume, issue, and pages.
+2. **Publication events:** preprint, accepted manuscript, conference version, journal extension, correction, retraction, and version of record.
+3. **Dynamic metrics:** provider-specific citation counts and journal-level metrics observed at a particular time.
+
+### Snapshot and Planning Contract
+
+A collection audit starts from a minimal snapshot produced from actual Zotero MCP reads. Store it under ignored `temp/` or another approved private location, never in committed wiki pages or logs when it contains private library state:
+
+```yaml
+version: 1
+library_id: "0"
+collection:
+  name: "GNN"
+  key: "A9VNJUPI"
+items:
+  - item_key: "ABCD1234"
+    title: "Paper Title"
+    item_type: "conferencePaper"
+    date: "2024"
+    doi: "10.xxxx/example"  # include an empty value only after the DOI field was read
+    arxiv: "2401.00001"
+    url: "https://example.invalid/paper"
+    tags:
+      - "user-managed-tag"
+    collections:
+      - "A9VNJUPI"
+```
+
+Omitting `doi` means the DOI field was not observed and produces `unknown`; an explicit empty `doi` means the field was read and is missing. This prevents a lightweight collection listing from being misclassified as proof that no DOI exists. A DOI embedded in `url` is a candidate; disagreement between the DOI field and a DOI-bearing URL is a conflict requiring review.
+
+### DOI Verification Gate
+
+For `journalArticle`, `conferencePaper`, and `preprint` items:
+
+1. Normalize an existing DOI and resolve it through an approved registry or metadata provider.
+2. Compare normalized title, principal creators, publication year, venue, and item type.
+3. Classify the result as `verified`, `candidate`, `conflict`, or `missing`.
+4. Auto-write only a uniquely matched, high-confidence DOI whose returned identity agrees with the Zotero item.
+5. Present ambiguous candidates and every item-type migration for review before writing.
+6. Preserve the previous DOI/arXiv identity and verification provenance when promoting a preprint record.
+7. Re-read the complete item after each write and verify tags, collections, creators, notes, attachments, citation key, and unrelated fields remain intact.
+
+A DOI beginning with `10.48550/arXiv.` is a preprint DOI signal, not proof that no publisher DOI exists. Keep preprint and published identifiers distinct in working state. Prefer separate related items for materially distinct versions; migrate one item in place only after an explicit identity and field-loss review.
+
+### Publication Event Policy
+
+When a preprint later has a version of record:
+
+- prefer finding or creating the published item without duplicating an existing DOI;
+- preserve the preprint item, arXiv identifier, first-publication date, attachments, and annotations when they remain useful;
+- record the event in wiki `source_events` when it changes historical interpretation;
+- use a same-work Zotero relation only when the exposed relation tool and reviewed predicate semantics support it;
+- do not convert semantic wiki adjacency into item-level relations.
+
+### Dynamic Metric Provenance
+
+Citation counts and journal metrics are snapshots, not stable bibliographic truth:
+
+- always record provider, metric name, value, and `observed_at`;
+- never overwrite one provider's count with another provider's count;
+- keep volatile history out of ordinary wiki `updated` churn unless the trend itself is durable knowledge;
+- store stable verification markers in incremental `Extra` keys and use a short child note or approved private state for metric history;
+- treat Journal Impact Factor as a journal/edition metric, never as a paper-level or conference-level property;
+- do not access licensed providers or configure API credentials without user authorization.
+
+Recommended incremental `Extra` keys:
+
+```text
+LLM-Wiki DOI Verified: 2026-08-23
+LLM-Wiki DOI Provider: Crossref
+LLM-Wiki Citation Count [Crossref]: 123
+LLM-Wiki Citation Checked: 2026-08-23
+LLM-Wiki JIF [JCR 2026]: 8.4
+```
+
+Use stable keys so `zotero_batch_update(set_keys=...)` can upsert individual lines without replacing unrelated `Extra` content.
+
+### Post-Ingest Zotero Synchronization
+
+For a Zotero-backed source, optional synchronization occurs only after wiki coverage/depth review, link review, index update, and logging have completed:
+
+1. Resolve every `sources_meta.zotero_item_key` and compute the union of desired managed state across all wiki pages that reference the item.
+2. Add `llm-wiki:ingested` only when at least one active, coverage-verified ingest for that source has completed.
+3. Add canonical page tags such as `llm-wiki:Vision-Transformers`; do not copy all ordinary wiki tags into Zotero.
+4. Do not create a scope tag when an equivalent Zotero collection already expresses that scope. Treat exact collection-name tags and `llm-wiki:<collection-name>` as review-only removal candidates.
+5. Remove stale llm-wiki-managed page tags only when the complete reverse mapping has been audited. Never replace the full tag list.
+6. Create or update a short index-card note only when requested or enabled by the workflow policy.
+7. Synchronize item relations only for reviewed bibliographic relationships. Same-work preprint/published relations may be automated after identity verification; semantic similarity and ordinary wiki links remain wiki-only.
+8. Apply writes serially, re-read from the write backend, pass the synchronization barrier, and confirm a second plan produces no unintended changes.
 
 ## Zotero-Backed Ingest
 
@@ -313,12 +437,12 @@ Use llm-wiki-managed tags as explicit workflow state, not as interchangeable lab
 
 | Tag form | Meaning | Add when |
 | --- | --- | --- |
-| `llm-wiki:<scope>` | Reviewed domain or collection classification | The classification audit has passed |
+| `llm-wiki:<scope>` | Reviewed cross-collection scope classification | The classification audit has passed and no equivalent collection already expresses the scope |
 | `llm-wiki:<canonical-topic>` | Stable topic allocation, normally aligned with a reusable wiki topic/page | The topic assignment has been reviewed |
 | `llm-wiki:ingested` | The source has completed the llm-wiki ingest protocol | Wiki drafting, source coverage, depth review, linking, indexing, and logging have completed |
 | `llm-wiki:write-sentinel-*` | Temporary authorization test | Only during a write probe; remove and verify removal immediately |
 
-Collection membership does not imply ingest completion. Items that have been classified or moved but not yet synthesized may receive scope and topic tags, but must not receive `llm-wiki:ingested`. Preserve user-managed tags and use incremental additions/removals rather than replacing the complete tag list.
+Collection membership does not imply ingest completion. Items that have been classified or moved but not yet synthesized may receive reviewed cross-collection scope and topic tags, but must not receive `llm-wiki:ingested`. Do not duplicate an existing collection name as a scope tag. Preserve user-managed tags and use incremental additions/removals rather than replacing the complete tag list.
 
 ## Write-Back and Idempotency Rules
 
