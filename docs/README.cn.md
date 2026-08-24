@@ -171,6 +171,9 @@ python scripts/agent-bridge.py zotero-refresh --collection-key A9VNJUPI \
 # 将多文件写入（页面 + index + log）作为事务原子应用；务必先 dry-run
 python scripts/agent-bridge.py apply-bundle temp/tx-bundle.yaml --dry-run
 python scripts/agent-bridge.py apply-bundle temp/tx-bundle.yaml
+
+# 查看各命令的能力契约（写范围、网络、dry-run 支持）
+python scripts/agent-bridge.py capabilities
 ```
 
 #### Zotero 审核 manifest

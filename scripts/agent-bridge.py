@@ -1279,6 +1279,51 @@ def cmd_zotero_refresh(args: argparse.Namespace) -> int:
     return 1 if args.apply_safe and apply_failed else 0
 
 
+def cmd_capabilities(args: argparse.Namespace) -> int:
+    """Print the effective capability contracts (defaults + config overrides)."""
+    LOG.info("cmd_capabilities")
+
+    from src.llm_wiki.capabilities import CAPABILITIES, CapabilityError, get_capability
+    from src.llm_wiki.config import load_config
+    from src.llm_wiki.core import find_wiki_root
+
+    config: Dict[str, Any] = {}
+    wiki_root = find_wiki_root(PROJECT_ROOT)
+    if wiki_root:
+        try:
+            config = load_config(wiki_root)
+        except ValueError as exc:
+            print(_md_info(f"Error: {exc}"))
+            return 1
+
+    rows: List[List[str]] = []
+    try:
+        for name, declared in CAPABILITIES.items():
+            cap = get_capability(name, config)
+            overridden = " (config)" if cap != declared else ""
+            rows.append([
+                name,
+                "yes" if cap.enabled else "**disabled**",
+                _md_table_cell(", ".join(cap.write_scope) or "—") + overridden,
+                "yes" if cap.network else "no",
+                "yes" if cap.dry_run else "no",
+            ])
+    except CapabilityError as exc:
+        print(_md_info(f"Error: {exc}"))
+        return 1
+
+    lines: List[str] = [_md_header("Capability Contracts"), ""]
+    lines.append(_md_table(["Command", "Enabled", "Write Scope", "Network", "Dry-Run"], rows))
+    lines.append("")
+    lines.append(_md_info(
+        "Defaults are declared in code. `capabilities:` in config.yaml may only "
+        "tighten a contract (disable a command, narrow its write scope); "
+        "widening attempts are rejected."
+    ))
+    print("\n".join(lines))
+    return 0
+
+
 def cmd_apply_bundle(args: argparse.Namespace) -> int:
     """Apply a transaction bundle: atomic multi-file writes with dry-run preview."""
     LOG.info("cmd_apply_bundle: manifest=%s dry_run=%s", args.manifest, args.dry_run)
@@ -1299,6 +1344,15 @@ def cmd_apply_bundle(args: argparse.Namespace) -> int:
     try:
         tx = load_bundle(manifest, wiki_root)
     except TransactionError as exc:
+        print(_md_info(f"Error: {exc}"))
+        return 1
+
+    from src.llm_wiki.capabilities import CapabilityError, check_write_paths
+    from src.llm_wiki.config import load_config
+
+    try:
+        check_write_paths("apply-bundle", [op.path for op in tx.ops], load_config(wiki_root))
+    except CapabilityError as exc:
         print(_md_info(f"Error: {exc}"))
         return 1
 
@@ -1395,6 +1449,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     bundle_parser.add_argument("--dry-run", action="store_true",
                                help="Preview checks and diff without writing")
 
+    # capabilities
+    subparsers.add_parser("capabilities", help="Show effective capability contracts")
+
     # zotero-plan
     zotero_parser = subparsers.add_parser(
         "zotero-plan",
@@ -1463,6 +1520,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "merge": cmd_merge,
         "index": cmd_index,
         "apply-bundle": cmd_apply_bundle,
+        "capabilities": cmd_capabilities,
         "zotero-plan": cmd_zotero_plan,
         "zotero-refresh": cmd_zotero_refresh,
     }
@@ -1471,6 +1529,23 @@ def main(argv: Optional[List[str]] = None) -> int:
     if not handler:
         parser.print_help()
         return 1
+
+    # Capability gate: config.yaml may disable commands (fail closed).
+    # If the config cannot be loaded here, the command's own setup reports it.
+    if args.command != "capabilities":
+        try:
+            from src.llm_wiki.capabilities import CapabilityError, check_enabled
+            from src.llm_wiki.config import load_config
+            from src.llm_wiki.core import find_wiki_root
+
+            gate_root = find_wiki_root(PROJECT_ROOT)
+            if gate_root:
+                check_enabled(args.command, load_config(gate_root))
+        except CapabilityError as exc:
+            print(_md_info(f"Error: {exc}"))
+            return 1
+        except Exception as exc:
+            LOG.debug("capability gate skipped: %s", exc)
 
     return handler(args)
 

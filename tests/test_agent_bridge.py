@@ -616,3 +616,69 @@ ops:
 
         assert rc == 1
         assert "Error" in out
+
+
+class TestCmdCapabilities:
+    """capabilities 子命令:打印有效契约表"""
+
+    def test_prints_contract_table(self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys):
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+
+        rc = agent_bridge_module.cmd_capabilities(_args())
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert "Capability Contracts" in out
+        for command in ("apply-bundle", "lint", "zotero-refresh"):
+            assert command in out
+        assert "wiki/" in out
+
+    def test_shows_disabled_state_from_config(self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys):
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        config_path = temp_wiki_root / "config.yaml"
+        config_path.write_text(
+            config_path.read_text(encoding="utf-8")
+            + "\ncapabilities:\n  merge:\n    enabled: false\n",
+            encoding="utf-8",
+        )
+
+        rc = agent_bridge_module.cmd_capabilities(_args())
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert "disabled" in out
+
+    def test_disabled_command_blocked_at_dispatch(self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys):
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        config_path = temp_wiki_root / "config.yaml"
+        config_path.write_text(
+            config_path.read_text(encoding="utf-8")
+            + "\ncapabilities:\n  apply-bundle:\n    enabled: false\n",
+            encoding="utf-8",
+        )
+
+        rc = agent_bridge_module.main(["apply-bundle", "whatever.yaml"])
+        out = capsys.readouterr().out
+
+        assert rc == 1
+        assert "disabled" in out
+
+    def test_apply_bundle_rejects_out_of_scope_paths(self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys):
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        temp = temp_wiki_root / "temp"
+        temp.mkdir(exist_ok=True)
+        (temp / "draft.md").write_text("polluted", encoding="utf-8")
+        manifest = temp / "bundle.yaml"
+        manifest.write_text(f"""
+ops:
+  - op: create
+    path: sources/generated.md
+    content_path: draft.md
+""", encoding="utf-8")
+
+        rc = agent_bridge_module.cmd_apply_bundle(_args(manifest=str(manifest), dry_run=False))
+        out = capsys.readouterr().out
+
+        assert rc == 1
+        assert "write_scope" in out
+        assert not (temp_wiki_root / "sources" / "generated.md").exists()

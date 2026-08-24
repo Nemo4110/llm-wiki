@@ -206,6 +206,9 @@ python scripts/agent-bridge.py zotero-refresh --collection-key A9VNJUPI \
 # Apply multi-file writes (page + index + log) atomically; always dry-run first
 python scripts/agent-bridge.py apply-bundle temp/tx-bundle.yaml --dry-run
 python scripts/agent-bridge.py apply-bundle temp/tx-bundle.yaml
+
+# Inspect per-command capability contracts (write scope, network, dry-run)
+python scripts/agent-bridge.py capabilities
 ```
 
 #### Zotero review manifests
