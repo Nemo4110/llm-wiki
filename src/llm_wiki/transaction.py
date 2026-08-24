@@ -126,6 +126,11 @@ class Transaction:
         )
         self._ops: List[FileOp] = []
 
+    @property
+    def ops(self) -> List[FileOp]:
+        """已暂存的操作(只读副本)"""
+        return list(self._ops)
+
     def stage(self, op: FileOp) -> None:
         if op.op not in _VALID_OPS:
             raise TransactionError(f"Unknown op: {op.op!r} (expected one of {_VALID_OPS})")
