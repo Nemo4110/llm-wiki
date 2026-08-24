@@ -1349,6 +1349,27 @@ def cmd_capabilities(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_hot(args: argparse.Namespace) -> int:
+    """Print wiki/hot.md - bounded recent-activity context for session resume."""
+    LOG.info("cmd_hot")
+
+    from src.llm_wiki.core import find_wiki_root
+
+    wiki_root = find_wiki_root(PROJECT_ROOT)
+    if not wiki_root:
+        print(_md_info("Error: Cannot find wiki root."))
+        return 1
+
+    hot_file = wiki_root / "wiki" / "hot.md"
+    if not hot_file.exists():
+        print(_md_info("No recorded activity yet (wiki/hot.md does not exist). "
+                       "It is maintained automatically by apply-bundle."))
+        return 0
+
+    print(hot_file.read_text(encoding="utf-8").rstrip())
+    return 0
+
+
 def cmd_apply_bundle(args: argparse.Namespace) -> int:
     """Apply a transaction bundle: atomic multi-file writes with dry-run preview."""
     LOG.info("cmd_apply_bundle: manifest=%s dry_run=%s", args.manifest, args.dry_run)
@@ -1405,6 +1426,11 @@ def cmd_apply_bundle(args: argparse.Namespace) -> int:
     except TransactionError as exc:
         print(_md_info(f"Error: {exc}"))
         return 1
+
+    from src.llm_wiki.core import WikiManager
+    WikiManager(wiki_root / "wiki").record_activity(
+        f"apply-bundle {receipt.tx_id}", receipt.changed
+    )
 
     lines = [_md_header("Transaction Applied"), ""]
     lines.append(f"- **Operation ID**: `{receipt.tx_id}`")
@@ -1477,6 +1503,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     # capabilities
     subparsers.add_parser("capabilities", help="Show effective capability contracts")
 
+    # hot
+    subparsers.add_parser("hot", help="Print bounded recent-activity context (wiki/hot.md)")
+
     # zotero-plan
     zotero_parser = subparsers.add_parser(
         "zotero-plan",
@@ -1546,6 +1575,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "index": cmd_index,
         "apply-bundle": cmd_apply_bundle,
         "capabilities": cmd_capabilities,
+        "hot": cmd_hot,
         "zotero-plan": cmd_zotero_plan,
         "zotero-refresh": cmd_zotero_refresh,
     }

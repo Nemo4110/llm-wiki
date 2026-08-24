@@ -52,6 +52,7 @@ CAPABILITIES: Dict[str, Capability] = {
         "index", write_scope=("wiki/.cache/",),
         description="Build/update embedding index cache",
     ),
+    "hot": Capability("hot", description="Bounded recent-activity context"),
     "apply-bundle": Capability(
         "apply-bundle", write_scope=("wiki/", "log.md"), dry_run=True,
         description="Atomic multi-file transaction bundle",

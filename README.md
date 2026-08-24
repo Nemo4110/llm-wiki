@@ -209,6 +209,9 @@ python scripts/agent-bridge.py apply-bundle temp/tx-bundle.yaml
 
 # Inspect per-command capability contracts (write scope, network, dry-run)
 python scripts/agent-bridge.py capabilities
+
+# Print bounded recent-activity context (wiki/hot.md)
+python scripts/agent-bridge.py hot
 ```
 
 #### Zotero review manifests

@@ -204,6 +204,7 @@ Every wiki task falls into exactly one of three categories. **The category deter
 | **C** | Apply link results | **Agent judges** | `merge` (after reviewing diff) | Manual edit |
 | **C** | Atomic multi-file write | **Agent drafts, tool applies** | `agent-bridge.py apply-bundle` | Manual edits with no atomicity guarantee |
 | **A** | Inspect capability contracts | No | `agent-bridge.py capabilities` | Read `src/llm_wiki/capabilities.py` |
+| **A** | Recent activity context | No | `agent-bridge.py hot` | Read `wiki/hot.md` |
 
 **Category A**: Pure algorithm. No LLM intelligence needed. **Always use `agent-bridge.py`.**
 
@@ -471,6 +472,10 @@ Rules:
 - Write paths are machine-enforced against the command's capability contract
   (`wiki/`, `log.md` only). A bundle that targets `sources/` or code is rejected
   before anything is written.
+- A successful apply also records one bounded entry in `wiki/hot.md` (newest
+  first, last 20 kept). `hot.md` is session-resume context, not a knowledge
+  page: it is excluded from page listings and lint. Print it with
+  `agent-bridge.py hot` — e.g. at session start when the user opts in.
 
 ### Capability Contracts
 

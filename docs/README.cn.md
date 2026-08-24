@@ -174,6 +174,9 @@ python scripts/agent-bridge.py apply-bundle temp/tx-bundle.yaml
 
 # 查看各命令的能力契约（写范围、网络、dry-run 支持）
 python scripts/agent-bridge.py capabilities
+
+# 打印有界的最近活动上下文（wiki/hot.md）
+python scripts/agent-bridge.py hot
 ```
 
 #### Zotero 审核 manifest
