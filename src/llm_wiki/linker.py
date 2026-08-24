@@ -13,6 +13,9 @@ from enum import Enum
 from typing import Dict, List, Optional, Set, Tuple
 
 from .agent_logger import get_logger
+from .bm25 import BM25, STOP_WORDS, tokenize
+
+_STOP_WORDS = STOP_WORDS  # 兼容别名,统一由 bm25 模块维护
 from .core import WikiManager, WikiPage
 
 LOG = get_logger("linker")
@@ -79,19 +82,6 @@ class RelationGraph:
 
 
 # 简单停用词表（中英文）
-_STOP_WORDS: Set[str] = {
-    "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
-    "have", "has", "had", "do", "does", "did", "will", "would", "could",
-    "should", "may", "might", "must", "shall", "can", "need", "dare",
-    "ought", "used", "to", "of", "in", "for", "on", "with", "at", "by",
-    "from", "as", "into", "through", "during", "before", "after", "above",
-    "below", "between", "under", "and", "but", "or", "yet", "so", "if",
-    "because", "although", "though", "while", "where", "when", "that",
-    "which", "who", "whom", "whose", "what", "this", "these", "those",
-    "的", "了", "在", "是", "我", "有", "和", "就", "不", "人", "都",
-    "一", "一个", "上", "也", "很", "到", "说", "要", "去", "你",
-    "会", "着", "没有", "看", "好", "自己", "这", "那", "啊",
-}
 
 
 def _extract_keywords(text: str) -> Set[str]:
@@ -152,20 +142,6 @@ class KnowledgeLinker:
     def __init__(self, wiki: WikiManager, index=None):
         self.wiki = wiki
         self.index = index  # Optional[EmbeddingIndex]
-        self._keyword_cache: Dict[str, Set[str]] = {}
-
-    def _get_keywords(self, page: WikiPage) -> Set[str]:
-        """获取页面的关键词缓存"""
-        cache_key = page.path.name
-        if cache_key not in self._keyword_cache:
-            text = f"{page.title} {' '.join(page.tags)} {page.content}"
-            self._keyword_cache[cache_key] = _extract_keywords(text)
-        return self._keyword_cache[cache_key]
-
-    def _clear_cache(self):
-        """清除关键词缓存"""
-        LOG.debug("Clearing keyword cache")
-        self._keyword_cache.clear()
 
     def find_related(
         self,
@@ -214,8 +190,15 @@ class KnowledgeLinker:
         scores: Dict[str, float] = {}
         evidence: Dict[str, List[str]] = {}
 
-        # 1. Keyword Match
+        # 1. Keyword Match:标题/标签/内容引用启发式 + BM25 内容相关性
         LOG.debug("Phase 1: keyword match (weight=%.1f)", keyword_weight)
+        corpus = BM25([tokenize(f"{p.title} {' '.join(p.tags)} {p.content}") for p in pages])
+        raw_scores = corpus.scores(tokenize(full_query))
+        # s/(s+k1) 压缩到 (0,1):弱匹配保持弱,不随查询内最大值虚高
+        bm25_scores = {
+            page.title: (raw / (raw + corpus.k1) if raw > 0 else 0.0)
+            for page, raw in zip(pages, raw_scores)
+        }
         for page in pages:
             kw_score = 0.0
             page_evidence = []
@@ -235,13 +218,12 @@ class KnowledgeLinker:
                 kw_score += 0.3 * tag_ratio
                 page_evidence.append(f"共享标签: {', '.join(shared_tags)}")
 
-            # 关键词重叠
-            page_keywords = self._get_keywords(page)
-            if page_keywords and query_keywords:
-                overlap = _jaccard_similarity(page_keywords, query_keywords)
-                kw_score += 0.3 * overlap
-                if overlap > 0.1:
-                    page_evidence.append(f"关键词重叠: {overlap:.0%}")
+            # BM25 内容相关性(替代 Jaccard 关键词重叠)
+            bm25_rel = bm25_scores.get(page.title, 0.0)
+            if bm25_rel > 0:
+                kw_score += 0.3 * bm25_rel
+                if bm25_rel > 0.3:
+                    page_evidence.append(f"BM25 相关度: {bm25_rel:.0%}")
 
             # 内容包含
             query_lower = full_query.lower()

@@ -225,3 +225,46 @@ class TestKnowledgeLinker:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestBM25Integration:
+    """BM25 替代 Jaccard 关键词重叠,成为内容相关性信号"""
+
+    @pytest.fixture
+    def populated_wiki(self, tmp_path):
+        wiki_dir = tmp_path / "wiki"
+        wiki_dir.mkdir()
+        wiki = WikiManager(wiki_dir)
+        pages = [
+            ("Transformer", "Transformer 是一种基于注意力机制的序列建模架构。", ["AI/ML", "NLP"]),
+            ("Attention", "注意力机制允许模型在处理序列时聚焦于相关部分。", ["AI/ML"]),
+            ("LoRA", "LoRA 是一种参数高效的微调方法,使用低秩矩阵分解减少可训练参数。", ["AI/ML", "Fine-tuning"]),
+            ("Fine-tuning", "全量微调是更新预训练模型所有参数的方法。", ["AI/ML", "Fine-tuning"]),
+        ]
+        for title, content, tags in pages:
+            wiki.create_page(
+                title, content,
+                {"created": "2026-04-10", "updated": "2026-04-10", "tags": tags, "status": "active"},
+            )
+        return wiki
+
+    def test_content_relevance_without_title_or_tag_match(self, populated_wiki):
+        linker = KnowledgeLinker(populated_wiki)
+        # 标题与任何页面无包含关系,无标签;只有内容主题相关
+        results = linker.find_related(
+            "内存高效微调方法",
+            query_content="通过低秩矩阵分解减少可训练参数量,降低微调显存占用",
+            top_k=4,
+            min_score=0.0,
+            use_embedding=False,
+            keyword_weight=1.0,
+            vector_weight=0.0,
+            link_weight=0.0,
+        )
+        titles = [r.target for r in results]
+        assert "LoRA" in titles
+        lora = next(r for r in results if r.target == "LoRA")
+        assert any("BM25" in e for e in lora.evidence)
+        # LoRA / Fine-tuning 与查询主题相关,应排在 Transformer 之前
+        assert titles.index("LoRA") < titles.index("Transformer")
+        assert titles.index("Fine-tuning") < titles.index("Transformer")
