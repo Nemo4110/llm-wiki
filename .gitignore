@@ -75,6 +75,9 @@ docs/superpowers/
 .obsidian/cache
 .trash/
 
+# Transaction journals (apply-bundle)
+.backups/
+
 # Release builds
 release/
 

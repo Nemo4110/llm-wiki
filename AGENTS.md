@@ -194,6 +194,7 @@ Every wiki task falls into exactly one of three categories. **The category deter
 | **B** | Ingest material | **Yes** | Protocol mode (direct file ops) | N/A |
 | **B** | Query & synthesize | **Yes** | Protocol mode (direct file ops) | N/A |
 | **C** | Apply link results | **Agent judges** | `merge` (after reviewing diff) | Manual edit |
+| **C** | Atomic multi-file write | **Agent drafts, tool applies** | `agent-bridge.py apply-bundle` | Manual edits with no atomicity guarantee |
 
 **Category A**: Pure algorithm. No LLM intelligence needed. **Always use `agent-bridge.py`.**
 
@@ -414,6 +415,50 @@ Agent:
    f. If reasonable, re-run without --dry-run
 3. Update log.md
 ```
+
+### Applying a Transaction Bundle (Atomic Ingest Writes)
+
+**When**: An ingest or maintenance step must write several files as one logical
+operation — typically a new page plus `wiki/index.md` plus `log.md`. Direct
+Protocol-mode writes can leave the knowledge base inconsistent if interrupted;
+a transaction bundle applies them atomically with rollback on failure.
+
+Manifest format (place under ignored `temp/`, e.g. `temp/tx-bundle.yaml`):
+
+```yaml
+ops:
+  - op: create                 # target must NOT exist
+    path: wiki/NewPage.md      # relative to project root
+    content_path: draft-NewPage.md   # draft file, relative to this manifest
+  - op: update                 # target must exist AND match expected_sha256
+    path: wiki/index.md
+    content_path: draft-index.md
+    expected_sha256: "a1b2..." # MUST be quoted; all-digit values unquoted are rejected
+```
+
+Workflow:
+
+```
+Agent:
+1. Read every file you will update; draft all new content under temp/
+2. Write temp/tx-bundle.yaml with the ops above
+3. Run: python scripts/agent-bridge.py apply-bundle temp/tx-bundle.yaml --dry-run
+   -> Per-op status table + unified diff; update ops report their current sha256
+4. Fill any missing expected_sha256 values from the dry-run output
+5. Review the diff carefully; if anything is wrong, fix drafts and dry-run again
+6. Run: python scripts/agent-bridge.py apply-bundle temp/tx-bundle.yaml
+   -> All ops verified, journaled, and written atomically; mid-apply failure
+      rolls every file back. Report the operation ID and changed paths.
+```
+
+Rules:
+
+- **Never apply without a reviewed dry-run.** The `expected_sha256` lock fails
+  closed if a file changed since you drafted it — re-read, re-draft, re-lock.
+- Journals live under `.backups/transactions/<tx-id>/` (gitignored); clean old
+  ones manually.
+- `create` refuses existing files; `update` refuses missing files and requires
+  `expected_sha256`. Destructive deletes are not supported — do them by hand.
 
 ---
 
