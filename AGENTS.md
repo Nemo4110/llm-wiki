@@ -78,6 +78,14 @@ status: "active"
 ---
 ```
 
+Page `status` is a maturity lifecycle: `seed` (stub from a fresh ingest) ->
+`developing` (being fleshed out) -> `mature` (covers its sources) -> `evergreen`
+(stable, maintained). `draft` (unreviewed) and `archived` (retired) remain valid;
+`active` is a legacy alias of `developing`. Depth lint analyzes pages from
+`developing` upward and reports a `lifecycle_mismatch` advisory when a
+`mature`/`evergreen` page is still shallow. Unknown status values are reported
+as `invalid_status`.
+
 Do not invent missing month/day values. If only the year is reliable, write the year and set `date_precision: "year"`.
 
 In body text, prefer a human-scannable Markdown time anchor for dated works:

@@ -16,7 +16,7 @@ sources_meta:
     citation_key: ""
 tags:
   - "TAG"
-status: "draft"  # draft | active | archived
+status: "seed"  # seed | developing | mature | evergreen (lifecycle); draft | active | archived (legacy)
 ---
 
 # PageTitle

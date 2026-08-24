@@ -682,3 +682,52 @@ ops:
         assert rc == 1
         assert "write_scope" in out
         assert not (temp_wiki_root / "sources" / "generated.md").exists()
+
+
+class TestLifecycleOutput:
+    """lint/status 命令暴露生命周期信号"""
+
+    def test_lint_reports_lifecycle_mismatch(self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys):
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        wiki_dir = temp_wiki_root / "wiki"
+        (wiki_dir / "Thin.md").write_text(
+            "---\ncreated: \"2026-08-01\"\nupdated: \"2026-08-01\"\ntags: [\"zz-niche\"]\nstatus: \"mature\"\n---\n\n# Thin\n\n一句话。\n",
+            encoding="utf-8",
+        )
+
+        rc = agent_bridge_module.cmd_lint(_args())
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert "Lifecycle Mismatch" in out
+        assert "Thin" in out
+
+    def test_lint_reports_invalid_status(self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys):
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        wiki_dir = temp_wiki_root / "wiki"
+        (wiki_dir / "Weird.md").write_text(
+            "---\ncreated: \"2026-08-01\"\nupdated: \"2026-08-01\"\ntags: [\"zz-niche\"]\nstatus: \"publised\"\n---\n\n# Weird\n\n内容。\n",
+            encoding="utf-8",
+        )
+
+        rc = agent_bridge_module.cmd_lint(_args())
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert "Invalid Status" in out
+        assert "publised" in out
+
+    def test_status_shows_lifecycle_distribution(self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys):
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        wiki_dir = temp_wiki_root / "wiki"
+        (wiki_dir / "MatureOne.md").write_text(
+            "---\ncreated: \"2026-08-01\"\nupdated: \"2026-08-01\"\ntags: []\nstatus: \"mature\"\n---\n\n# MatureOne\n\n内容。\n",
+            encoding="utf-8",
+        )
+
+        rc = agent_bridge_module.cmd_status(_args())
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert "Lifecycle" in out
+        assert "mature" in out
