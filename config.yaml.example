@@ -90,3 +90,15 @@ retrieval:
 
   # 是否启用链接遍历增强
   enable_link_traversal: true
+
+# 能力契约:对每个 agent-bridge 命令做收紧覆盖(可选)。
+# 默认契约声明在 src/llm_wiki/capabilities.py;此处只能收紧——
+# 禁用命令或缩小 write_scope,放宽会被拒绝。
+# 查看有效契约:python scripts/agent-bridge.py capabilities
+capabilities: {}
+# 示例:
+# capabilities:
+#   apply-bundle:
+#     enabled: false              # 完全禁用某命令
+#   merge:
+#     write_scope: ["wiki/"]      # 缩小写范围(不能超出默认值)

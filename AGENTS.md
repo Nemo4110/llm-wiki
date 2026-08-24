@@ -195,6 +195,7 @@ Every wiki task falls into exactly one of three categories. **The category deter
 | **B** | Query & synthesize | **Yes** | Protocol mode (direct file ops) | N/A |
 | **C** | Apply link results | **Agent judges** | `merge` (after reviewing diff) | Manual edit |
 | **C** | Atomic multi-file write | **Agent drafts, tool applies** | `agent-bridge.py apply-bundle` | Manual edits with no atomicity guarantee |
+| **A** | Inspect capability contracts | No | `agent-bridge.py capabilities` | Read `src/llm_wiki/capabilities.py` |
 
 **Category A**: Pure algorithm. No LLM intelligence needed. **Always use `agent-bridge.py`.**
 
@@ -459,6 +460,27 @@ Rules:
   ones manually.
 - `create` refuses existing files; `update` refuses missing files and requires
   `expected_sha256`. Destructive deletes are not supported — do them by hand.
+- Write paths are machine-enforced against the command's capability contract
+  (`wiki/`, `log.md` only). A bundle that targets `sources/` or code is rejected
+  before anything is written.
+
+### Capability Contracts
+
+Every bridge command declares its write scope, network use, and dry-run support
+in `src/llm_wiki/capabilities.py`. `config.yaml` may **tighten** these contracts
+(disable a command, narrow a write scope) but never widen them:
+
+```yaml
+capabilities:
+  apply-bundle:
+    enabled: false          # disable a command entirely
+  merge:
+    write_scope: ["wiki/"]  # narrow only; widening is rejected
+```
+
+Run `python scripts/agent-bridge.py capabilities` to inspect the effective
+contracts. Disabled commands fail closed at dispatch; out-of-scope bundle
+writes are rejected before any file is touched.
 
 ---
 
