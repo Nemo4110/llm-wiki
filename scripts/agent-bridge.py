@@ -1279,6 +1279,64 @@ def cmd_zotero_refresh(args: argparse.Namespace) -> int:
     return 1 if args.apply_safe and apply_failed else 0
 
 
+def cmd_apply_bundle(args: argparse.Namespace) -> int:
+    """Apply a transaction bundle: atomic multi-file writes with dry-run preview."""
+    LOG.info("cmd_apply_bundle: manifest=%s dry_run=%s", args.manifest, args.dry_run)
+
+    from src.llm_wiki.core import find_wiki_root
+    from src.llm_wiki.transaction import TransactionError, load_bundle
+
+    wiki_root = find_wiki_root(PROJECT_ROOT)
+    if not wiki_root:
+        print(_md_info("Error: Cannot find wiki root."))
+        return 1
+
+    manifest = Path(args.manifest)
+    if not manifest.exists():
+        print(_md_info(f"Error: Manifest not found: `{manifest}`"))
+        return 1
+
+    try:
+        tx = load_bundle(manifest, wiki_root)
+    except TransactionError as exc:
+        print(_md_info(f"Error: {exc}"))
+        return 1
+
+    if args.dry_run:
+        checks = tx.check()
+        lines: List[str] = [_md_header("Transaction Preview"), ""]
+        rows = [
+            [c.op.op, str(c.op.path), "ok" if c.ok else "FAIL", _md_table_cell(c.detail)]
+            for c in checks
+        ]
+        lines.append(_md_table(["Op", "Path", "Status", "Detail"], rows))
+        lines.append("")
+        lines.append(_md_header("Diff", level=3))
+        lines.append(_md_code_block(tx.diff(), "diff"))
+        lines.append("")
+        lines.append(_md_action(
+            "Review the diff. Fill any missing `expected_sha256` values shown above "
+            "into the manifest, then re-run without `--dry-run` to apply."
+        ))
+        print("\n".join(lines))
+        return 0 if all(c.ok for c in checks) else 1
+
+    try:
+        receipt = tx.apply()
+    except TransactionError as exc:
+        print(_md_info(f"Error: {exc}"))
+        return 1
+
+    lines = [_md_header("Transaction Applied"), ""]
+    lines.append(f"- **Operation ID**: `{receipt.tx_id}`")
+    lines.append(f"- **Journal**: `{receipt.journal_dir}`")
+    lines.append("- **Changed paths**:")
+    for changed in receipt.changed:
+        lines.append(f"  - `{changed}`")
+    print("\n".join(lines))
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # CLI argument parser
 # ---------------------------------------------------------------------------
@@ -1327,6 +1385,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     # index
     index_parser = subparsers.add_parser("index", help="Build/update embedding index")
     index_parser.add_argument("--force", action="store_true", help="Force rebuild all")
+
+    # apply-bundle
+    bundle_parser = subparsers.add_parser(
+        "apply-bundle",
+        help="Apply a transaction bundle (atomic multi-file writes)",
+    )
+    bundle_parser.add_argument("manifest", help="Path to the transaction bundle YAML manifest")
+    bundle_parser.add_argument("--dry-run", action="store_true",
+                               help="Preview checks and diff without writing")
 
     # zotero-plan
     zotero_parser = subparsers.add_parser(
@@ -1395,6 +1462,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "query": cmd_query,
         "merge": cmd_merge,
         "index": cmd_index,
+        "apply-bundle": cmd_apply_bundle,
         "zotero-plan": cmd_zotero_plan,
         "zotero-refresh": cmd_zotero_refresh,
     }

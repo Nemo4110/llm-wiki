@@ -519,3 +519,100 @@ class TestCmdZoteroRefresh:
 
         assert rc == 1
         assert "must stay under" in out
+
+
+class TestCmdApplyBundle:
+    """apply-bundle 子命令:事务化多文件写入"""
+
+    def _make_bundle(self, root: Path, update_hash: str) -> Path:
+        import hashlib
+        temp = root / "temp"
+        temp.mkdir(exist_ok=True)
+        (temp / "draft-page.md").write_text("---\ntags: []\n---\n\n# NewPage\n\nbody\n", encoding="utf-8")
+        (temp / "draft-index.md").write_text("# Wiki Index\n\n- [[NewPage]]\n", encoding="utf-8")
+        (temp / "draft-log.md").write_text("# Log\n\n## [2026-08-24] ingest | NewPage\n", encoding="utf-8")
+        manifest = temp / "tx-bundle.yaml"
+        manifest.write_text(f"""
+ops:
+  - op: create
+    path: wiki/NewPage.md
+    content_path: draft-page.md
+  - op: update
+    path: wiki/index.md
+    content_path: draft-index.md
+    expected_sha256: "{update_hash}"
+  - op: update
+    path: log.md
+    content_path: draft-log.md
+    expected_sha256: "{hashlib.sha256(b"# Log\n").hexdigest()}"
+""", encoding="utf-8")
+        (root / "log.md").write_text("# Log\n", encoding="utf-8")
+        return manifest
+
+    def _index_hash(self, root: Path) -> str:
+        import hashlib
+        content = (root / "wiki" / "index.md").read_text(encoding="utf-8")
+        return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+    def test_dry_run_previews_without_writing(self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys):
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        manifest = self._make_bundle(temp_wiki_root, self._index_hash(temp_wiki_root))
+
+        rc = agent_bridge_module.cmd_apply_bundle(_args(manifest=str(manifest), dry_run=True))
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert "Transaction Preview" in out
+        assert "wiki/NewPage.md" in out
+        assert not (temp_wiki_root / "wiki" / "NewPage.md").exists()
+        assert (temp_wiki_root / "log.md").read_text(encoding="utf-8") == "# Log\n"
+
+    def test_dry_run_reports_current_hash_when_missing(self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys):
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        manifest = self._make_bundle(temp_wiki_root, self._index_hash(temp_wiki_root))
+        # 去掉 update 的 expected_sha256,模拟 Agent 先探测哈希
+        text = manifest.read_text(encoding="utf-8")
+        text = "\n".join(l for l in text.split("\n") if "expected_sha256" not in l)
+        manifest.write_text(text, encoding="utf-8")
+
+        rc = agent_bridge_module.cmd_apply_bundle(_args(manifest=str(manifest), dry_run=True))
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert "current sha256" in out
+        assert self._index_hash(temp_wiki_root) in out
+
+    def test_apply_writes_all_files(self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys):
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        manifest = self._make_bundle(temp_wiki_root, self._index_hash(temp_wiki_root))
+
+        rc = agent_bridge_module.cmd_apply_bundle(_args(manifest=str(manifest), dry_run=False))
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert "Applied" in out
+        assert (temp_wiki_root / "wiki" / "NewPage.md").exists()
+        assert "[[NewPage]]" in (temp_wiki_root / "wiki" / "index.md").read_text(encoding="utf-8")
+        assert "ingest | NewPage" in (temp_wiki_root / "log.md").read_text(encoding="utf-8")
+
+    def test_apply_with_stale_hash_writes_nothing(self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys):
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        manifest = self._make_bundle(temp_wiki_root, "0" * 64)
+
+        rc = agent_bridge_module.cmd_apply_bundle(_args(manifest=str(manifest), dry_run=False))
+        out = capsys.readouterr().out
+
+        assert rc == 1
+        assert "Hash mismatch" in out or "hash mismatch" in out
+        assert not (temp_wiki_root / "wiki" / "NewPage.md").exists()
+        assert (temp_wiki_root / "log.md").read_text(encoding="utf-8") == "# Log\n"
+
+    def test_missing_manifest_returns_error(self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys):
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+
+        rc = agent_bridge_module.cmd_apply_bundle(
+            _args(manifest=str(temp_wiki_root / "nope.yaml"), dry_run=False))
+        out = capsys.readouterr().out
+
+        assert rc == 1
+        assert "Error" in out
