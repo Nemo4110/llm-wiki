@@ -731,3 +731,50 @@ class TestLifecycleOutput:
         assert rc == 0
         assert "Lifecycle" in out
         assert "mature" in out
+
+
+class TestCmdHot:
+    """hot 子命令:打印有界最近上下文;apply-bundle 自动维护"""
+
+    def test_apply_bundle_records_hot_entry(self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys):
+        import hashlib
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        temp = temp_wiki_root / "temp"
+        temp.mkdir(exist_ok=True)
+        (temp / "draft.md").write_text("# HotPage\n\nbody\n", encoding="utf-8")
+        manifest = temp / "bundle.yaml"
+        manifest.write_text("""
+ops:
+  - op: create
+    path: wiki/HotPage.md
+    content_path: draft.md
+""", encoding="utf-8")
+
+        rc = agent_bridge_module.cmd_apply_bundle(_args(manifest=str(manifest), dry_run=False))
+        assert rc == 0
+        capsys.readouterr()
+
+        hot = temp_wiki_root / "wiki" / "hot.md"
+        assert hot.exists()
+        text = hot.read_text(encoding="utf-8")
+        assert "wiki/HotPage.md" in text
+
+    def test_hot_prints_recent_context(self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys):
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        (temp_wiki_root / "wiki" / "hot.md").write_text(
+            "# Hot Context\n\n- [2026-08-24 18:00] ingest | X — wiki/X.md\n", encoding="utf-8")
+
+        rc = agent_bridge_module.cmd_hot(_args())
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert "ingest | X" in out
+
+    def test_hot_without_file_friendly_message(self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys):
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+
+        rc = agent_bridge_module.cmd_hot(_args())
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert "no recorded activity" in out.lower() or "hot.md" in out
