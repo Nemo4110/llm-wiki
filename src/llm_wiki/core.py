@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Mapping, Optional, Set, Tuple
 import yaml
 
 from .agent_logger import get_logger
+from .claims import validate_claims
 from .depth_lint import DepthLintConfig, analyze_depth
 
 # 笔记生命周期(成熟度递进):seed -> developing -> mature -> evergreen
@@ -136,18 +137,9 @@ class WikiManager:
         path = self.wiki_dir / filename
         LOG.info("Creating page: %s -> %s", title, path)
 
-        # 构建 frontmatter
-        fm_lines = ["---"]
-        for key, value in frontmatter.items():
-            if isinstance(value, list):
-                fm_lines.append(f"{key}:")
-                for v in value:
-                    fm_lines.append(f"  - \"{v}\"")
-            else:
-                fm_lines.append(f"{key}: \"{value}\"")
-        fm_lines.append("---")
-
-        full_content = "\n".join(fm_lines) + "\n\n" + content
+        # 构建 frontmatter(safe_dump 支持嵌套结构,如 sources_meta / claims)
+        fm_yaml = yaml.safe_dump(frontmatter, allow_unicode=True, sort_keys=False).rstrip()
+        full_content = f"---\n{fm_yaml}\n---\n\n" + content
         path.write_text(full_content, encoding='utf-8')
         LOG.debug("Page written: %s (%d bytes)", path, len(full_content))
         return path
@@ -249,6 +241,7 @@ class WikiManager:
             'shallow_pages': [],
             'invalid_status': [],
             'lifecycle_mismatch': [],
+            'claim_issues': [],
         }
         if include_depth_details:
             issues['shallow_page_details'] = []
@@ -316,6 +309,10 @@ class WikiManager:
                         f"({", ".join(depth_issue.reasons)})"
                     )
 
+            # 论断级溯源校验(advisory)
+            for claim_issue in validate_claims(page, self.wiki_dir.parent):
+                issues['claim_issues'].append(claim_issue)
+
             # 检查陈旧页面（90天未更新）
             updated = page.frontmatter.get('updated')
             if updated:
@@ -344,7 +341,7 @@ class WikiManager:
         LOG.info(
             "Lint complete: orphans=%d dead_links=%d stale=%d empty_pages=%d "
             "duplicate_titles=%d noncanonical_links=%d drafts=%d shallow_pages=%d "
-            "invalid_status=%d lifecycle_mismatch=%d",
+            "invalid_status=%d lifecycle_mismatch=%d claim_issues=%d",
             len(issues['orphans']),
             len(issues['dead_links']),
             len(issues['stale']),
@@ -355,6 +352,7 @@ class WikiManager:
             len(issues['shallow_pages']),
             len(issues['invalid_status']),
             len(issues['lifecycle_mismatch']),
+            len(issues['claim_issues']),
         )
         return issues
 

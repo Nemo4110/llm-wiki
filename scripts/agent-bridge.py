@@ -588,6 +588,7 @@ def cmd_lint(args: argparse.Namespace) -> int:
             ["Shallow pages", str(len(issues["shallow_pages"])), "⚠️" if issues["shallow_pages"] else "✅"],
             ["Invalid status", str(len(issues["invalid_status"])), "⚠️" if issues["invalid_status"] else "✅"],
             ["Lifecycle mismatch", str(len(issues["lifecycle_mismatch"])), "⚠️" if issues["lifecycle_mismatch"] else "✅"],
+            ["Claim issues", str(len(issues["claim_issues"])), "⚠️" if issues["claim_issues"] else "✅"],
         ],
     ))
     lines.append("")
@@ -649,6 +650,13 @@ def cmd_lint(args: argparse.Namespace) -> int:
         lines.append(_md_code_block("\n".join(f"- {m}" for m in issues["lifecycle_mismatch"])))
         lines.append("")
         lines.append(_md_action("Either deepen the page to justify mature/evergreen, or lower its status to developing."))
+        lines.append("")
+
+    if issues["claim_issues"]:
+        lines.append(_md_header("Claim Issues (advisory)", level=3))
+        lines.append(_md_code_block("\n".join(f"- {m}" for m in issues["claim_issues"])))
+        lines.append("")
+        lines.append(_md_action("Bind every claim to a source declared in the page's own sources/sources_meta, and keep claim statuses within accepted/provisional/contested/unsupported."))
         lines.append("")
 
     if issues["shallow_pages"]:

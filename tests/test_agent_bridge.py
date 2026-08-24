@@ -778,3 +778,23 @@ ops:
 
         assert rc == 0
         assert "no recorded activity" in out.lower() or "hot.md" in out
+
+
+class TestClaimLintOutput:
+    def test_lint_reports_claim_issues(self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys):
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        wiki_dir = temp_wiki_root / "wiki"
+        (wiki_dir / "Claimy.md").write_text(
+            "---\ncreated: \"2026-08-01\"\nupdated: \"2026-08-01\"\ntags: [\"zz-niche\"]\nstatus: \"active\"\n"
+            "sources:\n  - \"sources/lora.pdf\"\n"
+            "claims:\n  - text: \"X 结论\"\n    source: \"sources/undeclared.pdf\"\n    status: \"accepted\"\n"
+            "---\n\n# Claimy\n\n内容。\n",
+            encoding="utf-8",
+        )
+
+        rc = agent_bridge_module.cmd_lint(_args())
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert "Claim Issues" in out
+        assert "undeclared" in out
