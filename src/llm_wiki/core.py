@@ -16,6 +16,12 @@ import yaml
 from .agent_logger import get_logger
 from .depth_lint import DepthLintConfig, analyze_depth
 
+# 笔记生命周期(成熟度递进):seed -> developing -> mature -> evergreen
+# draft 是未审视的初始态,active 是 legacy 写法(约等于 developing),
+# archived 是退役终态。
+LIFECYCLE_STATES = ("seed", "developing", "mature", "evergreen")
+KNOWN_STATUSES = LIFECYCLE_STATES + ("draft", "active", "archived")
+
 LOG = get_logger("core")
 
 
@@ -202,6 +208,8 @@ class WikiManager:
             'noncanonical_links': [],
             'drafts': [],
             'shallow_pages': [],
+            'invalid_status': [],
+            'lifecycle_mismatch': [],
         }
         if include_depth_details:
             issues['shallow_page_details'] = []
@@ -243,6 +251,13 @@ class WikiManager:
             if page.status == 'draft':
                 issues['drafts'].append(page.title)
 
+            # 状态词表校验(抓拼写错误,如 "publised")
+            raw_status = page.frontmatter.get('status')
+            if raw_status is not None and raw_status not in KNOWN_STATUSES:
+                issues['invalid_status'].append(
+                    f"{page.title}: status={raw_status!r} (expected one of {', '.join(KNOWN_STATUSES)})"
+                )
+
             depth_issue = analyze_depth(
                 page_title=page.title,
                 page_stem=page.path.stem,
@@ -255,6 +270,12 @@ class WikiManager:
                 issues['shallow_pages'].append(depth_issue.render())
                 if include_depth_details:
                     issues['shallow_page_details'].append(depth_issue.to_dict())
+                # mature/evergreen 声明"内容完整",与 shallow 判定矛盾
+                if page.status in ('mature', 'evergreen'):
+                    issues['lifecycle_mismatch'].append(
+                        f"{page.title}: status={page.status} but content is shallow "
+                        f"({", ".join(depth_issue.reasons)})"
+                    )
 
             # 检查陈旧页面（90天未更新）
             updated = page.frontmatter.get('updated')
@@ -283,7 +304,8 @@ class WikiManager:
 
         LOG.info(
             "Lint complete: orphans=%d dead_links=%d stale=%d empty_pages=%d "
-            "duplicate_titles=%d noncanonical_links=%d drafts=%d shallow_pages=%d",
+            "duplicate_titles=%d noncanonical_links=%d drafts=%d shallow_pages=%d "
+            "invalid_status=%d lifecycle_mismatch=%d",
             len(issues['orphans']),
             len(issues['dead_links']),
             len(issues['stale']),
@@ -292,6 +314,8 @@ class WikiManager:
             len(issues['noncanonical_links']),
             len(issues['drafts']),
             len(issues['shallow_pages']),
+            len(issues['invalid_status']),
+            len(issues['lifecycle_mismatch']),
         )
         return issues
 

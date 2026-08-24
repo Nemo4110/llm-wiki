@@ -586,6 +586,8 @@ def cmd_lint(args: argparse.Namespace) -> int:
             ["Non-canonical links", str(len(issues["noncanonical_links"])), "⚠️" if issues["noncanonical_links"] else "✅"],
             ["Draft pages", str(len(issues["drafts"])), "⚠️" if issues["drafts"] else "✅"],
             ["Shallow pages", str(len(issues["shallow_pages"])), "⚠️" if issues["shallow_pages"] else "✅"],
+            ["Invalid status", str(len(issues["invalid_status"])), "⚠️" if issues["invalid_status"] else "✅"],
+            ["Lifecycle mismatch", str(len(issues["lifecycle_mismatch"])), "⚠️" if issues["lifecycle_mismatch"] else "✅"],
         ],
     ))
     lines.append("")
@@ -633,6 +635,20 @@ def cmd_lint(args: argparse.Namespace) -> int:
     if issues["drafts"]:
         lines.append(_md_header("Draft Pages", level=3))
         lines.append(_md_code_block("\n".join(f"- [[{p}]]" for p in issues["drafts"])))
+        lines.append("")
+
+    if issues["invalid_status"]:
+        lines.append(_md_header("Invalid Status", level=3))
+        lines.append(_md_code_block("\n".join(f"- {m}" for m in issues["invalid_status"])))
+        lines.append("")
+        lines.append(_md_action("Fix the status typo. Lifecycle: seed -> developing -> mature -> evergreen; draft/archived remain valid."))
+        lines.append("")
+
+    if issues["lifecycle_mismatch"]:
+        lines.append(_md_header("Lifecycle Mismatch (advisory)", level=3))
+        lines.append(_md_code_block("\n".join(f"- {m}" for m in issues["lifecycle_mismatch"])))
+        lines.append("")
+        lines.append(_md_action("Either deepen the page to justify mature/evergreen, or lower its status to developing."))
         lines.append("")
 
     if issues["shallow_pages"]:
@@ -731,6 +747,15 @@ def cmd_status(args: argparse.Namespace) -> int:
             ["Draft", str(status_counts.get("draft", 0))],
             ["Archived", str(status_counts.get("archived", 0))],
         ],
+    ))
+    lines.append("")
+
+    # Lifecycle maturity distribution (seed -> developing -> mature -> evergreen)
+    from src.llm_wiki.core import LIFECYCLE_STATES
+    lines.append(_md_header("Lifecycle", level=3))
+    lines.append(_md_table(
+        ["Stage", "Pages"],
+        [[stage, str(status_counts.get(stage, 0))] for stage in LIFECYCLE_STATES],
     ))
     lines.append("")
 
