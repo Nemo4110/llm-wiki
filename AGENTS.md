@@ -1093,6 +1093,7 @@ Agent:
 - **Module**: `src.llm_wiki`
 - **Main file**: `src/llm_wiki/commands.py`
 - **Core logic**: `src/llm_wiki/core.py`
+- **Deterministic retrieval**: `src/llm_wiki/bm25.py` — dependency-free BM25Okapi with a mixed Chinese/English tokenizer (English words; Chinese unigrams + bigrams). It backs the content-relevance signal in both `link` and `query`, so retrieval quality never depends on embedding availability.
 - **Agent Bridge**: `scripts/agent-bridge.py`
 - **Logging**: `src/llm_wiki/agent_logger.py`
 

@@ -142,3 +142,23 @@ class TestEmbeddingIndexSearch:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestBM25KeywordSearch:
+    """search 的 keyword 分量使用 BM25 词项匹配,而非整串子串匹配"""
+
+    def test_term_match_beats_no_substring(self, temp_wiki):
+        wiki, provider = temp_wiki
+        index = EmbeddingIndex(wiki, provider)
+        index.build()
+
+        # "参数效率与微调" 不是任何页面的子串,但其词项(参数/效率/微调)
+        # 集中出现在 LoRA 页面
+        results = index.search(
+            "参数效率与微调", top_k=3,
+            keyword_weight=1.0, vector_weight=0.0, link_weight=0.0,
+        )
+        ranked = dict(results)
+        assert ranked.get("LoRA", 0.0) > 0.0
+        assert ranked.get("Docker", 0.0) == 0.0
+        assert results[0][0] == "LoRA"
