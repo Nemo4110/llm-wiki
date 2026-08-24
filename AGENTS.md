@@ -86,6 +86,21 @@ Page `status` is a maturity lifecycle: `seed` (stub from a fresh ingest) ->
 `mature`/`evergreen` page is still shallow. Unknown status values are reported
 as `invalid_status`.
 
+Pages may additionally declare claim-level provenance in frontmatter:
+
+```yaml
+claims:
+  - text: "LoRA constrains the weight update to a low-rank product"
+    source: "sources/lora.pdf"     # must be declared in this page's sources/sources_meta
+    status: "accepted"             # accepted | provisional | contested | unsupported
+```
+
+Lint validates claims as advisory `claim_issues`: every claim needs
+text/source/status, the status must be in the vocabulary, and the source must
+be one the page itself declares. A `mature`/`evergreen` page with still
+contested or unsupported claims is flagged. Never fabricate claim sources or
+statuses — an absent claim list is always better than an invented one.
+
 Do not invent missing month/day values. If only the year is reliable, write the year and set `date_precision: "year"`.
 
 In body text, prefer a human-scannable Markdown time anchor for dated works:

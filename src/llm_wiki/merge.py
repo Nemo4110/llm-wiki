@@ -324,17 +324,9 @@ class ContentMerger:
         fm = dict(page.frontmatter)
         fm["updated"] = datetime.now().strftime("%Y-%m-%d")
 
-        fm_lines = ["---"]
-        for key, value in fm.items():
-            if isinstance(value, list):
-                fm_lines.append(f"{key}:")
-                for v in value:
-                    fm_lines.append(f'  - "{v}"')
-            else:
-                fm_lines.append(f'{key}: "{value}"')
-        fm_lines.append("---")
-
-        return "\n".join(fm_lines) + "\n\n" + new_content
+        import yaml
+        fm_yaml = yaml.safe_dump(fm, allow_unicode=True, sort_keys=False).rstrip()
+        return f"---\n{fm_yaml}\n---\n\n" + new_content
 
     def _heading_level(self, line: str) -> int:
         """返回标题级别（# 数量），不是标题返回 0"""
