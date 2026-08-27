@@ -146,8 +146,8 @@ class Transaction:
             new_lines = op.content.splitlines(keepends=True)
             chunks.append("".join(difflib.unified_diff(
                 old_lines, new_lines,
-                fromfile=f"a/{op.path}" if op.op == OP_UPDATE else "/dev/null",
-                tofile=f"b/{op.path}",
+                fromfile=f"a/{op.path.as_posix()}" if op.op == OP_UPDATE else "/dev/null",
+                tofile=f"b/{op.path.as_posix()}",
             )))
         return "\n".join(chunks)
 

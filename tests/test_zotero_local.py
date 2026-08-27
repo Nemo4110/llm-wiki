@@ -1,0 +1,312 @@
+"""Tests for the temporary direct Zotero 10 local-API write backend.
+
+All tests use httpx.MockTransport with synthetic fixtures — no real Zotero, no
+real network. Expected values come from the fixtures, not recomputed from the
+implementation.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+
+import httpx
+import pytest
+
+from src.llm_wiki.zotero_local import LocalWriteError, LocalZoteroWriter, authorize_local
+from src.llm_wiki.zotero_refresh import parse_extra_keys
+
+ITEM_KEY = "TESTKEY1"
+SERVER_ID = "SID123"
+API_KEY = "SECRETKEY"
+
+BASE_ITEM = {
+    "key": ITEM_KEY,
+    "version": 5,
+    "data": {
+        "key": ITEM_KEY,
+        "version": 5,
+        "tags": [{"tag": "重排"}],
+        "extra": "LLM-Wiki DOI Verified: 2026-01-01",
+        "url": "",
+    },
+}
+
+
+def make_transport(captured, item=None, get_item=None):
+    """MockTransport handler for the Zotero local API.
+
+    captured: list that collects PATCH requests for assertion.
+    get_item: optional callable returning the current item JSON (lets a test
+              mutate state between the pre-write GET and any later GET).
+    """
+    state = {"item": item if item is not None else BASE_ITEM}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/api/":
+            return httpx.Response(200, headers={"Zotero-Server-ID": SERVER_ID})
+        if path == f"/api/users/0/items/{ITEM_KEY}":
+            if request.method == "GET":
+                current = get_item() if get_item else state["item"]
+                return httpx.Response(200, json=current)
+            if request.method == "PATCH":
+                captured.append(request)
+                return httpx.Response(204)
+        return httpx.Response(404)
+
+    return httpx.MockTransport(handler)
+
+
+def run(coro):
+    return asyncio.run(coro)
+
+
+def test_write_add_tags_sends_versioned_patch_with_merged_tags():
+    captured = []
+    http = httpx.AsyncClient(transport=make_transport(captured))
+    writer = LocalZoteroWriter(API_KEY, http=http)
+
+    run(writer.write_safe_mutation(ITEM_KEY, add_tags=["llm-wiki:ingested"]))
+
+    assert len(captured) == 1
+    req = captured[0]
+    assert req.headers["Zotero-Server-ID"] == SERVER_ID
+    assert req.headers["Zotero-API-Key"] == API_KEY
+    assert req.headers["If-Unmodified-Since-Version"] == "5"
+    body = json.loads(req.content)
+    assert {"tag": "重排"} in body["tags"]
+    assert {"tag": "llm-wiki:ingested"} in body["tags"]
+
+
+def test_write_remove_tags_drops_only_the_named_tag():
+    item = json.loads(json.dumps(BASE_ITEM))
+    item["data"]["tags"] = [{"tag": "重排"}, {"tag": "llm-wiki:doi-missing"}]
+    captured = []
+    http = httpx.AsyncClient(transport=make_transport(captured, item=item))
+    writer = LocalZoteroWriter(API_KEY, http=http)
+
+    run(writer.write_safe_mutation(ITEM_KEY, remove_tags=["llm-wiki:doi-missing"]))
+
+    body = json.loads(captured[0].content)
+    assert {"tag": "重排"} in body["tags"]
+    assert {"tag": "llm-wiki:doi-missing"} not in body["tags"]
+
+
+def test_write_set_keys_upserts_extra_lines_without_duplicates():
+    captured = []
+    http = httpx.AsyncClient(transport=make_transport(captured))
+    writer = LocalZoteroWriter(API_KEY, http=http)
+
+    run(writer.write_safe_mutation(
+        ITEM_KEY,
+        set_keys={
+            "LLM-Wiki DOI Verified": "2026-08-27",      # existing key -> replace, not duplicate
+            "LLM-Wiki Citation Checked": "2026-08-27",  # new key -> append
+        },
+    ))
+
+    body = json.loads(captured[0].content)
+    extra = body["extra"]
+    # the verifier parses extra with parse_extra_keys; assert against that same view
+    parsed = parse_extra_keys(extra)
+    assert parsed["LLM-Wiki DOI Verified"] == "2026-08-27"
+    assert parsed["LLM-Wiki Citation Checked"] == "2026-08-27"
+    doi_lines = [ln for ln in extra.splitlines() if ln.startswith("LLM-Wiki DOI Verified:")]
+    assert doi_lines == ["LLM-Wiki DOI Verified: 2026-08-27"]
+
+
+def test_write_fields_updates_url_without_touching_tags_or_extra():
+    captured = []
+    http = httpx.AsyncClient(transport=make_transport(captured))
+    writer = LocalZoteroWriter(API_KEY, http=http)
+
+    run(writer.write_safe_mutation(ITEM_KEY, fields={"url": "https://doi.org/10.1234/x"}))
+
+    body = json.loads(captured[0].content)
+    assert body["url"] == "https://doi.org/10.1234/x"
+    assert "tags" not in body
+    assert "extra" not in body
+
+
+def test_write_with_no_changes_makes_no_request():
+    captured = []
+    http = httpx.AsyncClient(transport=make_transport(captured))
+    writer = LocalZoteroWriter(API_KEY, http=http)
+
+    run(writer.write_safe_mutation(ITEM_KEY))
+
+    assert captured == []
+
+
+def test_patch_error_status_raises_localwriteerror():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/":
+            return httpx.Response(200, headers={"Zotero-Server-ID": SERVER_ID})
+        if request.method == "GET":
+            return httpx.Response(200, json=BASE_ITEM)
+        if request.method == "PATCH":
+            return httpx.Response(412)  # version conflict
+        return httpx.Response(404)
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    writer = LocalZoteroWriter(API_KEY, http=http)
+
+    with pytest.raises(LocalWriteError):
+        run(writer.write_safe_mutation(ITEM_KEY, add_tags=["x"]))
+
+
+def test_authorize_local_handshake_stores_reusable_key(tmp_path):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/":
+            return httpx.Response(200, headers={"Zotero-Server-ID": SERVER_ID})
+        if request.url.path == "/api/local/authorize" and request.method == "POST":
+            assert request.headers["Zotero-Server-ID"] == SERVER_ID
+            assert json.loads(request.content) == {"appName": "llm-wiki"}
+            return httpx.Response(200, json={"key": "NEWKEY32", "remember": True})
+        return httpx.Response(404)
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    store = tmp_path / "zotero-local.json"
+
+    key = run(authorize_local("llm-wiki", store, http=http))
+
+    assert key == "NEWKEY32"
+    saved = json.loads(store.read_text(encoding="utf-8"))
+    assert saved["key"] == "NEWKEY32"
+
+
+def test_writer_rejects_non_loopback_base_url():
+    with pytest.raises(LocalWriteError):
+        LocalZoteroWriter(API_KEY, base_url="https://evil.example.com")
+
+
+def test_load_local_key_missing_file_raises_clear_error(tmp_path):
+    from src.llm_wiki.zotero_local import load_local_key
+
+    with pytest.raises(LocalWriteError, match="zotero-local-auth"):
+        load_local_key(tmp_path / "nonexistent.json")
+
+
+def test_upsert_extra_lines_drops_duplicate_keys():
+    from src.llm_wiki.zotero_local import _upsert_extra_lines
+
+    extra = "LLM-Wiki DOI Status: missing\nLLM-Wiki DOI Status: stale"
+    out = _upsert_extra_lines(extra, {"LLM-Wiki DOI Status": "verified"})
+    assert out.splitlines().count("LLM-Wiki DOI Status: verified") == 1
+    assert "stale" not in out
+    assert "missing" not in out
+
+
+def test_aclose_does_not_close_injected_client():
+    http = httpx.AsyncClient(transport=make_transport([]))
+    writer = LocalZoteroWriter(API_KEY, http=http)
+
+    run(writer.aclose())
+
+    assert not http.is_closed  # injected client is owned by the caller, not the writer
+
+
+
+class _FakeCrossref:
+    async def get_work(self, doi):
+        return {}
+
+    async def search_works(self, title, *, author="", rows=5):
+        return []
+
+
+class _FakeOpenAlex:
+    async def get_work_by_doi(self, doi):
+        return {}
+
+    async def get_source(self, source_id):
+        return {}
+
+
+def test_run_live_refresh_local_backend_writes_via_local_writer(tmp_path, monkeypatch):
+    """write_backend="local" must route the write to LocalZoteroWriter, not the MCP client.
+
+    A shared dict models the hybrid reality: the local write lands in the same
+    local database the MCP read path serves, so the existing verify loop sees it.
+    """
+    from src.llm_wiki import zotero_refresh as zr
+
+    key = "ITEM0001"
+    db = {
+        key: {
+            "key": key,
+            "version": 1,
+            "itemType": "journalArticle",
+            "title": "Some Paper",
+            "date": "2024",
+            "tags": [],
+            "extra": "",
+            "url": "",
+            "creators": [],
+        }
+    }
+
+    class FakeMCP:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get_collection_item_keys(self, collection_key, *, limit=500):
+            return ("Coll", [key])
+
+        async def get_items(self, keys, *, concurrency=4):
+            return [db[k] for k in keys]
+
+        async def write_safe_mutation(self, item_key, **kwargs):
+            raise AssertionError("MCP write path must NOT be used in local backend")
+
+    class FakeLocalWriter:
+        def __init__(self):
+            self.calls = []
+
+        @classmethod
+        def from_store(cls, *a, **k):
+            return cls()
+
+        async def write_safe_mutation(self, item_key, *, set_keys=None, add_tags=(), remove_tags=(), fields=None):
+            self.calls.append(item_key)
+            data = db[item_key]
+            tags = {t["tag"] for t in data.get("tags", [])}
+            tags |= set(add_tags)
+            tags -= set(remove_tags)
+            data["tags"] = [{"tag": t} for t in sorted(tags)]
+            extra = zr.parse_extra_keys(data.get("extra", ""))
+            extra.update({k: str(v) for k, v in (set_keys or {}).items()})
+            data["extra"] = "\n".join(f"{k}: {v}" for k, v in extra.items())
+            data.update(fields or {})
+            data["version"] += 1
+
+        async def aclose(self):
+            pass
+
+    monkeypatch.setattr(zr, "ZoteroMCPClient", FakeMCP)
+    monkeypatch.setattr(zr, "LocalZoteroWriter", FakeLocalWriter)
+    monkeypatch.setattr(zr, "CrossrefProvider", lambda *a, **k: _FakeCrossref())
+    monkeypatch.setattr(zr, "OpenAlexProvider", lambda *a, **k: _FakeOpenAlex())
+
+    report = run(zr.run_live_refresh(
+        tmp_path,
+        collection_key="C1",
+        settings=zr.RefreshSettings(),
+        cache_path=tmp_path / "cache.sqlite",
+        mcp_config_path=tmp_path / ".mcp.json",
+        write_backend="local",
+        local_store_path=tmp_path / "var" / "zotero-local.json",
+        force=True,
+        apply_safe=True,
+    ))
+
+    # a DOI-missing academic item yields a safe mutation, applied via the local writer
+    assert report.applied_count == 1
+    assert report.items[0].applied is True

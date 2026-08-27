@@ -189,7 +189,10 @@ class WikiManager:
             f"{HOT_CONTEXT_LIMIT} 条。完整历史见 log.md。\n"
         )
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-        files = ", ".join(str(c) for c in changed)
+        files = ", ".join(
+            c.as_posix() if isinstance(c, Path) else str(c).replace("\\", "/")
+            for c in changed
+        )
         entry = f"- [{timestamp}] {action} — {files}"
 
         head = header.rstrip()

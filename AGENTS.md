@@ -561,7 +561,7 @@ python -m src.llm_wiki --verbose link --source "X" --mode light
 
 ### Zotero-Linked Sources
 
-All Zotero source discovery, attachment access, private bindings, provenance fields, and write-back rules are defined in [`docs/ZOTERO_MCP_INTEGRATION.md`](docs/ZOTERO_MCP_INTEGRATION.md). Use only `54yyyu/zotero-mcp` for Zotero operations.
+All Zotero source discovery, attachment access, private bindings, provenance fields, and write-back rules are defined in [`docs/ZOTERO_MCP_INTEGRATION.md`](docs/ZOTERO_MCP_INTEGRATION.md). Use only `54yyyu/zotero-mcp` for Zotero operations, except the temporary opt-in direct local write path (`zotero-refresh --write-backend local`) documented there.
 
 ### Standard Network Fetch Template
 

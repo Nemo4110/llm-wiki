@@ -521,6 +521,30 @@ class TestCmdZoteroRefresh:
         assert "must stay under" in out
 
 
+class TestCmdZoteroLocalAuth:
+    def test_local_auth_stores_key_under_var(
+        self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys
+    ):
+        import src.llm_wiki.zotero_local as zl
+
+        captured = {}
+
+        async def fake_authorize(app_name, store_path, **kwargs):
+            captured["app_name"] = app_name
+            captured["store_path"] = store_path
+            return "KEY"
+
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        monkeypatch.setattr(zl, "authorize_local", fake_authorize)
+        rc = agent_bridge_module.main(["zotero-local-auth"])
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert captured["app_name"] == "llm-wiki"
+        assert str(captured["store_path"]).startswith(str(temp_wiki_root / "var"))
+        assert "local" in out.lower()
+
+
 class TestCmdApplyBundle:
     """apply-bundle 子命令:事务化多文件写入"""
 

@@ -61,6 +61,10 @@ CAPABILITIES: Dict[str, Capability] = {
         "zotero-plan", write_scope=("temp/",),
         description="Read-only Zotero sync planner; manifest only under temp/",
     ),
+    "zotero-local-auth": Capability(
+        "zotero-local-auth", write_scope=("var/",), network=True,
+        description="Authorize direct Zotero 10 local API writes",
+    ),
     "zotero-refresh": Capability(
         "zotero-refresh", write_scope=("var/", "temp/"), network=True,
         description="Zotero metadata enrichment via MCP and external providers",

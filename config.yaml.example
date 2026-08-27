@@ -79,6 +79,13 @@ zotero_enrichment:
     # 仅规范空 URL 或错误的 doi.org URL；保留 publisher/arXiv URL。
     normalize_doi_url: true
 
+  # 临时：直连 Zotero 10 本地写 API（zotero-refresh --write-backend local）。
+  # 读仍走 MCP；仅写可直连本地。先跑一次 agent-bridge.py zotero-local-auth 授权
+  # （Zotero 弹窗），可复用 key 存于 gitignored var/zotero-local.json。
+  # 上游 zotero-mcp 采纳本地写后移除此段。
+  local:
+    base_url: "http://127.0.0.1:23119"
+
 retrieval:
   # 混合搜索返回的 top-k 结果数
   top_k: 10
