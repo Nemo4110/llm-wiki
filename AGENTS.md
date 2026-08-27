@@ -49,7 +49,7 @@ Never treat `created` / `updated` as publication dates. They are wiki maintenanc
 
 For wiki queries, first read `wiki/index.md`, then relevant pages and link neighbors. Use semantic query only as candidate discovery; synthesize from the actual page content and cite wiki pages with `[[PageName]]`. If a query produces a lasting new synthesis, ask or decide whether to archive it into wiki according to user intent.
 
-For questions that need Zotero source coverage, recent literature, annotations, or a specific paper, follow [`docs/ZOTERO_MCP_INTEGRATION.md`](docs/ZOTERO_MCP_INTEGRATION.md). All Zotero operations MUST use the MCP tools provided by `54yyyu/zotero-mcp`; the dedicated document is the single source of truth for capability gates, retrieval, ingest, write-back, and failure handling.
+For questions that need Zotero source coverage, recent literature, annotations, or a specific paper, follow [`docs/ZOTERO_MCP_INTEGRATION.md`](docs/ZOTERO_MCP_INTEGRATION.md). Zotero MCP is mandatory for discovery, reads, source access, metadata identity, and normal writes; the dedicated document is the single source of truth for the temporary, explicitly authorized Zotero 10 loopback write exception and every capability, ingest, write-back, and failure gate.
 
 ### Page Format Requirements
 
@@ -133,6 +133,7 @@ In body text, prefer a human-scannable Markdown time anchor for dated works:
 - Synchronize README language variants when user-facing behavior changes.
 - Use the project-managed Python environment (`.venv` or conda) for Python operations.
 - For every Zotero operation and Zotero-backed source, follow [`docs/ZOTERO_MCP_INTEGRATION.md`](docs/ZOTERO_MCP_INTEGRATION.md).
+- `wiki/*` and most `sources/*` are gitignored by default. Use `rg --no-ignore` for repository searches that must include user-managed knowledge/source files; a plain `rg` result is not a complete wiki inventory.
 
 ### Release Artifact Verification
 
@@ -213,7 +214,9 @@ Every wiki task falls into exactly one of three categories. **The category deter
 | **A** | Semantic query | No | `agent-bridge.py query --semantic` | Fallback to keyword listing |
 | **A** | Zotero sync plan | No | `agent-bridge.py zotero-plan` | Manually compare wiki provenance with MCP reads |
 | **A** | Zotero enrichment dry-run | No | `agent-bridge.py zotero-refresh` | Review provider results and the generated manifest |
+| **A** | Zotero collection ingest verification | No | `agent-bridge.py zotero-ingest-verify` | Manually audit allocation, provenance, and page invariants |
 | **C** | Apply safe Zotero enrichment | Agent reviews | `zotero-refresh --apply-safe` | Use MCP tools manually if the worker cannot verify write-back |
+| **C** | Authorized Zotero tag/relation write-back | Agent + user review | `agent-bridge.py zotero-writeback` | Use reviewed incremental MCP writes when the local exception is unavailable |
 | **B** | Ingest material | **Yes** | Protocol mode (direct file ops) | N/A |
 | **B** | Query & synthesize | **Yes** | Protocol mode (direct file ops) | N/A |
 | **C** | Apply link results | **Agent judges** | `merge` (after reviewing diff) | Manual edit |
@@ -366,7 +369,7 @@ python scripts/agent-bridge.py zotero-plan --snapshot temp/zotero-snapshot.yaml 
 ```
 
 3. Review managed-tag additions, collection-equivalent removal candidates, DOI states, and preprint publication checks.
-4. Apply approved mutations only through Zotero MCP, then re-read the write backend and pass the local synchronization barrier.
+4. Apply approved mutations through Zotero MCP by default. When the user has explicitly authorized the documented Zotero 10 loopback exception, promote only reviewed additions/relations into an `authorized-write` plan and use `zotero-writeback`; then re-read the write backend and pass the synchronization barrier.
 
 The planner never connects to Zotero and never mutates Zotero or wiki files. An omitted `doi` means unobserved; `doi: ""` means the Zotero DOI field was read and is missing. A `--manifest-out` target must stay under `temp/`; the emitted `mode: review-only` manifest is not an executable mutation script, and `remove_tags_review` / `relation_candidates_review` still require Agent and MCP review.
 
@@ -378,6 +381,30 @@ python scripts/agent-bridge.py zotero-refresh --collection-key A9VNJUPI \
 ```
 
 The refresh command reads Zotero only through the configured MCP server, uses Crossref/OpenAlex provider lookups, and stores its private freshness cache under ignored `var/`. It is dry-run by default. Before using `--apply-safe`, review the manifest; safe apply is limited to incremental `LLM-Wiki ...` Extra keys, `llm-wiki:*` status tags, and conservative DOI URL normalization. New DOI values, bibliographic identity changes, item-type migration, and preprint/published relations remain review-only.
+
+For collection ingest QA, keep a complete allocation ledger under ignored `temp/` and run:
+
+```bash
+python scripts/agent-bridge.py zotero-ingest-verify \
+  --snapshot temp/zotero-snapshot.yaml \
+  --allocation temp/zotero-allocation.yaml \
+  --report-out temp/zotero-ingest-report.yaml
+```
+
+The verifier checks snapshot/allocation counts, unique item keys and indices, omission reasons, non-omitted `sources_meta.zotero_item_key` coverage, duplicate provenance rows, YAML/frontmatter validity, page invariants, control characters, trailing whitespace, private path leakage, and advisory batch-template collapse.
+
+For an explicitly reviewed local write-back, copy only approved additions and Related pairs into a secret-free `mode: authorized-write` plan (see `docs/examples/zotero-write-plan.example.yaml`), then run audit, apply, and verify as separate phases:
+
+```bash
+python scripts/agent-bridge.py zotero-writeback --plan temp/zotero-write-plan.yaml \
+  --action audit --report-out temp/zotero-write-audit.yaml
+python scripts/agent-bridge.py zotero-writeback --plan temp/zotero-write-plan.yaml \
+  --action apply --memory-authorize --report-out temp/zotero-write-report.yaml
+python scripts/agent-bridge.py zotero-writeback --plan temp/zotero-write-plan.yaml \
+  --action verify --report-out temp/zotero-write-verify.yaml
+```
+
+This restricted path adds managed `llm-wiki:*` tags and ensures user-reviewed reciprocal Related pairs only. It preserves full existing tag objects, uses live server identity plus version guards, retries one HTTP 412 from fresh state, and requires GET-after-PATCH verification. It cannot remove tags, edit metadata, change collections, write notes, or touch Trash. With `--memory-authorize`, the API key is not serialized.
 
 ---
 
@@ -561,7 +588,7 @@ python -m src.llm_wiki --verbose link --source "X" --mode light
 
 ### Zotero-Linked Sources
 
-All Zotero source discovery, attachment access, private bindings, provenance fields, and write-back rules are defined in [`docs/ZOTERO_MCP_INTEGRATION.md`](docs/ZOTERO_MCP_INTEGRATION.md). Use only `54yyyu/zotero-mcp` for Zotero operations, except the temporary opt-in direct local write path (`zotero-refresh --write-backend local`) documented there.
+All Zotero source discovery, attachment access, private bindings, provenance fields, and write-back rules are defined in [`docs/ZOTERO_MCP_INTEGRATION.md`](docs/ZOTERO_MCP_INTEGRATION.md). Use only `54yyyu/zotero-mcp` for Zotero operations, except the temporary opt-in Zotero 10 loopback write paths (`zotero-refresh --write-backend local` and restricted `zotero-writeback`) documented there.
 
 ### Standard Network Fetch Template
 

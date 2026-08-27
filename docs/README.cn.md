@@ -168,6 +168,16 @@ python scripts/agent-bridge.py zotero-plan --snapshot temp/zotero-snapshot.yaml 
 python scripts/agent-bridge.py zotero-refresh --collection-key A9VNJUPI \
   --manifest-out temp/zotero-refresh.yaml
 
+# 校验 collection ingest 的 allocation、provenance 与页面不变量
+python scripts/agent-bridge.py zotero-ingest-verify \
+  --snapshot temp/zotero-snapshot.yaml \
+  --allocation temp/zotero-allocation.yaml \
+  --report-out temp/zotero-ingest-report.yaml
+
+# 审计显式授权的 managed-tag / Related-item 本地写计划
+python scripts/agent-bridge.py zotero-writeback --plan temp/zotero-write-plan.yaml \
+  --action audit --report-out temp/zotero-write-audit.yaml
+
 # 将多文件写入（页面 + index + log）作为事务原子应用；务必先 dry-run
 python scripts/agent-bridge.py apply-bundle temp/tx-bundle.yaml --dry-run
 python scripts/agent-bridge.py apply-bundle temp/tx-bundle.yaml
@@ -184,6 +194,10 @@ python scripts/agent-bridge.py hot
 `agent-bridge.py zotero-plan` 是 wiki provenance 与 Zotero MCP 之间的只读规划桥。它比较 MCP 生成的 YAML/JSON 快照与 `sources_meta`，报告 DOI/正式发表核验和 managed-tag 变更；所有 Zotero 写入仍须经过审核后的 MCP 工作流。使用 `--manifest-out` 时，只能在 `temp/` 下生成确定性的 `mode: review-only` YAML manifest；它不能直接执行，其中的 tag 删除或 relation 候选仍须审核后才能通过 Zotero MCP 写入。
 
 `agent-bridge.py zotero-refresh` 是借鉴 Zotero 插件 freshness 模式的一次性 enrichment worker：通过 `54yyyu/zotero-mcp` 读取 collection，以 Crossref 核验 DOI 和发现正式发表候选，以 OpenAlex 获取引用量及开放期刊指标，并只在忽略提交的 `var/` 下保存轻量 SQLite cache。默认 dry-run；`--apply-safe` 只会增量 upsert `LLM-Wiki ...` Extra、管理 `llm-wiki:*` 状态 tag，并规范空或冲突的 `doi.org` URL。新 DOI、item type 迁移和 preprint 合并仍为 review-only。 collection 首次全量 apply 仍可能耗时数分钟，因为 Zotero 写入保持串行、增量；实现会在全部写入后批量回读验证，后续运行通常会在 freshness 到期前收敛为 no-op。
+
+`agent-bridge.py zotero-ingest-verify` 会把经过核验的 MCP snapshot 与显式 allocation ledger（示例：`docs/examples/zotero-ingest-allocation.example.yaml`）对照。缺失或重复 allocation、无理由 omission、缺失 `sources_meta` 绑定、非法 frontmatter、页面不变量缺失、控制字符、行尾空白或机器私有绝对路径都会使校验失败；三页以上结构和深度近乎相同的 batch-template-collapse 只作为 advisory warning。
+
+`agent-bridge.py zotero-writeback` 是临时、显式授权的 Zotero 10 loopback 写入例外，用于当前 MCP 无法表达的已审核 addition。它只接受不含 secret 的 `mode: authorized-write` plan（示例：`docs/examples/zotero-write-plan.example.yaml`），将 `audit`、`apply`、`verify` 分阶段执行，只增量添加 `llm-wiki:*` tag 并确保经过审核的双向 Related pair。实现会保留已有 tag object，在版本冲突时基于最新 GET 最多重试一次，并对每个 PATCH 做回读验证。metadata、collection membership、note、tag 删除和 Trash 都不在授权范围内；`--memory-authorize` 使 key 只保存在当前进程内存。
 
 #### 内容深度 lint 告警
 

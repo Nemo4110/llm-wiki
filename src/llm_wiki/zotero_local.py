@@ -1,25 +1,20 @@
-"""Temporary direct writer for the Zotero 10 local API.
+"""Restricted Zotero 10 local-API writer with verified mutations.
 
-TEMPORARY boundary relaxation (see docs/ZOTERO_MCP_INTEGRATION.md): writes may go
-directly to the Zotero 10 local HTTP API; reads still go through zotero-mcp.
-Remove this once zotero-mcp adopts local writes.
-
-Local write handshake (Zotero 10+):
-  - every write needs a ``Zotero-Server-ID`` header, read live from ``GET /api/``;
-  - writes need a per-app key from ``POST /api/local/authorize`` (the user approves
-    a dialog in Zotero Desktop; "Always Allow" makes the key reusable);
-  - each PATCH is guarded by ``If-Unmodified-Since-Version`` (optimistic concurrency).
-
-The reusable key is loaded from a gitignored store under ``var/`` and is never
-logged or printed.
+Reads remain MCP-backed for normal collection workflows. This module is the
+explicitly authorized temporary write path documented in the Zotero integration
+protocol. It only talks to loopback, discovers the live Zotero server ID, guards
+writes by item version, retries one 412 conflict, and verifies every accepted
+PATCH with a fresh GET.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 from urllib.parse import urlparse
 
 import httpx
@@ -31,37 +26,141 @@ LOG = get_logger("zotero_local")
 DEFAULT_BASE_URL = "http://127.0.0.1:23119"
 DEFAULT_USER_PREFIX = "users/0"
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+_ITEM_KEY_RE = re.compile(r"^[A-Z0-9]{8}$")
+_MAX_WRITE_TIMEOUT = 60.0
+_MAX_AUTH_TIMEOUT = 300.0
+_RELATION_PREDICATE = "dc:relation"
 
 
 class LocalWriteError(RuntimeError):
-    """Raised when a local Zotero write cannot be completed."""
+    """Raised when a local Zotero write cannot be completed or verified."""
+
+
+@dataclass(frozen=True)
+class LocalItem:
+    """One local API item response with the real Zotero library identity."""
+
+    key: str
+    version: int
+    data: Dict[str, Any]
+    library_type: str = ""
+    library_id: str = ""
+
+    @property
+    def uri(self) -> str:
+        if not self.library_id or self.library_type not in {"user", "group"}:
+            raise LocalWriteError(
+                f"item {self.key} returned no usable library identity; cannot build a relation URI"
+            )
+        segment = "users" if self.library_type == "user" else "groups"
+        return f"http://zotero.org/{segment}/{self.library_id}/items/{self.key}"
+
+
+@dataclass(frozen=True)
+class LocalMutationResult:
+    """Verified result of one safe item mutation."""
+
+    item_key: str
+    status: str
+    attempts: int
+    changed_fields: Tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class RelationAudit:
+    """Observed state of a reviewed reciprocal Related-item pair."""
+
+    source_key: str
+    target_key: str
+    source_has_target: bool
+    target_has_source: bool
+
+    @property
+    def reciprocal(self) -> bool:
+        return self.source_has_target and self.target_has_source
+
+
+@dataclass(frozen=True)
+class RelationWriteResult:
+    """Verified result of ensuring one reciprocal Related-item pair."""
+
+    source_key: str
+    target_key: str
+    changed_items: Tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class _MutationExpectation:
+    baseline_tags: Tuple[Dict[str, Any], ...]
+    add_tags: frozenset[str]
+    remove_tags: frozenset[str]
+    extra_keys: Mapping[str, str]
+    fields: Mapping[str, Any]
 
 
 def _validate_loopback(base_url: str) -> None:
-    """The reusable key grants unscoped local-library write; only send it to loopback."""
-    host = (urlparse(base_url).hostname or "").strip().lower()
-    if host not in _LOOPBACK_HOSTS:
-        raise LocalWriteError(f"local write base_url must be a loopback host, got {base_url!r}")
+    """The local key is unscoped, so it must never leave loopback HTTP."""
+    parsed = urlparse(base_url)
+    host = (parsed.hostname or "").strip().lower()
+    if parsed.scheme != "http" or host not in _LOOPBACK_HOSTS:
+        raise LocalWriteError(f"local write base_url must use loopback HTTP, got {base_url!r}")
+
+
+def _validate_timeout(timeout: float, maximum: float) -> float:
+    value = float(timeout)
+    if value <= 0 or value > maximum:
+        raise LocalWriteError(f"timeout must be > 0 and <= {maximum:g} seconds")
+    return value
+
+
+def _validate_item_key(item_key: str) -> str:
+    key = str(item_key or "").strip().upper()
+    if not _ITEM_KEY_RE.fullmatch(key):
+        raise LocalWriteError("Zotero item key must be exactly 8 ASCII letters/digits")
+    return key
+
+
+def _tag_name(raw: Any) -> str:
+    return str(raw.get("tag") if isinstance(raw, Mapping) else raw).strip()
+
+
+def _tag_objects(raw_tags: Any) -> List[Dict[str, Any]]:
+    """Normalize tags while retaining every metadata field on existing objects."""
+    tags: List[Dict[str, Any]] = []
+    for raw in raw_tags or []:
+        name = _tag_name(raw)
+        if not name:
+            continue
+        if isinstance(raw, Mapping):
+            obj = dict(raw)
+            obj["tag"] = name
+        else:
+            obj = {"tag": name}
+        tags.append(obj)
+    return tags
 
 
 def _tag_names(raw_tags: Any) -> List[str]:
-    names: List[str] = []
-    for raw in raw_tags or []:
-        name = str(raw.get("tag") if isinstance(raw, Mapping) else raw).strip()
-        if name:
-            names.append(name)
-    return names
+    return [_tag_name(raw) for raw in raw_tags or [] if _tag_name(raw)]
+
+
+def _merge_tag_objects(
+    raw_tags: Any,
+    add_tags: Sequence[str],
+    remove_tags: Sequence[str],
+) -> List[Dict[str, Any]]:
+    remove = {str(tag).strip() for tag in remove_tags if str(tag).strip()}
+    merged = [tag for tag in _tag_objects(raw_tags) if tag["tag"] not in remove]
+    names = {tag["tag"] for tag in merged}
+    for name in sorted({str(tag).strip() for tag in add_tags if str(tag).strip()}):
+        if name not in names:
+            merged.append({"tag": name})
+            names.add(name)
+    return merged
 
 
 def _upsert_extra_lines(extra: str, set_keys: Mapping[str, str]) -> str:
-    """Upsert ``Key: Value`` lines into a Zotero ``extra`` field, preserving other lines.
-
-    Produces lines parseable by ``zotero_refresh.parse_extra_keys`` (the verifier's
-    view): an existing line whose key matches is replaced, a new key is appended,
-    unrelated lines are kept verbatim and in order, and a pre-existing duplicate
-    line for a managed key is dropped so the verifier (which reads the last
-    occurrence) sees the freshly written value.
-    """
+    """Upsert managed Key: Value lines while preserving unrelated lines."""
     remaining = dict(set_keys)
     out: List[str] = []
     for line in str(extra or "").splitlines():
@@ -70,7 +169,6 @@ def _upsert_extra_lines(extra: str, set_keys: Mapping[str, str]) -> str:
             if key in set_keys:
                 if key in remaining:
                     out.append(f"{key}: {remaining.pop(key)}")
-                # a second line for an already-upserted key is a stale duplicate: drop it
                 continue
         out.append(line)
     for key, value in remaining.items():
@@ -78,16 +176,39 @@ def _upsert_extra_lines(extra: str, set_keys: Mapping[str, str]) -> str:
     return "\n".join(out)
 
 
-class LocalZoteroWriter:
-    """Minimal async writer for the Zotero 10 local API.
+def _extra_keys(extra: str) -> Dict[str, str]:
+    parsed: Dict[str, str] = {}
+    for line in str(extra or "").splitlines():
+        if ":" in line:
+            key, value = line.split(":", 1)
+            parsed[key.strip()] = value.strip()
+    return parsed
 
-    ``http`` is an optional injected ``httpx.AsyncClient`` (used by tests with a
-    MockTransport); when omitted the writer creates and owns one.
-    """
+
+def _relation_values(relations: Any, predicate: str = _RELATION_PREDICATE) -> List[str]:
+    if not isinstance(relations, Mapping):
+        return []
+    raw = relations.get(predicate) or []
+    if isinstance(raw, str):
+        raw = [raw]
+    return [str(value).strip() for value in raw if str(value).strip()]
+
+
+def _relations_with_uri(relations: Any, uri: str) -> Dict[str, Any]:
+    out = dict(relations) if isinstance(relations, Mapping) else {}
+    values = _relation_values(out)
+    if uri not in values:
+        values.append(uri)
+    out[_RELATION_PREDICATE] = values
+    return out
+
+
+class LocalZoteroWriter:
+    """Async loopback writer for incremental, verified Zotero mutations."""
 
     def __init__(
         self,
-        api_key: str,
+        api_key: str = "",
         *,
         base_url: str = DEFAULT_BASE_URL,
         user_prefix: str = DEFAULT_USER_PREFIX,
@@ -95,10 +216,10 @@ class LocalZoteroWriter:
         http: Optional[httpx.AsyncClient] = None,
     ) -> None:
         _validate_loopback(base_url)
-        self._api_key = api_key
+        self._api_key = str(api_key or "")
         self._base_url = base_url.rstrip("/")
         self._prefix = user_prefix.strip("/")
-        self._timeout = timeout
+        self._timeout = _validate_timeout(timeout, _MAX_WRITE_TIMEOUT)
         self._http = http
         self._owns_http = http is None
         self._server_id_cache: Optional[str] = None
@@ -113,42 +234,144 @@ class LocalZoteroWriter:
             await self._http.aclose()
             self._http = None
 
-    async def _server_id(self) -> str:
+    async def _server_id(self, *, refresh: bool = False) -> str:
+        if refresh:
+            self._server_id_cache = None
         if self._server_id_cache is None:
             client = await self._client()
-            resp = await client.get(f"{self._base_url}/api/")
-            resp.raise_for_status()
+            try:
+                resp = await client.get(f"{self._base_url}/api/")
+            except httpx.HTTPError as exc:
+                raise LocalWriteError("cannot reach the Zotero loopback API") from exc
+            if resp.status_code != 200:
+                raise LocalWriteError(f"local API discovery -> HTTP {resp.status_code}")
             server_id = resp.headers.get("Zotero-Server-ID")
             if not server_id:
                 raise LocalWriteError("local API did not return a Zotero-Server-ID header")
             self._server_id_cache = server_id
         return self._server_id_cache
 
-    async def _get_item(self, item_key: str) -> Tuple[int, Dict[str, Any]]:
+    async def get_item(self, item_key: str) -> LocalItem:
+        key = _validate_item_key(item_key)
         client = await self._client()
-        resp = await client.get(f"{self._base_url}/api/{self._prefix}/items/{item_key}")
+        try:
+            resp = await client.get(f"{self._base_url}/api/{self._prefix}/items/{key}")
+        except httpx.HTTPError as exc:
+            raise LocalWriteError(f"GET item {key} failed") from exc
         if resp.status_code != 200:
-            raise LocalWriteError(f"GET item {item_key} -> HTTP {resp.status_code}")
-        payload = resp.json()
-        return payload.get("version"), payload.get("data") or {}
-
-    async def _patch_item(self, item_key: str, patch: Mapping[str, Any], version: int) -> None:
-        if version is None:
-            raise LocalWriteError(f"item {item_key} returned no version; cannot set If-Unmodified-Since-Version")
-        client = await self._client()
-        server_id = await self._server_id()
-        resp = await client.patch(
-            f"{self._base_url}/api/{self._prefix}/items/{item_key}",
-            json=dict(patch),
-            headers={
-                "Zotero-Server-ID": server_id,
-                "Zotero-API-Key": self._api_key,
-                "If-Unmodified-Since-Version": str(version),
-                "Content-Type": "application/json",
-            },
+            raise LocalWriteError(f"GET item {key} -> HTTP {resp.status_code}")
+        try:
+            payload = resp.json() or {}
+        except ValueError as exc:
+            raise LocalWriteError(f"GET item {key} returned invalid JSON") from exc
+        data = dict(payload.get("data") or {})
+        version = payload.get("version", data.get("version"))
+        if not isinstance(version, int):
+            raise LocalWriteError(f"item {key} returned no integer version")
+        library = payload.get("library") or {}
+        return LocalItem(
+            key=key,
+            version=version,
+            data=data,
+            library_type=str(library.get("type") or "").strip(),
+            library_id=str(library.get("id") or "").strip(),
         )
+
+    async def _get_item(self, item_key: str) -> Tuple[int, Dict[str, Any]]:
+        item = await self.get_item(item_key)
+        return item.version, item.data
+
+    async def _patch_item_once(
+        self,
+        item_key: str,
+        patch: Mapping[str, Any],
+        version: int,
+    ) -> bool:
+        if not self._api_key:
+            raise LocalWriteError("local write authorization is required before PATCH")
+        client = await self._client()
+        server_id = await self._server_id(refresh=True)
+        try:
+            resp = await client.patch(
+                f"{self._base_url}/api/{self._prefix}/items/{item_key}",
+                json=dict(patch),
+                headers={
+                    "Zotero-Server-ID": server_id,
+                    "Zotero-API-Key": self._api_key,
+                    "If-Unmodified-Since-Version": str(version),
+                    "Content-Type": "application/json",
+                },
+            )
+        except httpx.HTTPError as exc:
+            raise LocalWriteError(f"PATCH item {item_key} failed") from exc
+        if resp.status_code == 412:
+            return False
         if resp.status_code >= 400:
-            raise LocalWriteError(f"PATCH item {item_key} -> HTTP {resp.status_code}: {resp.text[:200]}")
+            raise LocalWriteError(f"PATCH item {item_key} -> HTTP {resp.status_code}")
+        return True
+
+    @staticmethod
+    def _build_mutation(
+        data: Mapping[str, Any],
+        *,
+        set_keys: Mapping[str, str],
+        add_tags: Sequence[str],
+        remove_tags: Sequence[str],
+        fields: Mapping[str, Any],
+    ) -> tuple[Dict[str, Any], _MutationExpectation]:
+        patch: Dict[str, Any] = {}
+        baseline_tags = tuple(_tag_objects(data.get("tags")))
+        current_names = set(_tag_names(data.get("tags")))
+        add = frozenset(add_tags)
+        remove = frozenset(remove_tags)
+        if (add - current_names) or (remove & current_names):
+            patch["tags"] = _merge_tag_objects(data.get("tags"), add, remove)
+
+        current_extra = str(data.get("extra") or "")
+        updated_extra = _upsert_extra_lines(current_extra, set_keys)
+        if set_keys and updated_extra != current_extra:
+            patch["extra"] = updated_extra
+
+        changed_fields: Dict[str, Any] = {}
+        for key, value in fields.items():
+            if data.get(key) != value:
+                patch[key] = value
+                changed_fields[key] = value
+
+        expectation = _MutationExpectation(
+            baseline_tags=baseline_tags,
+            add_tags=add,
+            remove_tags=remove,
+            extra_keys=dict(set_keys),
+            fields=changed_fields,
+        )
+        return patch, expectation
+
+    @staticmethod
+    def _verify_mutation(item: LocalItem, expectation: _MutationExpectation) -> None:
+        current_objects = _tag_objects(item.data.get("tags"))
+        current_names = {tag["tag"] for tag in current_objects}
+        if expectation.add_tags - current_names or expectation.remove_tags & current_names:
+            raise LocalWriteError(
+                f"verification failed for item {item.key}: tag delta did not persist"
+            )
+        for old in expectation.baseline_tags:
+            if old["tag"] not in expectation.remove_tags and old not in current_objects:
+                raise LocalWriteError(
+                    f"verification failed for item {item.key}: existing tag metadata changed"
+                )
+
+        parsed_extra = _extra_keys(str(item.data.get("extra") or ""))
+        for key, value in expectation.extra_keys.items():
+            if parsed_extra.get(key) != value:
+                raise LocalWriteError(
+                    f"verification failed for item {item.key}: Extra key {key!r} did not persist"
+                )
+        for key, value in expectation.fields.items():
+            if item.data.get(key) != value:
+                raise LocalWriteError(
+                    f"verification failed for item {item.key}: field {key!r} did not persist"
+                )
 
     async def write_safe_mutation(
         self,
@@ -158,90 +381,201 @@ class LocalZoteroWriter:
         add_tags=(),
         remove_tags=(),
         fields: Optional[Mapping[str, Any]] = None,
-    ) -> None:
-        """Apply one item's safe mutation via the local API (mirrors the MCP writer).
+    ) -> LocalMutationResult:
+        """GET, delta, versioned PATCH, GET, and exact verification.
 
-        One PATCH carries tags + extra + field updates together so the change is
-        atomic and the run_live_refresh verify loop sees a single consistent state.
+        A single 412 conflict is retried from a fresh GET so concurrent unrelated
+        tag and Extra updates are retained. No further retry is attempted.
         """
-        normalized_keys = {str(k): str(v) for k, v in (set_keys or {}).items() if v is not None}
-        add = sorted({str(t) for t in add_tags if str(t).strip()})
-        remove = {str(t) for t in remove_tags if str(t).strip()}
-        field_updates = {str(k): v for k, v in (fields or {}).items()}
+        key = _validate_item_key(item_key)
+        normalized_keys = {
+            str(name): str(value)
+            for name, value in (set_keys or {}).items()
+            if value is not None
+        }
+        add = tuple(sorted({str(tag).strip() for tag in add_tags if str(tag).strip()}))
+        remove = tuple(sorted({str(tag).strip() for tag in remove_tags if str(tag).strip()}))
+        field_updates = {str(name): value for name, value in (fields or {}).items()}
         if not (normalized_keys or add or remove or field_updates):
-            return
+            return LocalMutationResult(key, "skipped_current", 0)
 
-        version, data = await self._get_item(item_key)
-        patch: Dict[str, Any] = {}
-        if add or remove:
-            current = _tag_names(data.get("tags"))
-            merged = [name for name in current if name not in remove]
-            for name in add:
-                if name not in merged:
-                    merged.append(name)
-            patch["tags"] = [{"tag": name} for name in merged]
-        if normalized_keys:
-            patch["extra"] = _upsert_extra_lines(str(data.get("extra") or ""), normalized_keys)
-        for key, value in field_updates.items():
-            patch[key] = value
+        for attempt in (1, 2):
+            before = await self.get_item(key)
+            patch, expectation = self._build_mutation(
+                before.data,
+                set_keys=normalized_keys,
+                add_tags=add,
+                remove_tags=remove,
+                fields=field_updates,
+            )
+            if not patch:
+                return LocalMutationResult(key, "skipped_current", attempt - 1)
 
-        LOG.info(
-            "local write %s: tags +%d -%d, set_keys=%d, fields=%s",
-            item_key, len(add), len(remove), len(normalized_keys), sorted(field_updates),
+            LOG.info(
+                "local write %s: tags +%d -%d, set_keys=%d, fields=%s",
+                key,
+                len(add),
+                len(remove),
+                len(normalized_keys),
+                sorted(field_updates),
+            )
+            accepted = await self._patch_item_once(key, patch, before.version)
+            if not accepted:
+                if attempt == 1:
+                    LOG.warning("local write %s hit a version conflict; retrying once", key)
+                    continue
+                raise LocalWriteError(
+                    f"PATCH item {key} conflicted twice; no further retry attempted"
+                )
+
+            after = await self.get_item(key)
+            self._verify_mutation(after, expectation)
+            return LocalMutationResult(
+                key,
+                "updated_verified",
+                attempt,
+                tuple(sorted(patch)),
+            )
+
+        raise LocalWriteError(f"PATCH item {key} did not complete")
+
+    async def audit_relation_pair(self, source_key: str, target_key: str) -> RelationAudit:
+        source = await self.get_item(source_key)
+        target = await self.get_item(target_key)
+        if source.key == target.key:
+            raise LocalWriteError("a Zotero item cannot be related to itself")
+        if (
+            source.library_type != target.library_type
+            or source.library_id != target.library_id
+            or not source.library_id
+        ):
+            raise LocalWriteError("reviewed Related items must belong to the same real Zotero library")
+        return RelationAudit(
+            source_key=source.key,
+            target_key=target.key,
+            source_has_target=target.uri in _relation_values(source.data.get("relations")),
+            target_has_source=source.uri in _relation_values(target.data.get("relations")),
         )
-        await self._patch_item(item_key, patch, version)
+
+    async def _ensure_relation_direction(self, item_key: str, related_uri: str) -> bool:
+        for attempt in (1, 2):
+            item = await self.get_item(item_key)
+            if related_uri in _relation_values(item.data.get("relations")):
+                return False
+            patch = {"relations": _relations_with_uri(item.data.get("relations"), related_uri)}
+            accepted = await self._patch_item_once(item.key, patch, item.version)
+            if not accepted:
+                if attempt == 1:
+                    continue
+                raise LocalWriteError(
+                    f"PATCH item {item.key} relation conflicted twice; no further retry attempted"
+                )
+            verified = await self.get_item(item.key)
+            if related_uri not in _relation_values(verified.data.get("relations")):
+                raise LocalWriteError(
+                    f"verification failed for item {item.key}: Related-item direction did not persist"
+                )
+            return True
+        return False
+
+    async def ensure_relation_pair(
+        self,
+        source_key: str,
+        target_key: str,
+    ) -> RelationWriteResult:
+        """Ensure a user-reviewed reciprocal Related-item pair, without removals."""
+        source = await self.get_item(source_key)
+        target = await self.get_item(target_key)
+        if source.key == target.key:
+            raise LocalWriteError("a Zotero item cannot be related to itself")
+        if (
+            source.library_type != target.library_type
+            or source.library_id != target.library_id
+            or not source.library_id
+        ):
+            raise LocalWriteError("reviewed Related items must belong to the same real Zotero library")
+
+        changed: List[str] = []
+        if target.uri not in _relation_values(source.data.get("relations")):
+            if await self._ensure_relation_direction(source.key, target.uri):
+                changed.append(source.key)
+        if source.uri not in _relation_values(target.data.get("relations")):
+            if await self._ensure_relation_direction(target.key, source.uri):
+                changed.append(target.key)
+
+        audit = await self.audit_relation_pair(source.key, target.key)
+        if not audit.reciprocal:
+            raise LocalWriteError(
+                f"verification failed for Related-item pair {source.key}/{target.key}"
+            )
+        return RelationWriteResult(source.key, target.key, tuple(changed))
 
     @classmethod
     def from_store(cls, store_path, **kwargs) -> "LocalZoteroWriter":
-        """Build a writer from the reusable key saved by ``authorize_local``."""
         return cls(load_local_key(store_path), **kwargs)
 
 
 async def authorize_local(
     app_name: str,
-    store_path,
+    store_path=None,
     *,
     base_url: str = DEFAULT_BASE_URL,
     timeout: float = 180.0,
     http: Optional[httpx.AsyncClient] = None,
 ) -> str:
-    """Obtain a reusable local write key and store it (mode 0600) at ``store_path``.
+    """Request a Zotero local key, optionally persisting it under private var.
 
-    Triggers an approval dialog in Zotero Desktop; choose "Always Allow" for a
-    reusable key. The key is written to the gitignored store and returned, never
-    logged. ``http`` is injectable for tests.
+    Passing store_path=None keeps the key only in the current process. The key
+    is returned to the caller but is never logged or included in errors.
     """
     base = base_url.rstrip("/")
     _validate_loopback(base)
-    client = http if http is not None else httpx.AsyncClient(timeout=httpx.Timeout(timeout))
+    bounded_timeout = _validate_timeout(timeout, _MAX_AUTH_TIMEOUT)
+    app = str(app_name or "").strip()
+    if not app or len(app) > 100:
+        raise LocalWriteError("authorization app name must contain 1-100 characters")
+    client = http if http is not None else httpx.AsyncClient(timeout=httpx.Timeout(bounded_timeout))
     try:
-        resp = await client.get(f"{base}/api/")
-        resp.raise_for_status()
+        try:
+            resp = await client.get(f"{base}/api/")
+        except httpx.HTTPError as exc:
+            raise LocalWriteError("cannot reach the Zotero loopback API") from exc
+        if resp.status_code != 200:
+            raise LocalWriteError(f"local API discovery -> HTTP {resp.status_code}")
         server_id = resp.headers.get("Zotero-Server-ID")
         if not server_id:
             raise LocalWriteError("local API did not return a Zotero-Server-ID header")
 
-        resp = await client.post(
-            f"{base}/api/local/authorize",
-            json={"appName": app_name},
-            headers={"Zotero-Server-ID": server_id, "Content-Type": "application/json"},
-        )
-        if resp.status_code >= 400:
-            raise LocalWriteError(f"authorize -> HTTP {resp.status_code}: {resp.text[:200]}")
-        key = str((resp.json() or {}).get("key") or "")
-        if not key:
-            raise LocalWriteError("authorization returned no key (user may have denied the dialog)")
-
-        store_path = Path(store_path)
-        store_path.parent.mkdir(parents=True, exist_ok=True)
-        # create with 0600 from the start so the key never sits world-readable
-        fd = os.open(store_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         try:
-            os.write(fd, (json.dumps({"app_name": app_name, "key": key}, indent=2) + "\n").encode("utf-8"))
-        finally:
-            os.close(fd)
-        os.chmod(store_path, 0o600)  # tighten a pre-existing looser file too
-        LOG.info("stored local write key at %s", store_path)
+            resp = await client.post(
+                f"{base}/api/local/authorize",
+                json={"appName": app},
+                headers={"Zotero-Server-ID": server_id, "Content-Type": "application/json"},
+            )
+        except httpx.HTTPError as exc:
+            raise LocalWriteError("local authorization request failed") from exc
+        if resp.status_code >= 400:
+            raise LocalWriteError(f"authorize -> HTTP {resp.status_code}")
+        try:
+            key = str((resp.json() or {}).get("key") or "")
+        except ValueError as exc:
+            raise LocalWriteError("authorization returned invalid JSON") from exc
+        if not key:
+            raise LocalWriteError("authorization returned no key (the dialog may have been denied)")
+
+        if store_path is not None:
+            private_path = Path(store_path)
+            private_path.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(private_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            try:
+                payload = json.dumps({"app_name": app, "key": key}, indent=2) + "\n"
+                os.write(fd, payload.encode("utf-8"))
+            finally:
+                os.close(fd)
+            os.chmod(private_path, 0o600)
+            LOG.info("stored local write authorization in private var state")
+        else:
+            LOG.info("obtained process-memory-only local write authorization")
         return key
     finally:
         if http is None:
@@ -249,15 +583,20 @@ async def authorize_local(
 
 
 def load_local_key(store_path) -> str:
-    """Read the reusable local write key from the gitignored store."""
-    store_path = Path(store_path)
+    """Read a reusable local key from the gitignored private store."""
+    private_path = Path(store_path)
     try:
-        data = json.loads(store_path.read_text(encoding="utf-8"))
+        data = json.loads(private_path.read_text(encoding="utf-8"))
     except FileNotFoundError as exc:
         raise LocalWriteError(
-            f"no local write key at {store_path}; run `agent-bridge.py zotero-local-auth` first"
+            "no stored local write key; run agent-bridge.py zotero-local-auth first "
+            "or use process-memory authorization"
         ) from exc
+    except (OSError, ValueError, TypeError) as exc:
+        raise LocalWriteError("stored local write authorization is unreadable") from exc
     key = str(data.get("key") or "")
     if not key:
-        raise LocalWriteError(f"no key stored in {store_path}; run `agent-bridge.py zotero-local-auth` first")
+        raise LocalWriteError(
+            "stored local write authorization contains no key; authorize again"
+        )
     return key

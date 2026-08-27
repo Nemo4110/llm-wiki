@@ -21,7 +21,7 @@ Reviewed 2026-08-26. Zotero 10 (desktop, released 2026-08-17) is mostly a UX rel
 - Zotero 10 added **Local API write support** at the desktop level.
 - The integrated zotero-mcp (≤ v0.11.0) **still routes its own writes through the Zotero Web API**; local mode remains **read-only for writes** ("fast local reads, web API writes"). This is unchanged.
 - Consequence for the MCP path: `metadata_write_backend = local` is **not reachable through zotero-mcp** today; the MCP metadata write gate and the hybrid-mode warning below still stand for anything written via zotero-mcp.
-- **Temporary opt-in exception:** llm-wiki now offers a direct local write path that bypasses zotero-mcp for writes only (reads still go through MCP). One-time `agent-bridge.py zotero-local-auth` stores a reusable key under gitignored `var/zotero-local.json`; then `agent-bridge.py zotero-refresh --apply-safe --write-backend local` writes via the local API. See "Temporary Direct Local Writes" below. **Remove this exception once zotero-mcp adopts local writes.**
+- **Temporary opt-in exception:** llm-wiki now offers a direct local write path that bypasses zotero-mcp only for the exact authorized targets. Collection discovery, snapshots, sources, and bibliographic reads still go through MCP; direct local GETs are permitted only as precondition and post-write verification barriers for those targets. One-time `agent-bridge.py zotero-local-auth` stores a reusable key under gitignored `var/zotero-local.json`; then either `zotero-refresh --apply-safe --write-backend local` or the restricted reviewed `zotero-writeback` workflow writes via the local API. `zotero-writeback --memory-authorize` can instead keep a one-run key only in process memory. See "Temporary Direct Local Writes" below. **Remove this exception once zotero-mcp adopts local writes.**
 - To detect upstream adoption: after any zotero-mcp upgrade, confirm which backend a write actually lands on (the sentinel-tag probe in the Backend Consistency Gate) before treating the MCP `local` route as a write backend.
 - **Empirically verified 2026-08-27** (zotero-mcp v0.11.0 against Zotero 10, hybrid config): in pure-local mode (no `ZOTERO_API_KEY` in the server process env) a `zotero_batch_update` write returned success yet did **not** change local state — it was routed to the Web backend. Two corollaries were observed: (1) zotero-mcp also loads Web credentials from the `client_env` block of `~/.config/zotero-mcp/config.json` when the process environment does not provide them, so "no key in the client env" does **not** guarantee a write stays local or fails; (2) a write returning success is **not** evidence that local state changed — always re-read the intended backend to confirm where a write landed.
 
@@ -69,7 +69,7 @@ This runs the Zotero 10 local-write handshake: read `Zotero-Server-ID` from `GET
 
 ## Required Tool Boundary
 
-All Zotero operations performed by this skill **MUST go through the MCP tools exposed by [`54yyyu/zotero-mcp`](https://github.com/54yyyu/zotero-mcp)**.
+All Zotero discovery, reads, source access, metadata identity work, semantic-index maintenance, and normal writes performed by this skill **MUST go through the MCP tools exposed by [`54yyyu/zotero-mcp`](https://github.com/54yyyu/zotero-mcp)**. Direct local writes are permitted only by the narrowly defined temporary exception below.
 
 Agents must not substitute:
 
@@ -81,7 +81,7 @@ Agents must not substitute:
 
 The `zotero-mcp` CLI may be used for installation, upgrades, setup, and diagnostics. Zotero library reads, writes, and semantic-index maintenance should use the connected MCP tool surface. Use a CLI maintenance command only when the required MCP maintenance tool is unavailable and the user has approved that fallback. Installing, updating, or reconfiguring `zotero-mcp` requires user confirmation under the normal dependency and external-service rules.
 
-**Temporary exception:** direct writes to the Zotero 10 *local* API are permitted only through the reviewed `zotero-refresh --write-backend local` path described in "Temporary Direct Local Writes" above. All other operations — and all reads — still go through zotero-mcp.
+**Temporary exception:** direct writes to the Zotero 10 *local* API are permitted only through the reviewed `zotero-refresh --write-backend local` path or the restricted `zotero-writeback` authorized-plan path described in this document. All discovery, source access, collection reads, and bibliographic identity work still go through zotero-mcp.
 
 ## Compatibility and Capability Gate
 
@@ -268,7 +268,7 @@ For deterministic local planning, Agents may export a minimal, verified MCP snap
   --manifest-out temp/zotero-mutation-manifest.yaml
 ```
 
-`zotero-plan` is read-only. It does not connect to Zotero or external metadata providers and does not modify wiki files. It compares the snapshot with wiki `sources_meta`, reports desired llm-wiki-managed tags, collection-equivalent tag removal candidates, DOI audit state, and preprint publication checks. The Agent must still use Zotero MCP for every read/write and must review the plan before mutation. When `--manifest-out` is provided, the resolved path must remain under the project `temp/` directory. The generated YAML declares `mode: review-only`; it is not an executable mutation script, and `remove_tags_review` or `relation_candidates_review` entries still require explicit Agent review and incremental MCP write-back verification.
+`zotero-plan` is read-only. It does not connect to Zotero or external metadata providers and does not modify wiki files. It compares the snapshot with wiki `sources_meta`, reports desired llm-wiki-managed tags, collection-equivalent tag removal candidates, DOI audit state, and preprint publication checks. Zotero MCP remains the default read/write route. When `--manifest-out` is provided, the resolved path must remain under the project `temp/` directory. The generated YAML declares `mode: review-only`; it is not executable. `remove_tags_review`, metadata changes, and relation candidates still require explicit Agent/user review. Only approved managed-tag additions and reviewed relation pairs may be copied into the separate restricted `mode: authorized-write` schema described below.
 
 ## One-Shot Metadata Refresh
 
@@ -289,6 +289,57 @@ The default is dry-run. After reviewing the manifest, `--apply-safe` may only:
 - re-read every modified item and fail if the expected Extra keys, tags, or fields are not present.
 
 It must not automatically add a newly discovered DOI, overwrite creators/title/venue/date, migrate item type, merge a preprint, modify attachments/notes/collections/citation keys, or write Zotero Related links. These remain in `metadata_review` until an Agent and user approve the bibliographic identity change. Cache paths must remain below project `var/`; manifests must remain below project `temp/`.
+
+## Restricted Zotero 10 Local Write-Back (Temporary Exception)
+
+Use this path only after the user explicitly authorizes local Zotero writes and the Agent has reviewed every target. Discovery, collection snapshots, source reads, attachments, and bibliographic identity checks still go through `54yyyu/zotero-mcp`; the exception is limited to loopback PATCH operations that the connected MCP cannot currently express.
+
+1. Copy only approved managed-tag additions and reviewed Related pairs into a secret-free plan based on [`docs/examples/zotero-write-plan.example.yaml`](examples/zotero-write-plan.example.yaml).
+2. Keep the real plan and all reports under ignored `temp/`.
+3. Run audit first:
+
+```bash
+<PY> scripts/agent-bridge.py zotero-writeback --plan temp/zotero-write-plan.yaml \
+  --action audit --report-out temp/zotero-write-audit.yaml
+```
+
+4. Apply with either the reusable private `var/zotero-local.json` authorization or a process-memory-only key:
+
+```bash
+<PY> scripts/agent-bridge.py zotero-writeback --plan temp/zotero-write-plan.yaml \
+  --action apply --memory-authorize --report-out temp/zotero-write-report.yaml
+```
+
+5. Run a separate final verify phase after any synchronization or user edit that may invalidate earlier observations:
+
+```bash
+<PY> scripts/agent-bridge.py zotero-writeback --plan temp/zotero-write-plan.yaml \
+  --action verify --report-out temp/zotero-write-verify.yaml
+```
+
+The executable schema is fail-closed:
+
+- `mode` must be `authorized-write`; review-only manifests are rejected.
+- credential-like fields are rejected; API keys never belong in plans or reports.
+- every desired tag must start with `llm-wiki:`.
+- existing tag objects, including automatic/manual tag metadata, are preserved.
+- tag replacement/removal, metadata edits, collection changes, notes, attachments, citation keys, and Trash are forbidden.
+- relation targets must be present in the plan and are added only as reviewed reciprocal `dc:relation` pairs.
+- writes use the live `Zotero-Server-ID`, `If-Unmodified-Since-Version`, one bounded retry after HTTP 412, and a mandatory GET-after-PATCH verification barrier.
+- reports classify items as `updated_verified`, `skipped_current`, or `failed`; partial failures remain visible and are never silently broadened.
+
+## Collection Ingest Verification
+
+For a batch ingest, create a complete allocation ledger based on [`docs/examples/zotero-ingest-allocation.example.yaml`](examples/zotero-ingest-allocation.example.yaml), then run:
+
+```bash
+<PY> scripts/agent-bridge.py zotero-ingest-verify \
+  --snapshot temp/zotero-snapshot.yaml \
+  --allocation temp/zotero-allocation.yaml \
+  --report-out temp/zotero-ingest-report.yaml
+```
+
+The verifier requires exact snapshot/allocation count and item-key coverage, unique 1-based item indices, a concrete reason for every omission, and at least one page for every non-omitted item. Each allocated page must exist and bind the item exactly once in `sources_meta.zotero_item_key`. It also checks UTF-8/YAML/frontmatter readability, duplicate provenance rows, H1/definition/knowledge/Related Pages/Sources/Changelog invariants, control characters, trailing whitespace, and machine-specific private paths. Three or more pages with identical headings and near-identical knowledge depth produce a template-collapse warning for Agent review, not an automatic failure.
 
 ## Read Workflows
 
@@ -516,7 +567,7 @@ Zotero writes are opt-in, minimal, and idempotent where the exposed tools suppor
 7. Re-read from the write backend after every mutation. A tool response such as "items updated" is not sufficient verification.
 8. Create Zotero child notes only as index cards: wiki page path, short summary, sync hash/time, and reviewed relationship notes. Do not mirror complete wiki pages into Zotero notes.
 9. Add attachments only when the user explicitly requests it and the source has been verified. Check existing attachments by stable source, filename, or content identity when the tool exposes those checks.
-10. Use related-item links only when the connected MCP exposes the relation toolset, write access is available, and the relationship has been reviewed.
+10. Use related-item links only when the relationship has been reviewed and either the connected MCP exposes the relation toolset or the user has explicitly authorized the restricted local write-back plan.
 11. Refresh the Zotero MCP semantic search database after adding files or materially changing indexed content when semantic search is in use.
 12. When local is authoritative and Web is the write backend, wait for the synchronization barrier and re-audit the local-visible state before reporting local completion.
 
@@ -587,4 +638,4 @@ If local is authoritative, distinguish `cloud write succeeded` from `verified lo
 
 ## llm-wiki Boundary
 
-Do not add a native Zotero client or duplicate `zotero-mcp` inside `src/llm_wiki` unless a future explicit project decision changes this architecture. `scripts/agent-bridge.py` remains the entry point for llm-wiki status, lint, link, relink, merge, query, and index tasks; Zotero library operations remain exclusively behind `54yyyu/zotero-mcp`.
+Do not add a general native Zotero client or duplicate `zotero-mcp` inside `src/llm_wiki`. `scripts/agent-bridge.py` remains the entry point for llm-wiki workflows. Zotero library discovery, reads, source access, metadata identity, and normal writes remain behind `54yyyu/zotero-mcp`; `zotero_local.py` is a temporary, loopback-only, addition-only exception for the reviewed schemas and verification barriers defined above. Do not expand it to metadata replacement, collection mutation, notes, attachments, deletion, or arbitrary API access without a new explicit architecture decision.

@@ -203,6 +203,16 @@ python scripts/agent-bridge.py zotero-plan --snapshot temp/zotero-snapshot.yaml 
 python scripts/agent-bridge.py zotero-refresh --collection-key A9VNJUPI \
   --manifest-out temp/zotero-refresh.yaml
 
+# Verify a collection ingest allocation and its wiki provenance/page invariants
+python scripts/agent-bridge.py zotero-ingest-verify \
+  --snapshot temp/zotero-snapshot.yaml \
+  --allocation temp/zotero-allocation.yaml \
+  --report-out temp/zotero-ingest-report.yaml
+
+# Audit an explicitly authorized managed-tag/Related-item local write plan
+python scripts/agent-bridge.py zotero-writeback --plan temp/zotero-write-plan.yaml \
+  --action audit --report-out temp/zotero-write-audit.yaml
+
 # Apply multi-file writes (page + index + log) atomically; always dry-run first
 python scripts/agent-bridge.py apply-bundle temp/tx-bundle.yaml --dry-run
 python scripts/agent-bridge.py apply-bundle temp/tx-bundle.yaml
@@ -219,6 +229,10 @@ python scripts/agent-bridge.py hot
 `agent-bridge.py zotero-plan` is a read-only bridge between wiki provenance and Zotero MCP. It compares an MCP-produced YAML/JSON snapshot with `sources_meta`, reports DOI/publication audits and managed-tag changes, and leaves all Zotero writes to the reviewed MCP workflow. With `--manifest-out`, it may write a deterministic `mode: review-only` YAML manifest only under `temp/`; the manifest is not directly executable, and tag-removal or relation candidates still require review before any Zotero MCP mutation.
 
 `agent-bridge.py zotero-refresh` is a one-shot enrichment worker inspired by Zotero plugin freshness workflows. It reads the collection through `54yyyu/zotero-mcp`, uses Crossref for DOI identity/publication candidates and OpenAlex for citation and open journal metrics, stores only a small ignored SQLite cache under `var/`, and defaults to dry-run. `--apply-safe` may incrementally upsert `LLM-Wiki ...` Extra keys, manage only `llm-wiki:*` status tags, and normalize an empty or conflicting `doi.org` URL; DOI candidates and preprint-to-published changes remain review-only. The first collection-wide apply can take minutes because Zotero writes remain serial and incremental; verification is batched after writes, and later runs normally become no-ops until freshness windows expire.
+
+`agent-bridge.py zotero-ingest-verify` compares a verified MCP snapshot with an explicit allocation ledger (example: `docs/examples/zotero-ingest-allocation.example.yaml`). It fails on missing/duplicate allocations, unexplained omissions, missing `sources_meta` bindings, invalid frontmatter, broken page invariants, control characters, trailing whitespace, or machine-specific private paths. Suspiciously identical three-page batch structure is advisory rather than an automatic failure.
+
+`agent-bridge.py zotero-writeback` is the temporary, explicitly authorized Zotero 10 loopback exception for additions that the current MCP cannot express. It accepts only a secret-free `mode: authorized-write` plan (example: `docs/examples/zotero-write-plan.example.yaml`), supports separate `audit`, `apply`, and `verify` phases, adds only `llm-wiki:*` tags, and ensures reviewed reciprocal Related pairs. It preserves existing tag objects, retries one version conflict from a fresh GET, and verifies every accepted PATCH. Metadata, collection membership, notes, tag removal, and Trash remain out of scope. `--memory-authorize` keeps the key in process memory only.
 
 #### Depth lint warnings
 
@@ -435,7 +449,7 @@ Claude: Created [[LoRA vs Full Fine-tuning]]
 
 ## Using Zotero Through zotero-mcp
 
-Zotero remains the literature layer and llm-wiki remains the distilled Markdown knowledge layer. All Zotero operations performed by this skill must go through [`54yyyu/zotero-mcp`](https://github.com/54yyyu/zotero-mcp); alternate Zotero skills, direct database access, and direct Web API integrations are outside the supported workflow.
+Zotero remains the literature layer and llm-wiki remains the distilled Markdown knowledge layer. Discovery, reads, sources, metadata identity, and normal writes go through [`54yyyu/zotero-mcp`](https://github.com/54yyyu/zotero-mcp). The only supported direct exception is the temporary, explicitly authorized Zotero 10 loopback write path documented above and in the canonical protocol; alternate Zotero skills, direct database access, and direct Web API integrations remain outside the workflow.
 
 See the canonical [Zotero MCP operating protocol](docs/ZOTERO_MCP_INTEGRATION.md) for setup and capability gates, read/write workflows, Zotero-backed ingest, private `sources/zotero/` bindings, provenance fields, and failure handling.
 

@@ -23,6 +23,8 @@ Usage:
     python scripts/agent-bridge.py status
     python scripts/agent-bridge.py query "What is LoRA?" --semantic
     python scripts/agent-bridge.py zotero-plan --snapshot temp/zotero-snapshot.yaml
+    python scripts/agent-bridge.py zotero-ingest-verify --snapshot temp/zotero-snapshot.yaml --allocation temp/zotero-allocation.yaml --report-out temp/zotero-ingest-report.yaml
+    python scripts/agent-bridge.py zotero-writeback --plan temp/zotero-write-plan.yaml --action audit --report-out temp/zotero-write-audit.yaml
     python scripts/agent-bridge.py merge --source "NewPage" --target "OldPage" \
         --strategy append_related --dry-run
 """
@@ -1312,6 +1314,206 @@ def cmd_zotero_refresh(args: argparse.Namespace) -> int:
     return 1 if args.apply_safe and apply_failed else 0
 
 
+def cmd_zotero_writeback(args: argparse.Namespace) -> int:
+    """Audit, apply, or verify an explicitly authorized local write plan."""
+    import asyncio
+
+    import yaml
+
+    from src.llm_wiki.config import load_config
+    from src.llm_wiki.core import find_wiki_root
+    from src.llm_wiki.zotero_local import LocalZoteroWriter, authorize_local, load_local_key
+    from src.llm_wiki.zotero_writeback import (
+        apply_write_plan,
+        audit_write_plan,
+        load_write_plan,
+        report_to_manifest,
+        verify_write_plan,
+    )
+
+    wiki_root = find_wiki_root(PROJECT_ROOT)
+    if not wiki_root:
+        print(_md_info("Error: Cannot find wiki root."))
+        return 1
+
+    plan_path = Path(args.plan)
+    if not plan_path.is_absolute():
+        plan_path = wiki_root / plan_path
+    plan_path = plan_path.resolve()
+    allowed_temp = (wiki_root / "temp").resolve()
+    if plan_path != allowed_temp and allowed_temp not in plan_path.parents:
+        print(_md_info("Error: --plan must stay under the project temp/ directory."))
+        return 1
+    if not plan_path.exists():
+        print(_md_info(f"Error: Write plan not found: {plan_path}"))
+        return 1
+
+    report_path = Path(args.report_out)
+    if not report_path.is_absolute():
+        report_path = wiki_root / report_path
+    report_path = report_path.resolve()
+    if report_path != allowed_temp and allowed_temp not in report_path.parents:
+        print(_md_info("Error: --report-out must stay under the project temp/ directory."))
+        return 1
+
+    try:
+        plan = load_write_plan(plan_path)
+    except Exception as exc:
+        print(_md_info(f"Error: Cannot load authorized write plan: {exc}"))
+        return 1
+
+    config = load_config(wiki_root)
+    local_cfg = (config.get("zotero_enrichment") or {}).get("local") or {}
+    writer_kwargs: Dict[str, Any] = {}
+    base_url = str(local_cfg.get("base_url") or "").strip()
+    if base_url:
+        writer_kwargs["base_url"] = base_url
+    timeout = local_cfg.get("timeout_seconds")
+    if timeout is not None:
+        writer_kwargs["timeout"] = float(timeout)
+
+    async def run_phase():
+        api_key = ""
+        if args.action == "apply":
+            if args.memory_authorize:
+                auth_kwargs = {key: value for key, value in writer_kwargs.items() if key == "base_url"}
+                api_key = await authorize_local(args.app_name, None, **auth_kwargs)
+            else:
+                api_key = load_local_key(wiki_root / "var" / "zotero-local.json")
+        writer = LocalZoteroWriter(api_key, **writer_kwargs)
+        try:
+            if args.action == "audit":
+                return await audit_write_plan(plan, writer)
+            if args.action == "verify":
+                return await verify_write_plan(plan, writer)
+            return await apply_write_plan(plan, writer)
+        finally:
+            await writer.aclose()
+
+    try:
+        report = asyncio.run(run_phase())
+    except Exception as exc:
+        LOG.exception("Zotero write-back %s failed", args.action)
+        print(_md_info(f"Error: Zotero write-back failed: {exc}"))
+        return 1
+
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(
+        yaml.safe_dump(report_to_manifest(report), allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    lines = [_md_header(f"Zotero Write-Back: {args.action.title()}"), ""]
+    lines.append(_md_info(
+        "Restricted workflow: managed-tag additions and reviewed reciprocal Related pairs only; "
+        "metadata, collections, notes, tag removals, and Trash are outside this authorization."
+    ))
+    lines.append("")
+    lines.append(_md_table(
+        ["Metric", "Value"],
+        [
+            ["Collection", report.collection_name or report.collection_key],
+            ["Items", str(len(report.items))],
+            ["Updated + Verified", str(report.updated_count)],
+            ["Skipped Current", str(report.skipped_count)],
+            ["Failed", str(report.failed_count)],
+        ],
+    ))
+    lines.append("")
+    lines.append(_md_table(
+        ["Item", "Status", "Missing Tags", "Relation Gaps", "Errors"],
+        [
+            [
+                item.item_key,
+                item.status,
+                ", ".join(item.missing_tags) or "—",
+                ", ".join(item.relation_gaps) or "—",
+                "; ".join(item.errors) or "—",
+            ]
+            for item in report.items
+        ],
+    ))
+    lines.append("")
+    lines.append(_md_info(f"Machine-readable report written to: {report_path}"))
+    print("\n".join(lines))
+    return 1 if report.failed_count else 0
+
+
+def cmd_zotero_ingest_verify(args: argparse.Namespace) -> int:
+    """Verify collection snapshot allocation, provenance bindings, and page hygiene."""
+    import yaml
+
+    from src.llm_wiki.core import find_wiki_root
+    from src.llm_wiki.zotero_ingest_verify import (
+        ingest_report_to_manifest,
+        verify_collection_ingest,
+    )
+
+    wiki_root = find_wiki_root(PROJECT_ROOT)
+    if not wiki_root:
+        print(_md_info("Error: Cannot find wiki root."))
+        return 1
+
+    def resolve_input(raw: str) -> Path:
+        path = Path(raw)
+        return path.resolve() if path.is_absolute() else (wiki_root / path).resolve()
+
+    snapshot_path = resolve_input(args.snapshot)
+    allocation_path = resolve_input(args.allocation)
+    allowed_temp = (wiki_root / "temp").resolve()
+    for label, path in (("Snapshot", snapshot_path), ("Allocation ledger", allocation_path)):
+        if path != allowed_temp and allowed_temp not in path.parents:
+            print(_md_info(f"Error: {label} must stay under the project temp/ directory."))
+            return 1
+        if not path.exists():
+            print(_md_info(f"Error: {label} not found: {path}"))
+            return 1
+
+    report_path = resolve_input(args.report_out)
+    if report_path != allowed_temp and allowed_temp not in report_path.parents:
+        print(_md_info("Error: --report-out must stay under the project temp/ directory."))
+        return 1
+
+    report = verify_collection_ingest(
+        wiki_root / "wiki",
+        snapshot_path,
+        allocation_path,
+    )
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(
+        yaml.safe_dump(ingest_report_to_manifest(report), allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    lines = [_md_header("Zotero Collection Ingest Verification"), ""]
+    lines.append(_md_table(
+        ["Metric", "Value"],
+        [
+            ["Collection Key", report.collection_key or "Unknown"],
+            ["Snapshot Items", str(report.snapshot_count)],
+            ["Allocations", str(report.allocation_count)],
+            ["Errors", str(len(report.errors))],
+            ["Warnings", str(len(report.warnings))],
+            ["Passed", "Yes" if report.passed else "No"],
+        ],
+    ))
+    lines.append("")
+    if report.errors:
+        lines.append(_md_header("Errors", level=3))
+        lines.extend(
+            f"- [{issue.code}] {issue.item_key or issue.page or 'collection'}: {issue.message}"
+            for issue in report.errors
+        )
+        lines.append("")
+    if report.warnings:
+        lines.append(_md_header("Warnings", level=3))
+        lines.extend(f"- [{issue.code}] {issue.message}" for issue in report.warnings)
+        lines.append("")
+    lines.append(_md_info(f"Machine-readable report written to: {report_path}"))
+    print("\n".join(lines))
+    return 0 if report.passed else 1
+
+
 def cmd_zotero_local_auth(args: argparse.Namespace) -> int:
     """Authorize llm-wiki for direct Zotero 10 local writes; store the reusable key.
 
@@ -1353,7 +1555,7 @@ def cmd_zotero_local_auth(args: argparse.Namespace) -> int:
         print(_md_info(f"Error: authorization failed: {exc}"))
         return 1
 
-    lines.append(_md_info(f"Reusable key stored at `{store_path}` (gitignored, mode 0600; key not shown)."))
+    lines.append(_md_info("Reusable key stored under private `var/zotero-local.json` state (gitignored; key not shown)."))
     lines.append(_md_action("You can now run `zotero-refresh --apply-safe --write-backend local`."))
     print("\n".join(lines))
     return 0
@@ -1626,6 +1828,47 @@ def main(argv: Optional[List[str]] = None) -> int:
         ),
     )
 
+    # zotero-writeback
+    writeback_parser = subparsers.add_parser(
+        "zotero-writeback",
+        help="Audit/apply/verify an authorized managed-tag and Related-item plan",
+    )
+    writeback_parser.add_argument("--plan", required=True, help="Authorized write plan YAML/JSON")
+    writeback_parser.add_argument(
+        "--action",
+        choices=["audit", "apply", "verify"],
+        default="audit",
+        help="Workflow phase (default: audit)",
+    )
+    writeback_parser.add_argument(
+        "--report-out",
+        required=True,
+        help="Machine-readable report path under project temp/",
+    )
+    writeback_parser.add_argument(
+        "--memory-authorize",
+        action="store_true",
+        help="For apply, request a process-memory-only Zotero key instead of reading var/ state",
+    )
+    writeback_parser.add_argument(
+        "--app-name",
+        default="llm-wiki",
+        help="Application name shown in the Zotero authorization dialog",
+    )
+
+    # zotero-ingest-verify
+    ingest_verify_parser = subparsers.add_parser(
+        "zotero-ingest-verify",
+        help="Verify collection allocation, provenance, page invariants, and hygiene",
+    )
+    ingest_verify_parser.add_argument("--snapshot", required=True, help="Verified MCP snapshot YAML/JSON")
+    ingest_verify_parser.add_argument("--allocation", required=True, help="Collection allocation ledger YAML/JSON")
+    ingest_verify_parser.add_argument(
+        "--report-out",
+        required=True,
+        help="Machine-readable verification report under project temp/",
+    )
+
     # zotero-local-auth
     local_auth_parser = subparsers.add_parser(
         "zotero-local-auth",
@@ -1656,6 +1899,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         "zotero-plan": cmd_zotero_plan,
         "zotero-refresh": cmd_zotero_refresh,
         "zotero-local-auth": cmd_zotero_local_auth,
+        "zotero-writeback": cmd_zotero_writeback,
+        "zotero-ingest-verify": cmd_zotero_ingest_verify,
     }
 
     handler = dispatch.get(args.command)

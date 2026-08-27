@@ -19,6 +19,7 @@ Keep this file as the operational skill. Use `README.md` for user-facing overvie
 3. Run `<PY> scripts/agent-bridge.py check` before wiki operations. If it reports missing dependencies, state the exact blocker and continue only with tasks that do not require the unavailable runtime.
 4. Protect `sources/`: never write Agent-generated summaries, drafts, or speculative content there. Only user-provided files or verified network fetches or Zotero MCP material may be source assets.
 5. Check `git status --short` before editing. Do not revert user changes.
+6. `wiki/*` is gitignored by default; when using ripgrep for wiki/source discovery, pass `--no-ignore` or read the files directly so ignored knowledge pages are not silently omitted.
 
 ## Choose the Work Mode
 
@@ -42,6 +43,8 @@ Agent Bridge quick commands:
 <PY> scripts/agent-bridge.py query "question" --semantic
 <PY> scripts/agent-bridge.py zotero-plan --snapshot temp/zotero-snapshot.yaml --manifest-out temp/zotero-mutation-manifest.yaml
 <PY> scripts/agent-bridge.py zotero-refresh --collection-key A9VNJUPI --manifest-out temp/zotero-refresh.yaml
+<PY> scripts/agent-bridge.py zotero-ingest-verify --snapshot temp/zotero-snapshot.yaml --allocation temp/zotero-allocation.yaml --report-out temp/zotero-ingest-report.yaml
+<PY> scripts/agent-bridge.py zotero-writeback --plan temp/zotero-write-plan.yaml --action audit --report-out temp/zotero-write-audit.yaml
 ```
 
 Use legacy `python -m src.llm_wiki ...` only for human scripting or debugging. Do not use the legacy CLI as a substitute for LLM judgment during ingest.
@@ -64,7 +67,7 @@ A clean depth result is not proof of source coverage. Re-read allocated sources 
 8. When ingesting a batch, compare the drafts for template collapse. Similar heading and bullet patterns are acceptable only when the underlying knowledge structure is genuinely similar.
 9. Add temporal metadata and visible time anchors where historical order matters.
 10. Run link discovery and safe backward merges only after content review passes, then update `wiki/index.md` and `log.md`.
-11. For Zotero-backed ingest, optionally run `agent-bridge.py zotero-plan` from an MCP-produced snapshot, review DOI/publication checks and managed-tag changes, then apply approved Zotero writes through MCP and verify both write-back and synchronization state.
+11. For Zotero-backed batch ingest, keep a complete allocation ledger under `temp/` and run `zotero-ingest-verify` before declaring coverage complete. Then run `zotero-plan`, review managed-tag/relation candidates, and use either Zotero MCP or the explicitly authorized restricted local write-back path; always verify the post-write state.
 
 Source maps and coverage notes are temporary Agent working state. Keep them outside `sources/`; retain them under `temp/` only when the user requests an ingest audit or experiment.
 
@@ -87,9 +90,11 @@ Never treat `created` or `updated` as publication dates. They are wiki maintenan
 
 ## Zotero Operations
 
-All Zotero operations for this skill **MUST use the MCP tools provided by [`54yyyu/zotero-mcp`](https://github.com/54yyyu/zotero-mcp)**. Before any Zotero task, read and follow [`docs/ZOTERO_MCP_INTEGRATION.md`](docs/ZOTERO_MCP_INTEGRATION.md), the single operational source of truth for availability gates, read/write workflows, source bindings, provenance, and safety.
+All Zotero discovery, reads, source access, metadata planning, and normal writes for this skill **MUST use the MCP tools provided by [`54yyyu/zotero-mcp`](https://github.com/54yyyu/zotero-mcp)**. Before any Zotero task, read and follow [`docs/ZOTERO_MCP_INTEGRATION.md`](docs/ZOTERO_MCP_INTEGRATION.md), the single operational source of truth for availability gates, read/write workflows, source bindings, provenance, and safety.
 
-Do not substitute another Zotero skill/client or bypass Zotero MCP with direct SQLite/Web API access. If the required Zotero MCP capability is unavailable, report the blocker, stop Zotero-side work, and continue only with useful wiki-local work.
+The only temporary exception is the user-authorized Zotero 10 loopback write path documented there. `zotero-writeback` accepts only a reviewed `mode: authorized-write` plan, adds `llm-wiki:*` tags, ensures reviewed reciprocal Related pairs, and performs read-after-write verification. It cannot remove tags, change metadata or collection membership, write notes, or touch Trash. `--memory-authorize` keeps the local key in process memory only.
+
+Do not substitute another Zotero skill/client or bypass Zotero MCP with direct SQLite/Web API access. If the required MCP or restricted local capability is unavailable, report the blocker, stop Zotero-side work, and continue only with useful wiki-local work.
 
 ## Source Fetch Safety
 

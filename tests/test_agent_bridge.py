@@ -822,3 +822,101 @@ class TestClaimLintOutput:
         assert rc == 0
         assert "Claim Issues" in out
         assert "undeclared" in out
+
+
+class TestCmdZoteroCollectionWorkflow:
+    def test_writeback_command_is_registered_and_rejects_missing_plan(
+        self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys
+    ):
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+
+        rc = agent_bridge_module.main([
+            "zotero-writeback",
+            "--plan", "temp/missing.yaml",
+            "--action", "audit",
+            "--report-out", "temp/report.yaml",
+        ])
+        out = capsys.readouterr().out
+
+        assert rc == 1
+        assert "Write plan not found" in out
+
+    def test_ingest_verify_command_writes_report_under_temp(
+        self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys
+    ):
+        temp = temp_wiki_root / "temp"
+        temp.mkdir(exist_ok=True)
+        snapshot = temp / "snapshot.yaml"
+        snapshot.write_text(
+            """version: 1
+collection: {name: blogs/DeepLearning, key: COLL0001}
+items:
+  - item_key: ITEM0001
+    title: Source
+    item_type: webpage
+""",
+            encoding="utf-8",
+        )
+        allocation = temp / "allocation.yaml"
+        allocation.write_text(
+            """version: 1
+collection: {key: COLL0001, snapshot_count: 1}
+allocations:
+  - item_index: 1
+    item_key: ITEM0001
+    status: ingested
+    pages: [Deep-Learning-Source]
+""",
+            encoding="utf-8",
+        )
+        page = temp_wiki_root / "wiki" / "Deep-Learning-Source.md"
+        page.write_text(
+            """---
+created: 2026-08-27
+updated: 2026-08-27
+sources: []
+sources_meta:
+  - title: Source
+    type: webpage
+    zotero_item_key: ITEM0001
+tags: [AI/ML]
+status: active
+---
+
+# Deep Learning Source
+
+This page defines a source-specific deep learning concept for durable reuse.
+
+## Mechanism
+
+The source-specific mechanism is described with enough detail for verification.
+
+## Related Pages
+
+- [[Deep-Learning]]
+
+## Sources
+
+- Zotero item ITEM0001
+
+## Changelog
+
+- 2026-08-27: Initial ingest.
+""",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+
+        rc = agent_bridge_module.main([
+            "zotero-ingest-verify",
+            "--snapshot", "temp/snapshot.yaml",
+            "--allocation", "temp/allocation.yaml",
+            "--report-out", "temp/ingest-report.yaml",
+        ])
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert "Passed" in out
+        report = temp / "ingest-report.yaml"
+        assert report.exists()
+        assert "passed: true" in report.read_text(encoding="utf-8")

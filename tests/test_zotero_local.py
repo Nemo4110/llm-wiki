@@ -40,7 +40,7 @@ def make_transport(captured, item=None, get_item=None):
     get_item: optional callable returning the current item JSON (lets a test
               mutate state between the pre-write GET and any later GET).
     """
-    state = {"item": item if item is not None else BASE_ITEM}
+    state = {"item": json.loads(json.dumps(item if item is not None else BASE_ITEM))}
 
     def handler(request: httpx.Request) -> httpx.Response:
         path = request.url.path
@@ -52,6 +52,11 @@ def make_transport(captured, item=None, get_item=None):
                 return httpx.Response(200, json=current)
             if request.method == "PATCH":
                 captured.append(request)
+                body = json.loads(request.content)
+                if not get_item:
+                    state["item"]["data"].update(body)
+                    state["item"]["version"] += 1
+                    state["item"]["data"]["version"] = state["item"]["version"]
                 return httpx.Response(204)
         return httpx.Response(404)
 
@@ -174,6 +179,188 @@ def test_authorize_local_handshake_stores_reusable_key(tmp_path):
     assert key == "NEWKEY32"
     saved = json.loads(store.read_text(encoding="utf-8"))
     assert saved["key"] == "NEWKEY32"
+
+
+def test_authorize_local_can_keep_key_in_process_memory_only(tmp_path):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/":
+            return httpx.Response(200, headers={"Zotero-Server-ID": SERVER_ID})
+        if request.url.path == "/api/local/authorize":
+            return httpx.Response(200, json={"key": "MEMORYKEY", "remember": False})
+        return httpx.Response(404)
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+    key = run(authorize_local("llm-wiki", None, http=http))
+
+    assert key == "MEMORYKEY"
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_write_preserves_full_existing_tag_objects():
+    item = json.loads(json.dumps(BASE_ITEM))
+    item["data"]["tags"] = [{"tag": "automatic", "type": 1}]
+    captured = []
+    http = httpx.AsyncClient(transport=make_transport(captured, item=item))
+    writer = LocalZoteroWriter(API_KEY, http=http)
+
+    run(writer.write_safe_mutation(ITEM_KEY, add_tags=["llm-wiki:ingested"]))
+
+    body = json.loads(captured[0].content)
+    assert {"tag": "automatic", "type": 1} in body["tags"]
+    assert {"tag": "llm-wiki:ingested"} in body["tags"]
+
+
+def test_write_retries_one_version_conflict_from_fresh_state():
+    state = {"item": json.loads(json.dumps(BASE_ITEM)), "patches": 0}
+    captured = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/":
+            return httpx.Response(200, headers={"Zotero-Server-ID": SERVER_ID})
+        if request.url.path != f"/api/users/0/items/{ITEM_KEY}":
+            return httpx.Response(404)
+        if request.method == "GET":
+            return httpx.Response(200, json=state["item"])
+        captured.append(request)
+        state["patches"] += 1
+        if state["patches"] == 1:
+            state["item"]["version"] = 6
+            state["item"]["data"]["version"] = 6
+            state["item"]["data"]["tags"].append({"tag": "concurrent", "type": 1})
+            return httpx.Response(412)
+        state["item"]["data"].update(json.loads(request.content))
+        state["item"]["version"] = 7
+        state["item"]["data"]["version"] = 7
+        return httpx.Response(204)
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    writer = LocalZoteroWriter(API_KEY, http=http)
+
+    result = run(writer.write_safe_mutation(ITEM_KEY, add_tags=["llm-wiki:ingested"]))
+
+    assert result.status == "updated_verified"
+    assert result.attempts == 2
+    assert len(captured) == 2
+    assert captured[1].headers["If-Unmodified-Since-Version"] == "6"
+    assert {"tag": "concurrent", "type": 1} in json.loads(captured[1].content)["tags"]
+
+
+def test_write_fails_when_read_after_write_does_not_match():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/":
+            return httpx.Response(200, headers={"Zotero-Server-ID": SERVER_ID})
+        if request.method == "GET":
+            return httpx.Response(200, json=BASE_ITEM)
+        if request.method == "PATCH":
+            return httpx.Response(204)
+        return httpx.Response(404)
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    writer = LocalZoteroWriter(API_KEY, http=http)
+
+    with pytest.raises(LocalWriteError, match="verification"):
+        run(writer.write_safe_mutation(ITEM_KEY, add_tags=["llm-wiki:ingested"]))
+
+
+def test_patch_failure_does_not_echo_api_key():
+    leaked = "KEY-MUST-NOT-LEAK"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/":
+            return httpx.Response(200, headers={"Zotero-Server-ID": SERVER_ID})
+        if request.method == "GET":
+            return httpx.Response(200, json=BASE_ITEM)
+        if request.method == "PATCH":
+            return httpx.Response(500, text=f"debug api key={leaked}")
+        return httpx.Response(404)
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    writer = LocalZoteroWriter(leaked, http=http)
+
+    with pytest.raises(LocalWriteError) as exc_info:
+        run(writer.write_safe_mutation(ITEM_KEY, add_tags=["x"]))
+
+    assert leaked not in str(exc_info.value)
+
+
+def test_existing_reciprocal_relation_pair_is_a_noop():
+    target_key = "TARGET01"
+    source_uri = "http://zotero.org/users/1234/items/TESTKEY1"
+    target_uri = "http://zotero.org/users/1234/items/TARGET01"
+    items = {
+        ITEM_KEY: {
+            "key": ITEM_KEY, "version": 5, "library": {"type": "user", "id": 1234},
+            "data": {"key": ITEM_KEY, "version": 5, "relations": {"dc:relation": [target_uri]}},
+        },
+        target_key: {
+            "key": target_key, "version": 9, "library": {"type": "user", "id": 1234},
+            "data": {"key": target_key, "version": 9, "relations": {"dc:relation": [source_uri]}},
+        },
+    }
+    captured = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/":
+            return httpx.Response(200, headers={"Zotero-Server-ID": SERVER_ID})
+        key = request.url.path.rsplit("/", 1)[-1]
+        if request.method == "GET" and key in items:
+            return httpx.Response(200, json=items[key])
+        if request.method == "PATCH":
+            captured.append(request)
+            return httpx.Response(204)
+        return httpx.Response(404)
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    writer = LocalZoteroWriter(API_KEY, http=http)
+
+    result = run(writer.ensure_relation_pair(ITEM_KEY, target_key))
+
+    assert result.changed_items == ()
+    assert captured == []
+
+
+def test_relation_pair_repairs_only_missing_direction():
+    target_key = "TARGET01"
+    source_uri = "http://zotero.org/users/1234/items/TESTKEY1"
+    target_uri = "http://zotero.org/users/1234/items/TARGET01"
+    items = {
+        ITEM_KEY: {
+            "key": ITEM_KEY, "version": 5, "library": {"type": "user", "id": 1234},
+            "data": {"key": ITEM_KEY, "version": 5, "relations": {"dc:relation": [target_uri]}},
+        },
+        target_key: {
+            "key": target_key, "version": 9, "library": {"type": "user", "id": 1234},
+            "data": {"key": target_key, "version": 9, "relations": {"owl:sameAs": "https://example.test/work"}},
+        },
+    }
+    captured = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/":
+            return httpx.Response(200, headers={"Zotero-Server-ID": SERVER_ID})
+        key = request.url.path.rsplit("/", 1)[-1]
+        if key not in items:
+            return httpx.Response(404)
+        if request.method == "GET":
+            return httpx.Response(200, json=items[key])
+        captured.append((key, request))
+        body = json.loads(request.content)
+        items[key]["data"].update(body)
+        items[key]["version"] += 1
+        items[key]["data"]["version"] = items[key]["version"]
+        return httpx.Response(204)
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    writer = LocalZoteroWriter(API_KEY, http=http)
+
+    result = run(writer.ensure_relation_pair(ITEM_KEY, target_key))
+
+    assert result.changed_items == (target_key,)
+    assert [key for key, _ in captured] == [target_key]
+    relations = json.loads(captured[0][1].content)["relations"]
+    assert relations["owl:sameAs"] == "https://example.test/work"
+    assert relations["dc:relation"] == [source_uri]
 
 
 def test_writer_rejects_non_loopback_base_url():

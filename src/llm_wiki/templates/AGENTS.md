@@ -109,6 +109,7 @@ In body text, prefer a human-scannable Markdown time anchor for dated works:
 - Cite sources and preserve provenance.
 - Do not delete user-managed raw materials.
 - Do not write LLM-generated content into `sources/`.
+- `wiki/*` and most `sources/*` are gitignored by default. Use `rg --no-ignore` when a repository search must include user-managed knowledge or source files.
 - Synchronize README language variants when user-facing behavior changes.
 - Use the project-managed Python environment (`.venv` or conda) for Python operations.
 - Treat `sources/zotero/metadata.yaml` and `sources/zotero/**` as private Zotero binding state and local symlink cache; do not commit them and do not write synthesized knowledge there.
@@ -445,6 +446,10 @@ python scripts/zotero_sources.py
 The metadata file may contain local absolute paths because it is private and ignored by Git. The wiki page frontmatter should preserve stable Zotero identifiers such as `zotero_item_key`, `zotero_attachment_key`, `library_id`, and `zotero_uri`.
 
 Zotero child notes are index cards, not wiki mirrors. Use them to store the wiki page path, short summary, sync hash/time, and reviewed relationships. Do not copy full generated wiki pages into Zotero notes.
+
+For Zotero collection batches, keep the verified MCP snapshot and complete item allocation ledger under ignored `temp/`, then run `agent-bridge.py zotero-ingest-verify` before declaring ingest coverage complete. Use the schema in `docs/examples/zotero-ingest-allocation.example.yaml` when available.
+
+Zotero MCP remains the default for reads and writes. The only temporary local exception is `agent-bridge.py zotero-writeback` with a secret-free, reviewed `mode: authorized-write` plan. It may add only `llm-wiki:*` tags and ensure reviewed reciprocal Related pairs, with optimistic concurrency and read-after-write verification. It must not remove tags, edit metadata, change collections, write notes, or touch Trash. Use `--memory-authorize` when the key should exist only for the current process.
 
 ### Standard Network Fetch Template
 

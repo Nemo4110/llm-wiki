@@ -69,6 +69,14 @@ CAPABILITIES: Dict[str, Capability] = {
         "zotero-refresh", write_scope=("var/", "temp/"), network=True,
         description="Zotero metadata enrichment via MCP and external providers",
     ),
+    "zotero-writeback": Capability(
+        "zotero-writeback", write_scope=("temp/",), network=True,
+        description="Restricted local Zotero managed-tag and reviewed-relation write-back",
+    ),
+    "zotero-ingest-verify": Capability(
+        "zotero-ingest-verify", write_scope=("temp/",),
+        description="Collection ingest allocation, provenance, and page verification",
+    ),
 }
 
 
