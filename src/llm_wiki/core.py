@@ -14,7 +14,16 @@ from typing import Any, Dict, List, Mapping, Optional, Set, Tuple
 import yaml
 
 from .agent_logger import get_logger
+from .claims import validate_claims
 from .depth_lint import DepthLintConfig, analyze_depth
+
+# 笔记生命周期(成熟度递进):seed -> developing -> mature -> evergreen
+# draft 是未审视的初始态,active 是 legacy 写法(约等于 developing),
+# archived 是退役终态。
+HOT_CONTEXT_LIMIT = 20  # hot.md 最多保留的最近活动条数
+
+LIFECYCLE_STATES = ("seed", "developing", "mature", "evergreen")
+KNOWN_STATUSES = LIFECYCLE_STATES + ("draft", "active", "archived")
 
 LOG = get_logger("core")
 
@@ -96,7 +105,8 @@ class WikiManager:
         LOG.debug("Listing pages in %s", self.wiki_dir)
         pages = []
         for md_file in self.wiki_dir.glob("*.md"):
-            if md_file.name == "index.md":
+            # index.md 是索引,hot.md 是活动上下文,都不是知识页面
+            if md_file.name in ("index.md", "hot.md"):
                 continue
             page = self._load_page(md_file)
             if page:
@@ -127,18 +137,9 @@ class WikiManager:
         path = self.wiki_dir / filename
         LOG.info("Creating page: %s -> %s", title, path)
 
-        # 构建 frontmatter
-        fm_lines = ["---"]
-        for key, value in frontmatter.items():
-            if isinstance(value, list):
-                fm_lines.append(f"{key}:")
-                for v in value:
-                    fm_lines.append(f"  - \"{v}\"")
-            else:
-                fm_lines.append(f"{key}: \"{value}\"")
-        fm_lines.append("---")
-
-        full_content = "\n".join(fm_lines) + "\n\n" + content
+        # 构建 frontmatter(safe_dump 支持嵌套结构,如 sources_meta / claims)
+        fm_yaml = yaml.safe_dump(frontmatter, allow_unicode=True, sort_keys=False).rstrip()
+        full_content = f"---\n{fm_yaml}\n---\n\n" + content
         path.write_text(full_content, encoding='utf-8')
         LOG.debug("Page written: %s (%d bytes)", path, len(full_content))
         return path
@@ -175,6 +176,42 @@ class WikiManager:
         with open(self.log_file, 'a', encoding='utf-8') as f:
             f.write(log_entry)
 
+    def record_activity(self, action: str, changed: List) -> Path:
+        """在 wiki/hot.md 顶部记录一条最近活动(新条目在前,有界保留)。
+
+        hot.md 是有界的最近上下文,供会话恢复时快速定位最近变更;
+        它不是完整历史(完整历史见 log.md)。
+        """
+        hot_file = self.wiki_dir / "hot.md"
+        header = (
+            "# Hot Context\n\n"
+            "> 最近的知识库变更,新条目在前,最多保留 "
+            f"{HOT_CONTEXT_LIMIT} 条。完整历史见 log.md。\n"
+        )
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+        files = ", ".join(str(c) for c in changed)
+        entry = f"- [{timestamp}] {action} — {files}"
+
+        head = header.rstrip()
+        entries: List[str] = []
+        if hot_file.exists():
+            lines = hot_file.read_text(encoding="utf-8").splitlines()
+            first_entry = next(
+                (i for i, line in enumerate(lines) if line.startswith("- [")),
+                len(lines),
+            )
+            # 保留条目区之前的头部(允许用户自定义说明)
+            existing_head = "\n".join(lines[:first_entry]).rstrip()
+            if existing_head:
+                head = existing_head
+            entries = [line for line in lines[first_entry:] if line.startswith("- [")]
+
+        entries.insert(0, entry)
+        entries = entries[:HOT_CONTEXT_LIMIT]
+        hot_file.write_text(head + "\n\n" + "\n".join(entries) + "\n", encoding="utf-8")
+        LOG.debug("hot.md updated: %s", entry)
+        return hot_file
+
     def read_log(self, n: int = 10) -> List[str]:
         """读取最近 n 条日志"""
         if not self.log_file.exists():
@@ -202,6 +239,9 @@ class WikiManager:
             'noncanonical_links': [],
             'drafts': [],
             'shallow_pages': [],
+            'invalid_status': [],
+            'lifecycle_mismatch': [],
+            'claim_issues': [],
         }
         if include_depth_details:
             issues['shallow_page_details'] = []
@@ -243,6 +283,13 @@ class WikiManager:
             if page.status == 'draft':
                 issues['drafts'].append(page.title)
 
+            # 状态词表校验(抓拼写错误,如 "publised")
+            raw_status = page.frontmatter.get('status')
+            if raw_status is not None and raw_status not in KNOWN_STATUSES:
+                issues['invalid_status'].append(
+                    f"{page.title}: status={raw_status!r} (expected one of {', '.join(KNOWN_STATUSES)})"
+                )
+
             depth_issue = analyze_depth(
                 page_title=page.title,
                 page_stem=page.path.stem,
@@ -255,6 +302,16 @@ class WikiManager:
                 issues['shallow_pages'].append(depth_issue.render())
                 if include_depth_details:
                     issues['shallow_page_details'].append(depth_issue.to_dict())
+                # mature/evergreen 声明"内容完整",与 shallow 判定矛盾
+                if page.status in ('mature', 'evergreen'):
+                    issues['lifecycle_mismatch'].append(
+                        f"{page.title}: status={page.status} but content is shallow "
+                        f"({", ".join(depth_issue.reasons)})"
+                    )
+
+            # 论断级溯源校验(advisory)
+            for claim_issue in validate_claims(page, self.wiki_dir.parent):
+                issues['claim_issues'].append(claim_issue)
 
             # 检查陈旧页面（90天未更新）
             updated = page.frontmatter.get('updated')
@@ -283,7 +340,8 @@ class WikiManager:
 
         LOG.info(
             "Lint complete: orphans=%d dead_links=%d stale=%d empty_pages=%d "
-            "duplicate_titles=%d noncanonical_links=%d drafts=%d shallow_pages=%d",
+            "duplicate_titles=%d noncanonical_links=%d drafts=%d shallow_pages=%d "
+            "invalid_status=%d lifecycle_mismatch=%d claim_issues=%d",
             len(issues['orphans']),
             len(issues['dead_links']),
             len(issues['stale']),
@@ -292,6 +350,9 @@ class WikiManager:
             len(issues['noncanonical_links']),
             len(issues['drafts']),
             len(issues['shallow_pages']),
+            len(issues['invalid_status']),
+            len(issues['lifecycle_mismatch']),
+            len(issues['claim_issues']),
         )
         return issues
 

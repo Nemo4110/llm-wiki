@@ -158,7 +158,10 @@ def analyze_depth(
     project_root: Path,
     config: DepthLintConfig,
 ) -> Optional[DepthIssue]:
-    if not config.enabled or frontmatter.get("status", "draft") != "active":
+    # draft/seed 是未成熟状态,archived 已退役,均不做深度要求;
+    # developing 起即给出 advisory 提示(active 为 legacy 写法)。
+    _DEPTH_ANALYZED = ("active", "developing", "mature", "evergreen")
+    if not config.enabled or frontmatter.get("status", "draft") not in _DEPTH_ANALYZED:
         return None
     if str(frontmatter.get("lint_depth", "")).lower() == "skip":
         return None

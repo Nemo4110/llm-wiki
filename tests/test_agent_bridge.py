@@ -519,3 +519,282 @@ class TestCmdZoteroRefresh:
 
         assert rc == 1
         assert "must stay under" in out
+
+
+class TestCmdApplyBundle:
+    """apply-bundle 子命令:事务化多文件写入"""
+
+    def _make_bundle(self, root: Path, update_hash: str) -> Path:
+        import hashlib
+        temp = root / "temp"
+        temp.mkdir(exist_ok=True)
+        (temp / "draft-page.md").write_text("---\ntags: []\n---\n\n# NewPage\n\nbody\n", encoding="utf-8")
+        (temp / "draft-index.md").write_text("# Wiki Index\n\n- [[NewPage]]\n", encoding="utf-8")
+        (temp / "draft-log.md").write_text("# Log\n\n## [2026-08-24] ingest | NewPage\n", encoding="utf-8")
+        manifest = temp / "tx-bundle.yaml"
+        manifest.write_text(f"""
+ops:
+  - op: create
+    path: wiki/NewPage.md
+    content_path: draft-page.md
+  - op: update
+    path: wiki/index.md
+    content_path: draft-index.md
+    expected_sha256: "{update_hash}"
+  - op: update
+    path: log.md
+    content_path: draft-log.md
+    expected_sha256: "{hashlib.sha256(b"# Log\n").hexdigest()}"
+""", encoding="utf-8")
+        (root / "log.md").write_text("# Log\n", encoding="utf-8")
+        return manifest
+
+    def _index_hash(self, root: Path) -> str:
+        import hashlib
+        content = (root / "wiki" / "index.md").read_text(encoding="utf-8")
+        return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+    def test_dry_run_previews_without_writing(self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys):
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        manifest = self._make_bundle(temp_wiki_root, self._index_hash(temp_wiki_root))
+
+        rc = agent_bridge_module.cmd_apply_bundle(_args(manifest=str(manifest), dry_run=True))
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert "Transaction Preview" in out
+        assert "wiki/NewPage.md" in out
+        assert not (temp_wiki_root / "wiki" / "NewPage.md").exists()
+        assert (temp_wiki_root / "log.md").read_text(encoding="utf-8") == "# Log\n"
+
+    def test_dry_run_reports_current_hash_when_missing(self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys):
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        manifest = self._make_bundle(temp_wiki_root, self._index_hash(temp_wiki_root))
+        # 去掉 update 的 expected_sha256,模拟 Agent 先探测哈希
+        text = manifest.read_text(encoding="utf-8")
+        text = "\n".join(l for l in text.split("\n") if "expected_sha256" not in l)
+        manifest.write_text(text, encoding="utf-8")
+
+        rc = agent_bridge_module.cmd_apply_bundle(_args(manifest=str(manifest), dry_run=True))
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert "current sha256" in out
+        assert self._index_hash(temp_wiki_root) in out
+
+    def test_apply_writes_all_files(self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys):
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        manifest = self._make_bundle(temp_wiki_root, self._index_hash(temp_wiki_root))
+
+        rc = agent_bridge_module.cmd_apply_bundle(_args(manifest=str(manifest), dry_run=False))
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert "Applied" in out
+        assert (temp_wiki_root / "wiki" / "NewPage.md").exists()
+        assert "[[NewPage]]" in (temp_wiki_root / "wiki" / "index.md").read_text(encoding="utf-8")
+        assert "ingest | NewPage" in (temp_wiki_root / "log.md").read_text(encoding="utf-8")
+
+    def test_apply_with_stale_hash_writes_nothing(self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys):
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        manifest = self._make_bundle(temp_wiki_root, "0" * 64)
+
+        rc = agent_bridge_module.cmd_apply_bundle(_args(manifest=str(manifest), dry_run=False))
+        out = capsys.readouterr().out
+
+        assert rc == 1
+        assert "Hash mismatch" in out or "hash mismatch" in out
+        assert not (temp_wiki_root / "wiki" / "NewPage.md").exists()
+        assert (temp_wiki_root / "log.md").read_text(encoding="utf-8") == "# Log\n"
+
+    def test_missing_manifest_returns_error(self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys):
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+
+        rc = agent_bridge_module.cmd_apply_bundle(
+            _args(manifest=str(temp_wiki_root / "nope.yaml"), dry_run=False))
+        out = capsys.readouterr().out
+
+        assert rc == 1
+        assert "Error" in out
+
+
+class TestCmdCapabilities:
+    """capabilities 子命令:打印有效契约表"""
+
+    def test_prints_contract_table(self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys):
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+
+        rc = agent_bridge_module.cmd_capabilities(_args())
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert "Capability Contracts" in out
+        for command in ("apply-bundle", "lint", "zotero-refresh"):
+            assert command in out
+        assert "wiki/" in out
+
+    def test_shows_disabled_state_from_config(self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys):
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        config_path = temp_wiki_root / "config.yaml"
+        config_path.write_text(
+            config_path.read_text(encoding="utf-8")
+            + "\ncapabilities:\n  merge:\n    enabled: false\n",
+            encoding="utf-8",
+        )
+
+        rc = agent_bridge_module.cmd_capabilities(_args())
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert "disabled" in out
+
+    def test_disabled_command_blocked_at_dispatch(self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys):
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        config_path = temp_wiki_root / "config.yaml"
+        config_path.write_text(
+            config_path.read_text(encoding="utf-8")
+            + "\ncapabilities:\n  apply-bundle:\n    enabled: false\n",
+            encoding="utf-8",
+        )
+
+        rc = agent_bridge_module.main(["apply-bundle", "whatever.yaml"])
+        out = capsys.readouterr().out
+
+        assert rc == 1
+        assert "disabled" in out
+
+    def test_apply_bundle_rejects_out_of_scope_paths(self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys):
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        temp = temp_wiki_root / "temp"
+        temp.mkdir(exist_ok=True)
+        (temp / "draft.md").write_text("polluted", encoding="utf-8")
+        manifest = temp / "bundle.yaml"
+        manifest.write_text(f"""
+ops:
+  - op: create
+    path: sources/generated.md
+    content_path: draft.md
+""", encoding="utf-8")
+
+        rc = agent_bridge_module.cmd_apply_bundle(_args(manifest=str(manifest), dry_run=False))
+        out = capsys.readouterr().out
+
+        assert rc == 1
+        assert "write_scope" in out
+        assert not (temp_wiki_root / "sources" / "generated.md").exists()
+
+
+class TestLifecycleOutput:
+    """lint/status 命令暴露生命周期信号"""
+
+    def test_lint_reports_lifecycle_mismatch(self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys):
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        wiki_dir = temp_wiki_root / "wiki"
+        (wiki_dir / "Thin.md").write_text(
+            "---\ncreated: \"2026-08-01\"\nupdated: \"2026-08-01\"\ntags: [\"zz-niche\"]\nstatus: \"mature\"\n---\n\n# Thin\n\n一句话。\n",
+            encoding="utf-8",
+        )
+
+        rc = agent_bridge_module.cmd_lint(_args())
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert "Lifecycle Mismatch" in out
+        assert "Thin" in out
+
+    def test_lint_reports_invalid_status(self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys):
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        wiki_dir = temp_wiki_root / "wiki"
+        (wiki_dir / "Weird.md").write_text(
+            "---\ncreated: \"2026-08-01\"\nupdated: \"2026-08-01\"\ntags: [\"zz-niche\"]\nstatus: \"publised\"\n---\n\n# Weird\n\n内容。\n",
+            encoding="utf-8",
+        )
+
+        rc = agent_bridge_module.cmd_lint(_args())
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert "Invalid Status" in out
+        assert "publised" in out
+
+    def test_status_shows_lifecycle_distribution(self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys):
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        wiki_dir = temp_wiki_root / "wiki"
+        (wiki_dir / "MatureOne.md").write_text(
+            "---\ncreated: \"2026-08-01\"\nupdated: \"2026-08-01\"\ntags: []\nstatus: \"mature\"\n---\n\n# MatureOne\n\n内容。\n",
+            encoding="utf-8",
+        )
+
+        rc = agent_bridge_module.cmd_status(_args())
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert "Lifecycle" in out
+        assert "mature" in out
+
+
+class TestCmdHot:
+    """hot 子命令:打印有界最近上下文;apply-bundle 自动维护"""
+
+    def test_apply_bundle_records_hot_entry(self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys):
+        import hashlib
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        temp = temp_wiki_root / "temp"
+        temp.mkdir(exist_ok=True)
+        (temp / "draft.md").write_text("# HotPage\n\nbody\n", encoding="utf-8")
+        manifest = temp / "bundle.yaml"
+        manifest.write_text("""
+ops:
+  - op: create
+    path: wiki/HotPage.md
+    content_path: draft.md
+""", encoding="utf-8")
+
+        rc = agent_bridge_module.cmd_apply_bundle(_args(manifest=str(manifest), dry_run=False))
+        assert rc == 0
+        capsys.readouterr()
+
+        hot = temp_wiki_root / "wiki" / "hot.md"
+        assert hot.exists()
+        text = hot.read_text(encoding="utf-8")
+        assert "wiki/HotPage.md" in text
+
+    def test_hot_prints_recent_context(self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys):
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        (temp_wiki_root / "wiki" / "hot.md").write_text(
+            "# Hot Context\n\n- [2026-08-24 18:00] ingest | X — wiki/X.md\n", encoding="utf-8")
+
+        rc = agent_bridge_module.cmd_hot(_args())
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert "ingest | X" in out
+
+    def test_hot_without_file_friendly_message(self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys):
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+
+        rc = agent_bridge_module.cmd_hot(_args())
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert "no recorded activity" in out.lower() or "hot.md" in out
+
+
+class TestClaimLintOutput:
+    def test_lint_reports_claim_issues(self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys):
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        wiki_dir = temp_wiki_root / "wiki"
+        (wiki_dir / "Claimy.md").write_text(
+            "---\ncreated: \"2026-08-01\"\nupdated: \"2026-08-01\"\ntags: [\"zz-niche\"]\nstatus: \"active\"\n"
+            "sources:\n  - \"sources/lora.pdf\"\n"
+            "claims:\n  - text: \"X 结论\"\n    source: \"sources/undeclared.pdf\"\n    status: \"accepted\"\n"
+            "---\n\n# Claimy\n\n内容。\n",
+            encoding="utf-8",
+        )
+
+        rc = agent_bridge_module.cmd_lint(_args())
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert "Claim Issues" in out
+        assert "undeclared" in out

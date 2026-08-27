@@ -586,6 +586,9 @@ def cmd_lint(args: argparse.Namespace) -> int:
             ["Non-canonical links", str(len(issues["noncanonical_links"])), "⚠️" if issues["noncanonical_links"] else "✅"],
             ["Draft pages", str(len(issues["drafts"])), "⚠️" if issues["drafts"] else "✅"],
             ["Shallow pages", str(len(issues["shallow_pages"])), "⚠️" if issues["shallow_pages"] else "✅"],
+            ["Invalid status", str(len(issues["invalid_status"])), "⚠️" if issues["invalid_status"] else "✅"],
+            ["Lifecycle mismatch", str(len(issues["lifecycle_mismatch"])), "⚠️" if issues["lifecycle_mismatch"] else "✅"],
+            ["Claim issues", str(len(issues["claim_issues"])), "⚠️" if issues["claim_issues"] else "✅"],
         ],
     ))
     lines.append("")
@@ -633,6 +636,27 @@ def cmd_lint(args: argparse.Namespace) -> int:
     if issues["drafts"]:
         lines.append(_md_header("Draft Pages", level=3))
         lines.append(_md_code_block("\n".join(f"- [[{p}]]" for p in issues["drafts"])))
+        lines.append("")
+
+    if issues["invalid_status"]:
+        lines.append(_md_header("Invalid Status", level=3))
+        lines.append(_md_code_block("\n".join(f"- {m}" for m in issues["invalid_status"])))
+        lines.append("")
+        lines.append(_md_action("Fix the status typo. Lifecycle: seed -> developing -> mature -> evergreen; draft/archived remain valid."))
+        lines.append("")
+
+    if issues["lifecycle_mismatch"]:
+        lines.append(_md_header("Lifecycle Mismatch (advisory)", level=3))
+        lines.append(_md_code_block("\n".join(f"- {m}" for m in issues["lifecycle_mismatch"])))
+        lines.append("")
+        lines.append(_md_action("Either deepen the page to justify mature/evergreen, or lower its status to developing."))
+        lines.append("")
+
+    if issues["claim_issues"]:
+        lines.append(_md_header("Claim Issues (advisory)", level=3))
+        lines.append(_md_code_block("\n".join(f"- {m}" for m in issues["claim_issues"])))
+        lines.append("")
+        lines.append(_md_action("Bind every claim to a source declared in the page's own sources/sources_meta, and keep claim statuses within accepted/provisional/contested/unsupported."))
         lines.append("")
 
     if issues["shallow_pages"]:
@@ -731,6 +755,15 @@ def cmd_status(args: argparse.Namespace) -> int:
             ["Draft", str(status_counts.get("draft", 0))],
             ["Archived", str(status_counts.get("archived", 0))],
         ],
+    ))
+    lines.append("")
+
+    # Lifecycle maturity distribution (seed -> developing -> mature -> evergreen)
+    from src.llm_wiki.core import LIFECYCLE_STATES
+    lines.append(_md_header("Lifecycle", level=3))
+    lines.append(_md_table(
+        ["Stage", "Pages"],
+        [[stage, str(status_counts.get(stage, 0))] for stage in LIFECYCLE_STATES],
     ))
     lines.append("")
 
@@ -1279,6 +1312,144 @@ def cmd_zotero_refresh(args: argparse.Namespace) -> int:
     return 1 if args.apply_safe and apply_failed else 0
 
 
+def cmd_capabilities(args: argparse.Namespace) -> int:
+    """Print the effective capability contracts (defaults + config overrides)."""
+    LOG.info("cmd_capabilities")
+
+    from src.llm_wiki.capabilities import CAPABILITIES, CapabilityError, get_capability
+    from src.llm_wiki.config import load_config
+    from src.llm_wiki.core import find_wiki_root
+
+    config: Dict[str, Any] = {}
+    wiki_root = find_wiki_root(PROJECT_ROOT)
+    if wiki_root:
+        try:
+            config = load_config(wiki_root)
+        except ValueError as exc:
+            print(_md_info(f"Error: {exc}"))
+            return 1
+
+    rows: List[List[str]] = []
+    try:
+        for name, declared in CAPABILITIES.items():
+            cap = get_capability(name, config)
+            overridden = " (config)" if cap != declared else ""
+            rows.append([
+                name,
+                "yes" if cap.enabled else "**disabled**",
+                _md_table_cell(", ".join(cap.write_scope) or "—") + overridden,
+                "yes" if cap.network else "no",
+                "yes" if cap.dry_run else "no",
+            ])
+    except CapabilityError as exc:
+        print(_md_info(f"Error: {exc}"))
+        return 1
+
+    lines: List[str] = [_md_header("Capability Contracts"), ""]
+    lines.append(_md_table(["Command", "Enabled", "Write Scope", "Network", "Dry-Run"], rows))
+    lines.append("")
+    lines.append(_md_info(
+        "Defaults are declared in code. `capabilities:` in config.yaml may only "
+        "tighten a contract (disable a command, narrow its write scope); "
+        "widening attempts are rejected."
+    ))
+    print("\n".join(lines))
+    return 0
+
+
+def cmd_hot(args: argparse.Namespace) -> int:
+    """Print wiki/hot.md - bounded recent-activity context for session resume."""
+    LOG.info("cmd_hot")
+
+    from src.llm_wiki.core import find_wiki_root
+
+    wiki_root = find_wiki_root(PROJECT_ROOT)
+    if not wiki_root:
+        print(_md_info("Error: Cannot find wiki root."))
+        return 1
+
+    hot_file = wiki_root / "wiki" / "hot.md"
+    if not hot_file.exists():
+        print(_md_info("No recorded activity yet (wiki/hot.md does not exist). "
+                       "It is maintained automatically by apply-bundle."))
+        return 0
+
+    print(hot_file.read_text(encoding="utf-8").rstrip())
+    return 0
+
+
+def cmd_apply_bundle(args: argparse.Namespace) -> int:
+    """Apply a transaction bundle: atomic multi-file writes with dry-run preview."""
+    LOG.info("cmd_apply_bundle: manifest=%s dry_run=%s", args.manifest, args.dry_run)
+
+    from src.llm_wiki.core import find_wiki_root
+    from src.llm_wiki.transaction import TransactionError, load_bundle
+
+    wiki_root = find_wiki_root(PROJECT_ROOT)
+    if not wiki_root:
+        print(_md_info("Error: Cannot find wiki root."))
+        return 1
+
+    manifest = Path(args.manifest)
+    if not manifest.exists():
+        print(_md_info(f"Error: Manifest not found: `{manifest}`"))
+        return 1
+
+    try:
+        tx = load_bundle(manifest, wiki_root)
+    except TransactionError as exc:
+        print(_md_info(f"Error: {exc}"))
+        return 1
+
+    from src.llm_wiki.capabilities import CapabilityError, check_write_paths
+    from src.llm_wiki.config import load_config
+
+    try:
+        check_write_paths("apply-bundle", [op.path for op in tx.ops], load_config(wiki_root))
+    except CapabilityError as exc:
+        print(_md_info(f"Error: {exc}"))
+        return 1
+
+    if args.dry_run:
+        checks = tx.check()
+        lines: List[str] = [_md_header("Transaction Preview"), ""]
+        rows = [
+            [c.op.op, str(c.op.path), "ok" if c.ok else "FAIL", _md_table_cell(c.detail)]
+            for c in checks
+        ]
+        lines.append(_md_table(["Op", "Path", "Status", "Detail"], rows))
+        lines.append("")
+        lines.append(_md_header("Diff", level=3))
+        lines.append(_md_code_block(tx.diff(), "diff"))
+        lines.append("")
+        lines.append(_md_action(
+            "Review the diff. Fill any missing `expected_sha256` values shown above "
+            "into the manifest, then re-run without `--dry-run` to apply."
+        ))
+        print("\n".join(lines))
+        return 0 if all(c.ok for c in checks) else 1
+
+    try:
+        receipt = tx.apply()
+    except TransactionError as exc:
+        print(_md_info(f"Error: {exc}"))
+        return 1
+
+    from src.llm_wiki.core import WikiManager
+    WikiManager(wiki_root / "wiki").record_activity(
+        f"apply-bundle {receipt.tx_id}", receipt.changed
+    )
+
+    lines = [_md_header("Transaction Applied"), ""]
+    lines.append(f"- **Operation ID**: `{receipt.tx_id}`")
+    lines.append(f"- **Journal**: `{receipt.journal_dir}`")
+    lines.append("- **Changed paths**:")
+    for changed in receipt.changed:
+        lines.append(f"  - `{changed}`")
+    print("\n".join(lines))
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # CLI argument parser
 # ---------------------------------------------------------------------------
@@ -1327,6 +1498,21 @@ def main(argv: Optional[List[str]] = None) -> int:
     # index
     index_parser = subparsers.add_parser("index", help="Build/update embedding index")
     index_parser.add_argument("--force", action="store_true", help="Force rebuild all")
+
+    # apply-bundle
+    bundle_parser = subparsers.add_parser(
+        "apply-bundle",
+        help="Apply a transaction bundle (atomic multi-file writes)",
+    )
+    bundle_parser.add_argument("manifest", help="Path to the transaction bundle YAML manifest")
+    bundle_parser.add_argument("--dry-run", action="store_true",
+                               help="Preview checks and diff without writing")
+
+    # capabilities
+    subparsers.add_parser("capabilities", help="Show effective capability contracts")
+
+    # hot
+    subparsers.add_parser("hot", help="Print bounded recent-activity context (wiki/hot.md)")
 
     # zotero-plan
     zotero_parser = subparsers.add_parser(
@@ -1395,6 +1581,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         "query": cmd_query,
         "merge": cmd_merge,
         "index": cmd_index,
+        "apply-bundle": cmd_apply_bundle,
+        "capabilities": cmd_capabilities,
+        "hot": cmd_hot,
         "zotero-plan": cmd_zotero_plan,
         "zotero-refresh": cmd_zotero_refresh,
     }
@@ -1403,6 +1592,23 @@ def main(argv: Optional[List[str]] = None) -> int:
     if not handler:
         parser.print_help()
         return 1
+
+    # Capability gate: config.yaml may disable commands (fail closed).
+    # If the config cannot be loaded here, the command's own setup reports it.
+    if args.command != "capabilities":
+        try:
+            from src.llm_wiki.capabilities import CapabilityError, check_enabled
+            from src.llm_wiki.config import load_config
+            from src.llm_wiki.core import find_wiki_root
+
+            gate_root = find_wiki_root(PROJECT_ROOT)
+            if gate_root:
+                check_enabled(args.command, load_config(gate_root))
+        except CapabilityError as exc:
+            print(_md_info(f"Error: {exc}"))
+            return 1
+        except Exception as exc:
+            LOG.debug("capability gate skipped: %s", exc)
 
     return handler(args)
 

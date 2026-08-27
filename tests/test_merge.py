@@ -180,7 +180,11 @@ Transformer 使用 encoder-decoder 结构。
             MergeStrategy.LINK_ONLY,
         )
         assert result.startswith("---")
-        assert 'updated: "' in result
+        assert "updated:" in result
+        # frontmatter 必须是可解析的合法 YAML
+        import yaml
+        parsed = yaml.safe_load(result.split("---", 2)[1])
+        assert "updated" in parsed
 
     def test_heading_level(self, temp_wiki):
         merger = ContentMerger(temp_wiki)

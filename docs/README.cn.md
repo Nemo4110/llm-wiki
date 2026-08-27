@@ -142,7 +142,7 @@ Claude 会：
 
 ### Agent Bridge（推荐给 Agent）
 
-安装依赖后，Agent 应优先使用 `scripts/agent-bridge.py` 作为所有工具辅助操作的统一入口，包括检查、状态、链接、合并、语义查询和索引：
+安装依赖后，Agent 应优先使用 `scripts/agent-bridge.py` 作为所有工具辅助操作的统一入口，包括检查、状态、链接、合并、原子多文件写入、语义查询和索引：
 
 ```bash
 # 验证运行环境和 wiki 可用性
@@ -167,6 +167,16 @@ python scripts/agent-bridge.py zotero-plan --snapshot temp/zotero-snapshot.yaml 
 # 通过 Zotero MCP 刷新 DOI、引用量与发表状态（默认 dry-run）
 python scripts/agent-bridge.py zotero-refresh --collection-key A9VNJUPI \
   --manifest-out temp/zotero-refresh.yaml
+
+# 将多文件写入（页面 + index + log）作为事务原子应用；务必先 dry-run
+python scripts/agent-bridge.py apply-bundle temp/tx-bundle.yaml --dry-run
+python scripts/agent-bridge.py apply-bundle temp/tx-bundle.yaml
+
+# 查看各命令的能力契约（写范围、网络、dry-run 支持）
+python scripts/agent-bridge.py capabilities
+
+# 打印有界的最近活动上下文（wiki/hot.md）
+python scripts/agent-bridge.py hot
 ```
 
 #### Zotero 审核 manifest

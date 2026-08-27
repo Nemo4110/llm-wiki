@@ -13,6 +13,7 @@ import numpy as np
 
 from .core import WikiManager, WikiPage
 from .embeddings import EmbeddingProvider
+from .bm25 import BM25, tokenize
 
 
 class EmbeddingIndex:
@@ -126,7 +127,16 @@ class EmbeddingIndex:
         query_lower = query.lower()
         scores: Dict[str, float] = {}
 
-        # 1. Keyword Match
+        # 1. Keyword Match:标题/标签子串为强信号,内容相关性用 BM25 词项匹配
+        corpus = BM25([
+            tokenize(f"{p.title} {' '.join(p.tags)} {p.content}")
+            for p in pages.values()
+        ])
+        raw_scores = corpus.scores(tokenize(query))
+        bm25_scores = {
+            title: (raw / (raw + corpus.k1) if raw > 0 else 0.0)
+            for title, raw in zip(pages.keys(), raw_scores)
+        }
         for title, page in pages.items():
             kw_score = 0.0
             if query_lower in title.lower():
@@ -135,8 +145,7 @@ class EmbeddingIndex:
                 if query_lower in tag.lower():
                     kw_score += 0.5
                     break
-            if query_lower in page.content.lower():
-                kw_score += 0.2
+            kw_score += 0.3 * bm25_scores.get(title, 0.0)
             scores[title] = kw_score * keyword_weight
 
         # 2. Vector Search

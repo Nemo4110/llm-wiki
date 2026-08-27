@@ -177,7 +177,7 @@ Use natural language to interact with the Agent:
 
 ### Agent Bridge (Recommended for Agents)
 
-After installing dependencies, Agents should use `scripts/agent-bridge.py` as the single tool-assisted entry point for checks, status, linking, merging, semantic query, and indexing:
+After installing dependencies, Agents should use `scripts/agent-bridge.py` as the single tool-assisted entry point for checks, status, linking, merging, atomic writes, semantic query, and indexing:
 
 ```bash
 # Verify runtime and wiki availability
@@ -202,6 +202,16 @@ python scripts/agent-bridge.py zotero-plan --snapshot temp/zotero-snapshot.yaml 
 # Refresh DOI/citation/publication state through Zotero MCP (dry-run by default)
 python scripts/agent-bridge.py zotero-refresh --collection-key A9VNJUPI \
   --manifest-out temp/zotero-refresh.yaml
+
+# Apply multi-file writes (page + index + log) atomically; always dry-run first
+python scripts/agent-bridge.py apply-bundle temp/tx-bundle.yaml --dry-run
+python scripts/agent-bridge.py apply-bundle temp/tx-bundle.yaml
+
+# Inspect per-command capability contracts (write scope, network, dry-run)
+python scripts/agent-bridge.py capabilities
+
+# Print bounded recent-activity context (wiki/hot.md)
+python scripts/agent-bridge.py hot
 ```
 
 #### Zotero review manifests

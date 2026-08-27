@@ -78,6 +78,29 @@ status: "active"
 ---
 ```
 
+Page `status` is a maturity lifecycle: `seed` (stub from a fresh ingest) ->
+`developing` (being fleshed out) -> `mature` (covers its sources) -> `evergreen`
+(stable, maintained). `draft` (unreviewed) and `archived` (retired) remain valid;
+`active` is a legacy alias of `developing`. Depth lint analyzes pages from
+`developing` upward and reports a `lifecycle_mismatch` advisory when a
+`mature`/`evergreen` page is still shallow. Unknown status values are reported
+as `invalid_status`.
+
+Pages may additionally declare claim-level provenance in frontmatter:
+
+```yaml
+claims:
+  - text: "LoRA constrains the weight update to a low-rank product"
+    source: "sources/lora.pdf"     # must be declared in this page's sources/sources_meta
+    status: "accepted"             # accepted | provisional | contested | unsupported
+```
+
+Lint validates claims as advisory `claim_issues`: every claim needs
+text/source/status, the status must be in the vocabulary, and the source must
+be one the page itself declares. A `mature`/`evergreen` page with still
+contested or unsupported claims is flagged. Never fabricate claim sources or
+statuses — an absent claim list is always better than an invented one.
+
 Do not invent missing month/day values. If only the year is reliable, write the year and set `date_precision: "year"`.
 
 In body text, prefer a human-scannable Markdown time anchor for dated works:
@@ -194,6 +217,9 @@ Every wiki task falls into exactly one of three categories. **The category deter
 | **B** | Ingest material | **Yes** | Protocol mode (direct file ops) | N/A |
 | **B** | Query & synthesize | **Yes** | Protocol mode (direct file ops) | N/A |
 | **C** | Apply link results | **Agent judges** | `merge` (after reviewing diff) | Manual edit |
+| **C** | Atomic multi-file write | **Agent drafts, tool applies** | `agent-bridge.py apply-bundle` | Manual edits with no atomicity guarantee |
+| **A** | Inspect capability contracts | No | `agent-bridge.py capabilities` | Read `src/llm_wiki/capabilities.py` |
+| **A** | Recent activity context | No | `agent-bridge.py hot` | Read `wiki/hot.md` |
 
 **Category A**: Pure algorithm. No LLM intelligence needed. **Always use `agent-bridge.py`.**
 
@@ -414,6 +440,75 @@ Agent:
    f. If reasonable, re-run without --dry-run
 3. Update log.md
 ```
+
+### Applying a Transaction Bundle (Atomic Ingest Writes)
+
+**When**: An ingest or maintenance step must write several files as one logical
+operation — typically a new page plus `wiki/index.md` plus `log.md`. Direct
+Protocol-mode writes can leave the knowledge base inconsistent if interrupted;
+a transaction bundle applies them atomically with rollback on failure.
+
+Manifest format (place under ignored `temp/`, e.g. `temp/tx-bundle.yaml`):
+
+```yaml
+ops:
+  - op: create                 # target must NOT exist
+    path: wiki/NewPage.md      # relative to project root
+    content_path: draft-NewPage.md   # draft file, relative to this manifest
+  - op: update                 # target must exist AND match expected_sha256
+    path: wiki/index.md
+    content_path: draft-index.md
+    expected_sha256: "a1b2..." # MUST be quoted; all-digit values unquoted are rejected
+```
+
+Workflow:
+
+```
+Agent:
+1. Read every file you will update; draft all new content under temp/
+2. Write temp/tx-bundle.yaml with the ops above
+3. Run: python scripts/agent-bridge.py apply-bundle temp/tx-bundle.yaml --dry-run
+   -> Per-op status table + unified diff; update ops report their current sha256
+4. Fill any missing expected_sha256 values from the dry-run output
+5. Review the diff carefully; if anything is wrong, fix drafts and dry-run again
+6. Run: python scripts/agent-bridge.py apply-bundle temp/tx-bundle.yaml
+   -> All ops verified, journaled, and written atomically; mid-apply failure
+      rolls every file back. Report the operation ID and changed paths.
+```
+
+Rules:
+
+- **Never apply without a reviewed dry-run.** The `expected_sha256` lock fails
+  closed if a file changed since you drafted it — re-read, re-draft, re-lock.
+- Journals live under `.backups/transactions/<tx-id>/` (gitignored); clean old
+  ones manually.
+- `create` refuses existing files; `update` refuses missing files and requires
+  `expected_sha256`. Destructive deletes are not supported — do them by hand.
+- Write paths are machine-enforced against the command's capability contract
+  (`wiki/`, `log.md` only). A bundle that targets `sources/` or code is rejected
+  before anything is written.
+- A successful apply also records one bounded entry in `wiki/hot.md` (newest
+  first, last 20 kept). `hot.md` is session-resume context, not a knowledge
+  page: it is excluded from page listings and lint. Print it with
+  `agent-bridge.py hot` — e.g. at session start when the user opts in.
+
+### Capability Contracts
+
+Every bridge command declares its write scope, network use, and dry-run support
+in `src/llm_wiki/capabilities.py`. `config.yaml` may **tighten** these contracts
+(disable a command, narrow a write scope) but never widen them:
+
+```yaml
+capabilities:
+  apply-bundle:
+    enabled: false          # disable a command entirely
+  merge:
+    write_scope: ["wiki/"]  # narrow only; widening is rejected
+```
+
+Run `python scripts/agent-bridge.py capabilities` to inspect the effective
+contracts. Disabled commands fail closed at dispatch; out-of-scope bundle
+writes are rejected before any file is touched.
 
 ---
 
@@ -1026,6 +1121,7 @@ Agent:
 - **Module**: `src.llm_wiki`
 - **Main file**: `src/llm_wiki/commands.py`
 - **Core logic**: `src/llm_wiki/core.py`
+- **Deterministic retrieval**: `src/llm_wiki/bm25.py` — dependency-free BM25Okapi with a mixed Chinese/English tokenizer (English words; Chinese unigrams + bigrams). It backs the content-relevance signal in both `link` and `query`, so retrieval quality never depends on embedding availability.
 - **Agent Bridge**: `scripts/agent-bridge.py`
 - **Logging**: `src/llm_wiki/agent_logger.py`
 

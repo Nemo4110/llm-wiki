@@ -16,7 +16,10 @@ sources_meta:
     citation_key: ""
 tags:
   - "TAG"
-status: "draft"  # draft | active | archived
+# claims: 论断级溯源(可选)。每条需 text/source/status;
+#   source 必须是本页 sources/sources_meta 已声明的来源;
+#   status: accepted | provisional | contested | unsupported
+status: "seed"  # seed | developing | mature | evergreen (lifecycle); draft | active | archived (legacy)
 ---
 
 # PageTitle
