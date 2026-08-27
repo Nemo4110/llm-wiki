@@ -4,13 +4,68 @@
 >
 > **Required integration:** [`54yyyu/zotero-mcp`](https://github.com/54yyyu/zotero-mcp)
 >
-> **Upstream compatibility last reviewed:** 2026-08-13. The tools actually exposed by the connected MCP server take precedence over examples in this document.
+> **Upstream compatibility last reviewed:** 2026-08-26 against Zotero 10 (desktop) and zotero-mcp v0.11.0. The tools actually exposed by the connected MCP server take precedence over examples in this document.
 
 ## Scope and Authority
 
 Zotero is the literature layer; llm-wiki is the distilled Markdown knowledge layer. Zotero owns bibliographic metadata, attachments, annotations, collections, tags, citation keys, and other library state. llm-wiki owns reusable concepts, cross-source synthesis, wiki links, temporal interpretation, and indexes.
 
 This document is the single operational source of truth for Zotero work. `SKILL.md`, `AGENTS.md`, and the README files should state the integration boundary and point here instead of duplicating workflows.
+
+## Zotero 10 and zotero-mcp v0.11.x Compatibility
+
+Reviewed 2026-08-26. Zotero 10 (desktop, released 2026-08-17) is mostly a UX release. It did **not** change the Web API schema, DOI/arXiv handling, or the MCP tool surface llm-wiki depends on. The four MCP tools llm-wiki calls directly (`zotero_get_collection_items`, `zotero_get_item_metadata`, `zotero_batch_update`, `zotero_update_item`) are unchanged across zotero-mcp v0.9.1 → v0.11.0, so no llm-wiki code change is required to keep working.
+
+**Local API writes — desktop capability exists; zotero-mcp has not adopted it; llm-wiki adds a temporary direct path (most important):**
+
+- Zotero 10 added **Local API write support** at the desktop level.
+- The integrated zotero-mcp (≤ v0.11.0) **still routes its own writes through the Zotero Web API**; local mode remains **read-only for writes** ("fast local reads, web API writes"). This is unchanged.
+- Consequence for the MCP path: `metadata_write_backend = local` is **not reachable through zotero-mcp** today; the MCP metadata write gate and the hybrid-mode warning below still stand for anything written via zotero-mcp.
+- **Temporary opt-in exception:** llm-wiki now offers a direct local write path that bypasses zotero-mcp for writes only (reads still go through MCP). One-time `agent-bridge.py zotero-local-auth` stores a reusable key under gitignored `var/zotero-local.json`; then `agent-bridge.py zotero-refresh --apply-safe --write-backend local` writes via the local API. See "Temporary Direct Local Writes" below. **Remove this exception once zotero-mcp adopts local writes.**
+- To detect upstream adoption: after any zotero-mcp upgrade, confirm which backend a write actually lands on (the sentinel-tag probe in the Backend Consistency Gate) before treating the MCP `local` route as a write backend.
+- **Empirically verified 2026-08-27** (zotero-mcp v0.11.0 against Zotero 10, hybrid config): in pure-local mode (no `ZOTERO_API_KEY` in the server process env) a `zotero_batch_update` write returned success yet did **not** change local state — it was routed to the Web backend. Two corollaries were observed: (1) zotero-mcp also loads Web credentials from the `client_env` block of `~/.config/zotero-mcp/config.json` when the process environment does not provide them, so "no key in the client env" does **not** guarantee a write stays local or fails; (2) a write returning success is **not** evidence that local state changed — always re-read the intended backend to confirm where a write landed.
+
+**Other Zotero 10 behavior changes that affect Agent workflows:**
+
+- **Search semantics changed.** Quick/full-text search is now accent- and typography-insensitive by default (`cafe` matches `café`), and unquoted CJK matches **full phrases** instead of individual characters. Do not reuse pre-Zotero-10 recall/precision expectations; quote terms when you need literal or token-level matching. Advanced search gained nested condition groups and new conditions (Annotation Color, # of Notes, "is empty / is not empty"); whether these are reachable depends on the connected server's `zotero_advanced_search`.
+- **Full-text content sync.** Zotero 10's "Sync full-text content" setting can index and search attachment content synced from another machine **without the file existing locally**. `indexed_fulltext_only` may therefore be reachable even when bytes were never on this machine — it is still not evidence of a local file.
+- **Backups and schema.** Zotero 10 dropped automatic versioned database backups, forces one regular backup before each database upgrade, and added automatic compaction. Do not rely on a `zotero.sqlite.bak` existing; let Zotero's own upgrade backup run, and keep `zotero.sqlite` out of generic cloud-sync folders as already required below.
+- **Credentials in the OS keychain.** Zotero 10 stores API keys and WebDAV passwords in the OS keychain. This does not change the rule against printing, committing, or copying credentials.
+
+**zotero-mcp v0.11.0 change to note:**
+
+- `zotero_semantic_search` now defaults to the **active library only**; pass `search_all_libraries=True` for the old cross-library behavior. Adjust semantic-discovery expectations accordingly.
+
+## Temporary Direct Local Writes (Zotero 10)
+
+> **Temporary, opt-in boundary relaxation.** Writes may go directly to the Zotero 10 local API while reads still go through zotero-mcp. This is the documented exception to the "Required Tool Boundary" below. Remove it once zotero-mcp adopts local writes.
+
+**When to use:** you want writes to land in the local Zotero library immediately (no Web round-trip, no sync barrier), and the connected MCP read backend is local/hybrid so the write is visible to MCP reads at once.
+
+**Setup (one-time, interactive):**
+
+```bash
+<PY> scripts/agent-bridge.py zotero-local-auth
+```
+
+This runs the Zotero 10 local-write handshake: read `Zotero-Server-ID` from `GET /api/`, then `POST /api/local/authorize`. **Approve the dialog in Zotero Desktop; choose "Always Allow" for a reusable key.** The key is stored at gitignored `var/zotero-local.json` (mode 0600) and never printed or logged. The default local API base URL is `http://127.0.0.1:23119`; override it via `zotero_enrichment.local.base_url` in `config.yaml`.
+
+**Applying writes locally:**
+
+```bash
+<PY> scripts/agent-bridge.py zotero-refresh --collection-key A9VNJUPI --apply-safe --write-backend local
+```
+
+- `--write-backend` defaults to `web` (writes via zotero-mcp, unchanged); `local` routes only the writes to the local API.
+- Every local write does read-version → `If-Unmodified-Since-Version` optimistic-concurrency PATCH.
+- The existing verify-after-write loop still re-reads each item and confirms the mutation landed; it reads through MCP, which in a hybrid setup reads the local database, so a local write is verified immediately.
+
+**Safety and limits:**
+
+- Writes stay minimal and reviewed: the `--apply-safe` scope (Extra `LLM-Wiki ...` keys, `llm-wiki:*` status tags, conservative DOI URL normalization) is unchanged; `local` only changes *where* those same safe writes land.
+- The local key is not scoped by Zotero — it can write any editable library. Guard it like the Web key.
+- The local API requires Zotero Desktop running with "Allow other applications on this computer to communicate with Zotero" enabled.
+- If the key is missing or expired, `zotero-refresh --write-backend local` fails closed and tells you to re-run `zotero-local-auth`.
 
 ## Required Tool Boundary
 
@@ -25,6 +80,8 @@ Agents must not substitute:
 - ad hoc scripts that bypass `zotero-mcp`.
 
 The `zotero-mcp` CLI may be used for installation, upgrades, setup, and diagnostics. Zotero library reads, writes, and semantic-index maintenance should use the connected MCP tool surface. Use a CLI maintenance command only when the required MCP maintenance tool is unavailable and the user has approved that fallback. Installing, updating, or reconfiguring `zotero-mcp` requires user confirmation under the normal dependency and external-service rules.
+
+**Temporary exception:** direct writes to the Zotero 10 *local* API are permitted only through the reviewed `zotero-refresh --write-backend local` path described in "Temporary Direct Local Writes" above. All other operations — and all reads — still go through zotero-mcp.
 
 ## Compatibility and Capability Gate
 
@@ -86,6 +143,8 @@ Use the following metadata write gate:
 
 Do not infer backend consistency from configuration values alone. A valid API key, an exposed write tool, or a successful single-item write proves only that one route is writable; it does not prove that local and Web state agree.
 
+> **Note on `metadata_write_backend = local`:** not reachable *through zotero-mcp* — v0.11.0 routes its writes through the Web API even against Zotero 10. The `local` write backend is reachable only via the temporary direct local path (`zotero-refresh --write-backend local`); the gate's Web-backend rows still govern anything written through zotero-mcp. See "Temporary Direct Local Writes".
+
 ### Backend Consistency Gate
 
 For a write task, perform the following checks when the relevant state is observable:
@@ -114,7 +173,7 @@ Local read workflows require Zotero Desktop with its local API enabled. Write wo
 
 ### Configuration Ownership
 
-Do not assume that `~/.config/zotero-mcp/config.json` controls the active MCP access mode. In zotero-mcp 0.9.x, that file primarily stores semantic-search, database-path, extraction, and index-update settings. Local/Web mode and Web credentials are normally supplied by the MCP client's process environment.
+Do not assume that `~/.config/zotero-mcp/config.json` controls the active MCP access mode. That file primarily stores semantic-search, database-path, extraction, and index-update settings. Local/Web mode and Web credentials are normally supplied by the MCP client's process environment. However, zotero-mcp v0.11.0 was observed to **also load Web credentials from that file's `client_env` block** when the process environment does not provide them — so treat the file as a potential credential source, and do not assume that "no `ZOTERO_API_KEY` in the client process env" means a write will stay local or fail.
 
 For Codex, inspect the configured server entry in `~/.codex/config.toml` (or the equivalent host-managed MCP configuration). A hybrid configuration keeps local access enabled while retaining Web credentials for write-capable operations:
 
