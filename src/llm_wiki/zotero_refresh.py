@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 import httpx
 
 from .zotero_cache import EnrichmentCache
+from .zotero_local import LocalZoteroWriter
 from .zotero_mcp_client import ZoteroMCPClient
 from .zotero_plan import ACADEMIC_ITEM_TYPES, extract_doi_from_text, normalize_doi
 from .zotero_providers import CrossrefProvider, OpenAlexProvider, ProviderError
@@ -695,6 +696,9 @@ async def run_live_refresh(
     limit: Optional[int] = None,
     force: bool = False,
     apply_safe: bool = False,
+    write_backend: str = "web",
+    local_store_path: Optional[Path] = None,
+    local_base_url: Optional[str] = None,
 ) -> RefreshReport:
     async with ZoteroMCPClient(mcp_config_path, server_name=mcp_server_name) as zotero:
         collection_name, keys = await zotero.get_collection_item_keys(collection_key)
@@ -729,58 +733,72 @@ async def run_live_refresh(
                 )
 
         if apply_safe:
+            writer: Any = zotero
+            local_writer: Optional[LocalZoteroWriter] = None
+            if write_backend == "local":
+                if local_store_path is None:
+                    raise ValueError("write_backend='local' requires local_store_path")
+                _writer_kwargs: Dict[str, Any] = {}
+                if local_base_url:
+                    _writer_kwargs["base_url"] = local_base_url
+                local_writer = LocalZoteroWriter.from_store(local_store_path, **_writer_kwargs)
+                writer = local_writer
             pending: Dict[str, RefreshMutation] = {}
-            for mutation in report.items:
-                if not mutation.has_safe_changes:
-                    continue
-                try:
-                    await zotero.write_safe_mutation(
-                        mutation.item_key,
-                        set_keys=mutation.safe_set_keys,
-                        add_tags=mutation.add_tags,
-                        remove_tags=mutation.remove_tags,
-                        fields=mutation.safe_fields,
-                    )
-                except Exception as exc:
-                    mutation.errors.append(f"safe apply failed: {exc}")
-                    continue
-                pending[mutation.item_key] = mutation
-
-            for attempt, delay in enumerate((1.0, 2.0, 4.0, 0.0)):
-                if not pending:
-                    break
-                if delay:
-                    await asyncio.sleep(delay)
-                try:
-                    metadata_batch = await zotero.get_items(
-                        list(pending),
-                        concurrency=settings.max_concurrency,
-                    )
-                except Exception as exc:
-                    if attempt == 3:
-                        for mutation in pending.values():
-                            mutation.errors.append(f"safe apply verification failed: {exc}")
-                        pending.clear()
-                    continue
-
-                metadata_by_key = {
-                    str(metadata.get("key") or ""): metadata
-                    for metadata in metadata_batch
-                }
-                failed: Dict[str, RefreshMutation] = {}
-                for item_key, mutation in pending.items():
-                    metadata = metadata_by_key.get(item_key)
-                    if metadata is None:
-                        failed[item_key] = mutation
+            try:
+                for mutation in report.items:
+                    if not mutation.has_safe_changes:
                         continue
                     try:
-                        _verify_applied_mutation(mutation, metadata)
-                    except RuntimeError:
-                        failed[item_key] = mutation
+                        await writer.write_safe_mutation(
+                            mutation.item_key,
+                            set_keys=mutation.safe_set_keys,
+                            add_tags=mutation.add_tags,
+                            remove_tags=mutation.remove_tags,
+                            fields=mutation.safe_fields,
+                        )
+                    except Exception as exc:
+                        mutation.errors.append(f"safe apply failed: {exc}")
                         continue
-                    mutation.applied = True
-                    report.applied_count += 1
-                pending = failed
+                    pending[mutation.item_key] = mutation
+
+                for attempt, delay in enumerate((1.0, 2.0, 4.0, 0.0)):
+                    if not pending:
+                        break
+                    if delay:
+                        await asyncio.sleep(delay)
+                    try:
+                        metadata_batch = await zotero.get_items(
+                            list(pending),
+                            concurrency=settings.max_concurrency,
+                        )
+                    except Exception as exc:
+                        if attempt == 3:
+                            for mutation in pending.values():
+                                mutation.errors.append(f"safe apply verification failed: {exc}")
+                            pending.clear()
+                        continue
+
+                    metadata_by_key = {
+                        str(metadata.get("key") or ""): metadata
+                        for metadata in metadata_batch
+                    }
+                    failed: Dict[str, RefreshMutation] = {}
+                    for item_key, mutation in pending.items():
+                        metadata = metadata_by_key.get(item_key)
+                        if metadata is None:
+                            failed[item_key] = mutation
+                            continue
+                        try:
+                            _verify_applied_mutation(mutation, metadata)
+                        except RuntimeError:
+                            failed[item_key] = mutation
+                            continue
+                        mutation.applied = True
+                        report.applied_count += 1
+                    pending = failed
+            finally:
+                if local_writer is not None:
+                    await local_writer.aclose()
 
             for mutation in pending.values():
                 mutation.errors.append("safe apply verification failed after bounded retries")

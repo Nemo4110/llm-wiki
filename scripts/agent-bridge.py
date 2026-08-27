@@ -1167,6 +1167,18 @@ def cmd_zotero_refresh(args: argparse.Namespace) -> int:
         print(_md_info(f"Error: MCP config not found: {mcp_config_path}"))
         return 1
 
+    write_backend = getattr(args, "write_backend", "web") or "web"
+    local_store_path = None
+    local_base_url = None
+    if write_backend == "local":
+        local_cfg = enrichment_config.get("local") or {}
+        local_base_url = str(local_cfg.get("base_url") or "").strip() or None
+        local_store_path = (wiki_root / "var" / "zotero-local.json").resolve()
+        var_root = (wiki_root / "var").resolve()
+        if local_store_path != var_root and var_root not in local_store_path.parents:
+            print(_md_info("Error: local write key store must stay under the project var/ directory."))
+            return 1
+
     try:
         report = asyncio.run(
             run_live_refresh(
@@ -1180,6 +1192,9 @@ def cmd_zotero_refresh(args: argparse.Namespace) -> int:
                 limit=args.limit,
                 force=args.force,
                 apply_safe=args.apply_safe,
+                write_backend=write_backend,
+                local_store_path=local_store_path,
+                local_base_url=local_base_url,
             )
         )
     except Exception as exc:
@@ -1213,7 +1228,11 @@ def cmd_zotero_refresh(args: argparse.Namespace) -> int:
     lines: List[str] = []
     lines.append(_md_header(f"Zotero Refresh: {report.collection_name}"))
     lines.append("")
-    mode = "Applied safe updates through Zotero MCP with write-back verification." if args.apply_safe else "Dry-run only. No Zotero fields or tags were modified."
+    if args.apply_safe:
+        backend_label = "Zotero 10 local API" if write_backend == "local" else "Zotero MCP"
+        mode = f"Applied safe updates through {backend_label} with write-back verification."
+    else:
+        mode = "Dry-run only. No Zotero fields or tags were modified."
     lines.append(_md_info(mode))
     lines.append("")
     lines.append(_md_header("Summary", level=3))
@@ -1277,6 +1296,53 @@ def cmd_zotero_refresh(args: argparse.Namespace) -> int:
         for item in report.items
     )
     return 1 if args.apply_safe and apply_failed else 0
+
+
+def cmd_zotero_local_auth(args: argparse.Namespace) -> int:
+    """Authorize llm-wiki for direct Zotero 10 local writes; store the reusable key.
+
+    Temporary boundary relaxation: writes may go direct to the Zotero 10 local API
+    while reads stay on MCP. See docs/ZOTERO_MCP_INTEGRATION.md.
+    """
+    import asyncio
+
+    from src.llm_wiki.config import load_config
+    from src.llm_wiki.core import find_wiki_root
+    from src.llm_wiki.zotero_local import authorize_local
+
+    wiki_root = find_wiki_root(PROJECT_ROOT)
+    if not wiki_root:
+        print(_md_info("Error: Cannot find wiki root."))
+        return 1
+
+    config = load_config(wiki_root)
+    local_cfg = (config.get("zotero_enrichment") or {}).get("local") or {}
+    base_url = str(local_cfg.get("base_url") or "").strip() or None
+
+    store_path = (wiki_root / "var" / "zotero-local.json").resolve()
+    var_root = (wiki_root / "var").resolve()
+    if store_path != var_root and var_root not in store_path.parents:
+        print(_md_info("Error: local write key store must stay under the project var/ directory."))
+        return 1
+
+    app_name = str(getattr(args, "app_name", "") or "llm-wiki")
+
+    lines = [_md_header("Zotero Local Write Authorization"), ""]
+    lines.append(_md_info("A dialog will appear in Zotero Desktop — choose 'Always Allow' for a reusable key."))
+    kwargs: Dict[str, Any] = {}
+    if base_url:
+        kwargs["base_url"] = base_url
+    try:
+        asyncio.run(authorize_local(app_name, store_path, **kwargs))
+    except Exception as exc:
+        LOG.exception("Zotero local authorization failed")
+        print(_md_info(f"Error: authorization failed: {exc}"))
+        return 1
+
+    lines.append(_md_info(f"Reusable key stored at `{store_path}` (gitignored, mode 0600; key not shown)."))
+    lines.append(_md_action("You can now run `zotero-refresh --apply-safe --write-backend local`."))
+    print("\n".join(lines))
+    return 0
 
 
 # ---------------------------------------------------------------------------
@@ -1365,7 +1431,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     refresh_parser.add_argument(
         "--apply-safe",
         action="store_true",
-        help="Apply only Extra, llm-wiki status tag, and safe URL updates through MCP",
+        help="Apply only Extra, llm-wiki status tag, and safe URL updates via the selected write backend",
     )
     refresh_parser.add_argument(
         "--manifest-out",
@@ -1380,6 +1446,27 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--mcp-server",
         default="zotero",
         help="Configured MCP server name (default: zotero)",
+    )
+    refresh_parser.add_argument(
+        "--write-backend",
+        choices=["web", "local"],
+        default="web",
+        help=(
+            "Write backend for --apply-safe: 'web' routes writes through zotero-mcp "
+            "(default, unchanged); 'local' writes directly via the Zotero 10 local API "
+            "(temporary; requires `zotero-local-auth` first). Reads always use MCP."
+        ),
+    )
+
+    # zotero-local-auth
+    local_auth_parser = subparsers.add_parser(
+        "zotero-local-auth",
+        help="Authorize llm-wiki for direct Zotero 10 local API writes (stores a reusable key under var/)",
+    )
+    local_auth_parser.add_argument(
+        "--app-name",
+        default="llm-wiki",
+        help="Application name shown in the Zotero authorization dialog (default: llm-wiki)",
     )
 
     args = parser.parse_args(argv)
@@ -1397,6 +1484,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "index": cmd_index,
         "zotero-plan": cmd_zotero_plan,
         "zotero-refresh": cmd_zotero_refresh,
+        "zotero-local-auth": cmd_zotero_local_auth,
     }
 
     handler = dispatch.get(args.command)

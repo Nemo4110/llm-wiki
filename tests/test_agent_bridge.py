@@ -488,6 +488,62 @@ class TestCmdZoteroRefresh:
         assert rc == 1
         assert "must stay under" in out
 
+    def test_refresh_threads_write_backend_and_local_store(
+        self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys
+    ):
+        from src.llm_wiki.zotero_refresh import RefreshReport
+        import src.llm_wiki.zotero_refresh as refresh_module
+
+        (temp_wiki_root / ".mcp.json").write_text(
+            '{"mcpServers":{"zotero":{"command":"ignored"}}}',
+            encoding="utf-8",
+        )
+
+        captured = {}
+
+        async def fake_run(*args, **kwargs):
+            captured.update(kwargs)
+            return RefreshReport(collection_key="K", collection_name="C", items=[])
+
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        monkeypatch.setattr(refresh_module, "run_live_refresh", fake_run)
+        rc = agent_bridge_module.main([
+            "zotero-refresh",
+            "--collection-key",
+            "K",
+            "--apply-safe",
+            "--write-backend",
+            "local",
+        ])
+        assert rc == 0
+        assert captured.get("write_backend") == "local"
+        store = captured.get("local_store_path")
+        assert store is not None
+        assert str(store).startswith(str(temp_wiki_root / "var"))
+
+    def test_refresh_write_backend_defaults_to_web(
+        self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys
+    ):
+        from src.llm_wiki.zotero_refresh import RefreshReport
+        import src.llm_wiki.zotero_refresh as refresh_module
+
+        (temp_wiki_root / ".mcp.json").write_text(
+            '{"mcpServers":{"zotero":{"command":"ignored"}}}',
+            encoding="utf-8",
+        )
+
+        captured = {}
+
+        async def fake_run(*args, **kwargs):
+            captured.update(kwargs)
+            return RefreshReport(collection_key="K", collection_name="C", items=[])
+
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        monkeypatch.setattr(refresh_module, "run_live_refresh", fake_run)
+        rc = agent_bridge_module.main(["zotero-refresh", "--collection-key", "K"])
+        assert rc == 0
+        assert captured.get("write_backend") == "web"
+
     def test_refresh_rejects_manifest_outside_temp(
         self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys
     ):
@@ -519,3 +575,27 @@ class TestCmdZoteroRefresh:
 
         assert rc == 1
         assert "must stay under" in out
+
+
+class TestCmdZoteroLocalAuth:
+    def test_local_auth_stores_key_under_var(
+        self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys
+    ):
+        import src.llm_wiki.zotero_local as zl
+
+        captured = {}
+
+        async def fake_authorize(app_name, store_path, **kwargs):
+            captured["app_name"] = app_name
+            captured["store_path"] = store_path
+            return "KEY"
+
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        monkeypatch.setattr(zl, "authorize_local", fake_authorize)
+        rc = agent_bridge_module.main(["zotero-local-auth"])
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert captured["app_name"] == "llm-wiki"
+        assert str(captured["store_path"]).startswith(str(temp_wiki_root / "var"))
+        assert "local" in out.lower()
