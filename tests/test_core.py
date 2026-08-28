@@ -251,3 +251,49 @@ class TestIngestResult:
         assert r.new_pages == []
         assert r.updated_pages == []
         assert r.insights == []
+
+
+class TestWikiManagerNaming:
+    """P0: create_page/get_page 接入 sanitize_title_stem,前向兼容。"""
+
+    def test_create_page_sanitizes_illegal_chars(self, wiki_manager):
+        path = wiki_manager.create_page("LoRA: Low-Rank Adaptation", "# LoRA: Low-Rank Adaptation\n", {})
+        assert path.name == "LoRA-Low-Rank-Adaptation.md"
+
+    def test_create_page_truncates_long_cjk_title(self, wiki_manager):
+        path = wiki_manager.create_page("深" * 100, "# T\n", {})
+        assert len(path.stem.encode("utf-8")) <= 120
+
+    def test_get_page_finds_sanitized_name(self, wiki_manager):
+        wiki_manager.create_page("LoRA: Low-Rank", "# LoRA: Low-Rank\n", {})
+        page = wiki_manager.get_page("LoRA: Low-Rank")
+        assert page is not None
+        assert page.path.name == "LoRA-Low-Rank.md"
+
+    def test_get_page_still_finds_legacy_names(self, wiki_manager):
+        legacy = wiki_manager.wiki_dir / "Legacy: Name.md"
+        legacy.write_text("---\nstatus: active\n---\n\n# Legacy: Name\n\nbody\n", encoding="utf-8")
+        page = wiki_manager.get_page("Legacy: Name")
+        assert page is not None
+        assert page.path.name == "Legacy: Name.md"
+
+    def test_create_page_collision_suffix_for_distinct_titles(self, wiki_manager):
+        first = wiki_manager.create_page("A B", "# A B\n", {})
+        second = wiki_manager.create_page("A: B", "# A: B\n", {})
+        assert first.name == "A-B.md"
+        assert second.name == "A-B-1.md"
+
+    def test_create_page_same_title_overwrites_in_place(self, wiki_manager):
+        wiki_manager.create_page("Same Title", "# Same Title\n\nv1\n", {})
+        path = wiki_manager.create_page("Same Title", "# Same Title\n\nv2\n", {})
+        assert path.name == "Same-Title.md"
+        assert "v2" in path.read_text(encoding="utf-8")
+        assert not (wiki_manager.wiki_dir / "Same-Title-1.md").exists()
+
+    def test_update_page_does_not_rename_legacy_file(self, wiki_manager):
+        legacy = wiki_manager.wiki_dir / "Legacy: Name.md"
+        legacy.write_text("---\nstatus: active\n---\n\n# Legacy: Name\n\nold body\n", encoding="utf-8")
+        wiki_manager.update_page("Legacy: Name", "new section body")
+        assert legacy.exists()
+        assert "new section body" in legacy.read_text(encoding="utf-8")
+        assert not (wiki_manager.wiki_dir / "Legacy-Name.md").exists()

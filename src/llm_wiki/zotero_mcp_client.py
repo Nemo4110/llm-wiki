@@ -141,13 +141,40 @@ class ZoteroMCPClient:
         *,
         concurrency: int = 4,
     ) -> List[Dict[str, Any]]:
+        items, failures = await self.get_items_tolerant(item_keys, concurrency=concurrency)
+        if failures:
+            key, message = failures[0]
+            raise ZoteroMCPError(f"metadata load failed for {key}: {message}")
+        return items
+
+    async def get_items_tolerant(
+        self,
+        item_keys: Sequence[str],
+        *,
+        concurrency: int = 4,
+    ) -> Tuple[List[Dict[str, Any]], List[Tuple[str, str]]]:
+        """逐条容错加载:成功项保持输入顺序,失败项降级为 (key, error) 记录。
+
+        单个失效 key(如 Zotero 条目合并/删除后悬空的旧 key)不再导致
+        整个批次崩溃;调用方负责把 failures 降级为待修复记录。
+        """
         semaphore = asyncio.Semaphore(max(1, concurrency))
 
         async def load(item_key: str) -> Dict[str, Any]:
             async with semaphore:
                 return await self.get_item_metadata(item_key)
 
-        return list(await asyncio.gather(*(load(key) for key in item_keys)))
+        results = await asyncio.gather(
+            *(load(key) for key in item_keys), return_exceptions=True
+        )
+        items: List[Dict[str, Any]] = []
+        failures: List[Tuple[str, str]] = []
+        for key, result in zip(item_keys, results):
+            if isinstance(result, BaseException):
+                failures.append((key, str(result)))
+            else:
+                items.append(result)
+        return items, failures
 
     async def write_safe_mutation(
         self,

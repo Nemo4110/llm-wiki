@@ -450,6 +450,9 @@ def test_run_live_refresh_local_backend_writes_via_local_writer(tmp_path, monkey
         async def get_items(self, keys, *, concurrency=4):
             return [db[k] for k in keys]
 
+        async def get_items_tolerant(self, keys, *, concurrency=4):
+            return [db[k] for k in keys], []
+
         async def write_safe_mutation(self, item_key, **kwargs):
             raise AssertionError("MCP write path must NOT be used in local backend")
 
