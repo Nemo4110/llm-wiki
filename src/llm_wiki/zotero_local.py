@@ -3,12 +3,15 @@
 Reads remain MCP-backed for normal collection workflows. This module is the
 explicitly authorized temporary write path documented in the Zotero integration
 protocol. It only talks to loopback, discovers the live Zotero server ID, guards
-writes by item version, retries one 412 conflict, and verifies every accepted
-PATCH with a fresh GET.
+writes by item version, retries 412 conflicts with bounded exponential backoff,
+and verifies every accepted PATCH with a fresh GET. Reciprocal Related-item
+writes are compensated: if the second direction fails, the first direction's
+addition is rolled back so no asymmetric residue is left behind.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -30,6 +33,7 @@ _ITEM_KEY_RE = re.compile(r"^[A-Z0-9]{8}$")
 _MAX_WRITE_TIMEOUT = 60.0
 _MAX_AUTH_TIMEOUT = 300.0
 _RELATION_PREDICATE = "dc:relation"
+_DEFAULT_RETRY_DELAYS = (0.5, 1.0, 2.0)
 
 
 class LocalWriteError(RuntimeError):
@@ -214,6 +218,7 @@ class LocalZoteroWriter:
         user_prefix: str = DEFAULT_USER_PREFIX,
         timeout: float = 20.0,
         http: Optional[httpx.AsyncClient] = None,
+        retry_delays: Optional[Sequence[float]] = None,
     ) -> None:
         _validate_loopback(base_url)
         self._api_key = str(api_key or "")
@@ -223,6 +228,23 @@ class LocalZoteroWriter:
         self._http = http
         self._owns_http = http is None
         self._server_id_cache: Optional[str] = None
+        delays = tuple(
+            float(d) for d in (retry_delays if retry_delays is not None else _DEFAULT_RETRY_DELAYS)
+        )
+        if any(d < 0 for d in delays):
+            raise LocalWriteError("retry_delays must be non-negative seconds")
+        self._retry_delays = delays
+
+    @property
+    def _max_attempts(self) -> int:
+        return 1 + len(self._retry_delays)
+
+    async def _backoff_before_retry(self, attempt: int) -> None:
+        """Sleep the configured delay before retry number `attempt` (1-based)."""
+        delay = self._retry_delays[attempt - 1]
+        if delay:
+            LOG.info("backing off %.2fs before retry %d", delay, attempt)
+            await asyncio.sleep(delay)
 
     async def _client(self) -> httpx.AsyncClient:
         if self._http is None:
@@ -384,8 +406,8 @@ class LocalZoteroWriter:
     ) -> LocalMutationResult:
         """GET, delta, versioned PATCH, GET, and exact verification.
 
-        A single 412 conflict is retried from a fresh GET so concurrent unrelated
-        tag and Extra updates are retained. No further retry is attempted.
+        412 conflicts are retried from a fresh GET with bounded exponential
+        backoff so concurrent unrelated tag and Extra updates are retained.
         """
         key = _validate_item_key(item_key)
         normalized_keys = {
@@ -399,7 +421,7 @@ class LocalZoteroWriter:
         if not (normalized_keys or add or remove or field_updates):
             return LocalMutationResult(key, "skipped_current", 0)
 
-        for attempt in (1, 2):
+        for attempt in range(1, self._max_attempts + 1):
             before = await self.get_item(key)
             patch, expectation = self._build_mutation(
                 before.data,
@@ -421,11 +443,15 @@ class LocalZoteroWriter:
             )
             accepted = await self._patch_item_once(key, patch, before.version)
             if not accepted:
-                if attempt == 1:
-                    LOG.warning("local write %s hit a version conflict; retrying once", key)
+                if attempt <= len(self._retry_delays):
+                    LOG.warning(
+                        "local write %s hit a version conflict (attempt %d); backing off",
+                        key, attempt,
+                    )
+                    await self._backoff_before_retry(attempt)
                     continue
                 raise LocalWriteError(
-                    f"PATCH item {key} conflicted twice; no further retry attempted"
+                    f"PATCH item {key} conflicted {attempt} times; no further retry attempted"
                 )
 
             after = await self.get_item(key)
@@ -458,17 +484,19 @@ class LocalZoteroWriter:
         )
 
     async def _ensure_relation_direction(self, item_key: str, related_uri: str) -> bool:
-        for attempt in (1, 2):
+        for attempt in range(1, self._max_attempts + 1):
             item = await self.get_item(item_key)
             if related_uri in _relation_values(item.data.get("relations")):
                 return False
             patch = {"relations": _relations_with_uri(item.data.get("relations"), related_uri)}
             accepted = await self._patch_item_once(item.key, patch, item.version)
             if not accepted:
-                if attempt == 1:
+                if attempt <= len(self._retry_delays):
+                    await self._backoff_before_retry(attempt)
                     continue
                 raise LocalWriteError(
-                    f"PATCH item {item.key} relation conflicted twice; no further retry attempted"
+                    f"PATCH item {item.key} relation conflicted {attempt} times; "
+                    "no further retry attempted"
                 )
             verified = await self.get_item(item.key)
             if related_uri not in _relation_values(verified.data.get("relations")):
@@ -478,12 +506,51 @@ class LocalZoteroWriter:
             return True
         return False
 
+    async def _remove_relation_direction(self, item_key: str, related_uri: str) -> None:
+        """补偿回滚:移除同一次 ensure_relation_pair 调用刚写入的单向关联。
+
+        仅用于事务补偿,不移除预先存在的关联——若 URI 在首次 GET 时就不在,
+        直接返回。
+        """
+        for attempt in range(1, self._max_attempts + 1):
+            item = await self.get_item(item_key)
+            values = _relation_values(item.data.get("relations"))
+            if related_uri not in values:
+                return
+            relations = dict(item.data.get("relations") or {})
+            remaining = [value for value in values if value != related_uri]
+            if remaining:
+                relations[_RELATION_PREDICATE] = remaining
+            else:
+                relations.pop(_RELATION_PREDICATE, None)
+            accepted = await self._patch_item_once(item.key, {"relations": relations}, item.version)
+            if not accepted:
+                if attempt <= len(self._retry_delays):
+                    await self._backoff_before_retry(attempt)
+                    continue
+                raise LocalWriteError(
+                    f"compensation failed for item {item.key}: relation removal conflicted "
+                    f"{attempt} times"
+                )
+            verified = await self.get_item(item.key)
+            if related_uri in _relation_values(verified.data.get("relations")):
+                raise LocalWriteError(
+                    f"compensation verification failed for item {item.key}: "
+                    "Related-item removal did not persist"
+                )
+            return
+
     async def ensure_relation_pair(
         self,
         source_key: str,
         target_key: str,
     ) -> RelationWriteResult:
-        """Ensure a user-reviewed reciprocal Related-item pair, without removals."""
+        """Ensure a user-reviewed reciprocal Related-item pair.
+
+        The only removal this method may perform is compensating rollback: if
+        the second direction fails after the first was written, the just-added
+        relation on the source is removed so no asymmetric residue remains.
+        """
         source = await self.get_item(source_key)
         target = await self.get_item(target_key)
         if source.key == target.key:
@@ -496,12 +563,30 @@ class LocalZoteroWriter:
             raise LocalWriteError("reviewed Related items must belong to the same real Zotero library")
 
         changed: List[str] = []
+        source_changed = False
         if target.uri not in _relation_values(source.data.get("relations")):
             if await self._ensure_relation_direction(source.key, target.uri):
                 changed.append(source.key)
-        if source.uri not in _relation_values(target.data.get("relations")):
-            if await self._ensure_relation_direction(target.key, source.uri):
-                changed.append(target.key)
+                source_changed = True
+        try:
+            if source.uri not in _relation_values(target.data.get("relations")):
+                if await self._ensure_relation_direction(target.key, source.uri):
+                    changed.append(target.key)
+        except Exception as exc:
+            if source_changed:
+                LOG.warning(
+                    "second relation direction failed for %s/%s; compensating %s",
+                    source.key, target.key, source.key,
+                )
+                try:
+                    await self._remove_relation_direction(source.key, target.uri)
+                except LocalWriteError as compensation_exc:
+                    raise LocalWriteError(
+                        f"Related-item pair {source.key}/{target.key} failed ({exc}); "
+                        f"compensation also failed ({compensation_exc}); "
+                        "asymmetric relation residue requires manual cleanup"
+                    ) from exc
+            raise
 
         audit = await self.audit_relation_pair(source.key, target.key)
         if not audit.reciprocal:

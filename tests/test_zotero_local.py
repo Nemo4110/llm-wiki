@@ -500,3 +500,156 @@ def test_run_live_refresh_local_backend_writes_via_local_writer(tmp_path, monkey
     # a DOI-missing academic item yields a safe mutation, applied via the local writer
     assert report.applied_count == 1
     assert report.items[0].applied is True
+
+
+def _items_state(source_relations=None, target_relations=None):
+    target_key = "TARGET01"
+    source_uri = f"http://zotero.org/users/1234/items/{ITEM_KEY}"
+    target_uri = f"http://zotero.org/users/1234/items/{target_key}"
+    items = {
+        ITEM_KEY: {
+            "key": ITEM_KEY, "version": 5, "library": {"type": "user", "id": 1234},
+            "data": {"key": ITEM_KEY, "version": 5,
+                     "relations": {"dc:relation": list(source_relations or [])}},
+        },
+        target_key: {
+            "key": target_key, "version": 9, "library": {"type": "user", "id": 1234},
+            "data": {"key": target_key, "version": 9,
+                     "relations": {"dc:relation": list(target_relations or [])}},
+        },
+    }
+    return items, target_key, source_uri, target_uri
+
+
+def _relation_handler(items, captured, fail_patch_for=(), fail_times=None):
+    """MockTransport handler; fail_patch_for keys get HTTP 500 on PATCH (fail_times bounds it)."""
+    fails = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/":
+            return httpx.Response(200, headers={"Zotero-Server-ID": SERVER_ID})
+        key = request.url.path.rsplit("/", 1)[-1]
+        if key not in items:
+            return httpx.Response(404)
+        if request.method == "GET":
+            return httpx.Response(200, json=items[key])
+        if request.method == "PATCH":
+            captured.append((key, json.loads(request.content)))
+            if key in fail_patch_for and (fail_times is None or fails["n"] < fail_times):
+                fails["n"] += 1
+                return httpx.Response(500, text="boom")
+            body = json.loads(request.content)
+            items[key]["data"].update(body)
+            items[key]["version"] += 1
+            items[key]["data"]["version"] = items[key]["version"]
+            return httpx.Response(204)
+        return httpx.Response(404)
+
+    return handler
+
+
+def test_write_retries_conflicts_with_bounded_backoff():
+    state = {"item": json.loads(json.dumps(BASE_ITEM))}
+    conflicts = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/":
+            return httpx.Response(200, headers={"Zotero-Server-ID": SERVER_ID})
+        if request.method == "GET":
+            return httpx.Response(200, json=state["item"])
+        if request.method == "PATCH":
+            if conflicts["n"] < 2:
+                conflicts["n"] += 1
+                return httpx.Response(412)
+            body = json.loads(request.content)
+            state["item"]["data"].update(body)
+            state["item"]["version"] += 1
+            state["item"]["data"]["version"] = state["item"]["version"]
+            return httpx.Response(204)
+        return httpx.Response(404)
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    writer = LocalZoteroWriter(API_KEY, http=http, retry_delays=(0, 0, 0))
+
+    result = run(writer.write_safe_mutation(ITEM_KEY, add_tags=["llm-wiki:ingested"]))
+
+    assert result.status == "updated_verified"
+    assert result.attempts == 3
+
+
+def test_write_exhausts_bounded_retries():
+    attempts = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/":
+            return httpx.Response(200, headers={"Zotero-Server-ID": SERVER_ID})
+        if request.method == "GET":
+            return httpx.Response(200, json=json.loads(json.dumps(BASE_ITEM)))
+        if request.method == "PATCH":
+            attempts["n"] += 1
+            return httpx.Response(412)
+        return httpx.Response(404)
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    writer = LocalZoteroWriter(API_KEY, http=http, retry_delays=(0, 0))
+
+    with pytest.raises(LocalWriteError, match="conflicted"):
+        run(writer.write_safe_mutation(ITEM_KEY, add_tags=["llm-wiki:ingested"]))
+    assert attempts["n"] == 3  # 1 次初始 + 2 次退避重试
+
+
+def test_relation_pair_compensates_when_second_direction_fails():
+    items, target_key, source_uri, target_uri = _items_state()
+    captured = []
+    handler = _relation_handler(items, captured, fail_patch_for={target_key})
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    writer = LocalZoteroWriter(API_KEY, http=http, retry_delays=(0,))
+
+    with pytest.raises(LocalWriteError):
+        run(writer.ensure_relation_pair(ITEM_KEY, target_key))
+
+    # 第一次 source PATCH 添加 target_uri;第二次 source PATCH 补偿移除
+    source_patches = [body for key, body in captured if key == ITEM_KEY]
+    assert len(source_patches) == 2
+    added = source_patches[0]["relations"]["dc:relation"]
+    removed = source_patches[1]["relations"].get("dc:relation", [])
+    assert target_uri in added
+    assert target_uri not in removed
+    final = items[ITEM_KEY]["data"]["relations"].get("dc:relation", [])
+    assert target_uri not in final
+
+
+def test_relation_pair_reports_residue_when_compensation_fails():
+    items, target_key, source_uri, target_uri = _items_state()
+    captured = []
+    # target 永远 500;source 第二次 PATCH(补偿)也失败
+    fail_calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/":
+            return httpx.Response(200, headers={"Zotero-Server-ID": SERVER_ID})
+        key = request.url.path.rsplit("/", 1)[-1]
+        if key not in items:
+            return httpx.Response(404)
+        if request.method == "GET":
+            return httpx.Response(200, json=items[key])
+        if request.method == "PATCH":
+            captured.append((key, json.loads(request.content)))
+            if key == target_key:
+                return httpx.Response(500, text="boom")
+            if key == ITEM_KEY:
+                fail_calls["n"] += 1
+                if fail_calls["n"] > 1:  # 补偿写入失败
+                    return httpx.Response(500, text="boom")
+            body = json.loads(request.content)
+            items[key]["data"].update(body)
+            items[key]["version"] += 1
+            items[key]["data"]["version"] = items[key]["version"]
+            return httpx.Response(204)
+        return httpx.Response(404)
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    writer = LocalZoteroWriter(API_KEY, http=http, retry_delays=(0,))
+
+    with pytest.raises(LocalWriteError, match="compensation"):
+        run(writer.ensure_relation_pair(ITEM_KEY, target_key))
