@@ -29,7 +29,7 @@ Keep this file as the operational skill. Use `README.md` for user-facing overvie
 | Ingest source material | Protocol mode | Requires LLM judgment: read source, extract metadata, create/update pages. |
 | Answer wiki questions | Protocol mode | Read `wiki/index.md`, relevant pages, and link neighbors; synthesize with `[[PageName]]` citations. |
 | Apply relation updates | Hybrid | Let `agent-bridge.py` discover candidates, then review and merge only safe changes. |
-| Plan/apply Zotero attachment relocation | Hybrid | Use `zotero-relocate`; review dry-run, require local authorization for apply, and never bypass the Phase 0/API gate. |
+| Plan/apply Zotero attachment relocation | Hybrid | Use `zotero-relocate`; review dry-run, require local authorization for apply, and never bypass the Phase 0/API gate. Read the managed root from `config.yaml` `zotero_relocation.root` (prefer a cloud-synced path for cross-device use); `--root` is only a one-off override. |
 
 Agent Bridge quick commands:
 
@@ -47,7 +47,7 @@ Agent Bridge quick commands:
 <PY> scripts/agent-bridge.py zotero-ingest-verify --snapshot temp/zotero-snapshot.yaml --allocation temp/zotero-allocation.yaml --report-out temp/zotero-ingest-report.yaml
 <PY> scripts/agent-bridge.py zotero-heal --snapshot temp/zotero-snapshot.yaml --manifest-out temp/zotero-heal.yaml
 <PY> scripts/agent-bridge.py zotero-writeback --plan temp/zotero-write-plan.yaml --action audit --report-out temp/zotero-write-audit.yaml
-<PY> scripts/agent-bridge.py zotero-relocate --root "/absolute/path/to/managed-attachments"
+<PY> scripts/agent-bridge.py zotero-relocate
 ```
 
 Use legacy `python -m src.llm_wiki ...` only for human scripting or debugging. Do not use the legacy CLI as a substitute for LLM judgment during ingest.

@@ -213,8 +213,8 @@ python scripts/agent-bridge.py zotero-ingest-verify \
 python scripts/agent-bridge.py zotero-writeback --plan temp/zotero-write-plan.yaml \
   --action audit --report-out temp/zotero-write-audit.yaml
 
-# Plan controlled attachment relocation (apply requires explicit config + local authorization)
-python scripts/agent-bridge.py zotero-relocate --root "/absolute/path/to/managed-attachments"
+# Plan controlled attachment relocation (root comes from config.yaml; apply needs explicit config + local authorization)
+python scripts/agent-bridge.py zotero-relocate
 
 # Apply relocation only after reviewing the dry-run report
 python scripts/agent-bridge.py zotero-relocate --apply --report-out temp/zotero-relocate.yaml
@@ -241,6 +241,8 @@ python scripts/agent-bridge.py hot
 `agent-bridge.py zotero-writeback` is the temporary, explicitly authorized Zotero 10 loopback exception for additions that the current MCP cannot express. It accepts only a secret-free `mode: authorized-write` plan (example: `docs/examples/zotero-write-plan.example.yaml`), supports separate `audit`, `apply`, and `verify` phases, adds only `llm-wiki:*` tags, and ensures reviewed reciprocal Related pairs. It preserves existing tag objects, retries one version conflict from a fresh GET, and verifies every accepted PATCH. Metadata, collection membership, notes, tag removal, and Trash remain out of scope. `--memory-authorize` keeps the key in process memory only.
 
 `agent-bridge.py zotero-relocate` is the opt-in, verified attachment relocation workflow. It plans from `sources/zotero/metadata.yaml` bindings but reads the current attachment path from Zotero, never overwrites an existing target, and defaults to dry-run. Apply requires `zotero_relocation.enabled: true`, local Zotero authorization, and a path template/root that pass the capability and containment checks. It changes only the attachment's `linkMode`/`path`, preserves the original item key, updates private metadata and aliases after post-write verification, never edits notes, and leaves old sources in place unless explicitly configured for scoped cleanup. See `docs/ZOTERO_ATTACHMENT_RELOCATION.md` for the Phase 0 API gate and recovery rules.
+
+Configure the managed attachment root once in `config.yaml` under `zotero_relocation.root` rather than passing `--root` on every run; `config.yaml` is gitignored, so each machine keeps its own value. For cross-device sync, point `root` at a cloud-synced folder and use environment-variable interpolation to keep the path portable, e.g. `root: "${OneDrive}/zotero-attachments"` (Windows resolves `${OneDrive}`). When devices run different operating systems (e.g. Windows + Linux), absolute paths can never match; set `zotero_relocation.base_dir_relative: true` so Zotero stores portable `attachments:<relative>` paths, and point Zotero's **Linked Attachment Base Directory** at the synced root on each device. Note the sync caveat: a stored→linked conversion may stop Zotero File Sync from managing the file bytes, so every device must be able to reach the same synced root.
 
 #### Depth lint warnings
 

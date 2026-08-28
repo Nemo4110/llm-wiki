@@ -178,8 +178,8 @@ python scripts/agent-bridge.py zotero-ingest-verify \
 python scripts/agent-bridge.py zotero-writeback --plan temp/zotero-write-plan.yaml \
   --action audit --report-out temp/zotero-write-audit.yaml
 
-# 规划受控附件搬迁（apply 需要显式配置和本地授权）
-python scripts/agent-bridge.py zotero-relocate --root "/absolute/path/to/managed-attachments"
+# 规划受控附件搬迁（root 来自 config.yaml；apply 需要显式配置和本地授权）
+python scripts/agent-bridge.py zotero-relocate
 
 # 审阅 dry-run 报告后再执行搬迁
 python scripts/agent-bridge.py zotero-relocate --apply --report-out temp/zotero-relocate.yaml
@@ -206,6 +206,8 @@ python scripts/agent-bridge.py hot
 `agent-bridge.py zotero-writeback` 是临时、显式授权的 Zotero 10 loopback 写入例外，用于当前 MCP 无法表达的已审核 addition。它只接受不含 secret 的 `mode: authorized-write` plan（示例：`docs/examples/zotero-write-plan.example.yaml`），将 `audit`、`apply`、`verify` 分阶段执行，只增量添加 `llm-wiki:*` tag 并确保经过审核的双向 Related pair。实现会保留已有 tag object，在版本冲突时基于最新 GET 最多重试一次，并对每个 PATCH 做回读验证。metadata、collection membership、note、tag 删除和 Trash 都不在授权范围内；`--memory-authorize` 使 key 只保存在当前进程内存。
 
 `agent-bridge.py zotero-relocate` 是显式开启、带回读验证的附件搬迁流程。它以 `sources/zotero/metadata.yaml` 作为绑定入口，但从 Zotero 重新读取当前附件路径，不覆盖既有目标，默认只做 dry-run。apply 需要 `zotero_relocation.enabled: true`、Zotero 本地授权，以及通过能力契约和 containment 校验的根目录与模板。它只更新附件的 `linkMode` / `path`，保留原 attachment item key，在写回验证成功后再更新私有 metadata 和 alias；不修改 note，旧源也不会删除，除非另行显式配置受控清理。详见 `docs/ZOTERO_ATTACHMENT_RELOCATION.md`。
+
+受管附件根目录请在 `config.yaml` 的 `zotero_relocation.root` 中配置一次，而不是每次用 `--root` 传入；`config.yaml` 已被 gitignore，每台机器可各自维护。跨设备同步时，建议把 `root` 指向网盘同步目录，并用环境变量插值保持路径可移植，例如 `root: "${OneDrive}/zotero-attachments"`（Windows 会解析 `${OneDrive}`）。当设备运行不同操作系统（如 Windows + Linux）时，绝对路径永远不可能一致，应再设置 `zotero_relocation.base_dir_relative: true`，让写回 Zotero 的路径变为可移植的 `attachments:<相对路径>` 形式，并在每台设备上把 Zotero 的 **Linked Attachment Base Directory** 指向本机的同步根目录。注意同步影响：stored→linked 转换后文件字节可能不再由 Zotero 同步管理，因此每台设备都必须能访问同一个网盘根目录。
 
 #### 内容深度 lint 告警
 
