@@ -102,13 +102,129 @@ items:
     )
 
     item = plan.items[0]
+    # 主题标签来自 wiki 页面 tags(默认 ["AI/ML"]);页面 stem 绑定标签已退役
     assert item.desired_tags == frozenset(
-        {"llm-wiki:GNN-Foundations", "llm-wiki:ingested"}
+        {"llm-wiki:AI/ML", "llm-wiki:ingested"}
     )
     assert item.add_tags == item.desired_tags
     assert item.remove_candidates == frozenset({"GNN", "llm-wiki:Old-Topic"})
     assert item.doi_state == "arxiv-doi"
     assert "check preprint-to-publication relation" in item.actions
+
+
+def test_topic_tags_projected_from_page_tags(tmp_path):
+    wiki_dir = tmp_path / "wiki"
+    _write_page(wiki_dir, "Restic-Backup", item_key="ITEM0001", title="Restic Paper")
+
+    snapshot = tmp_path / "snap.yaml"
+    snapshot.write_text(
+        '''version: 1
+library_id: "0"
+collection:
+  name: QRF
+  key: QRFKEY01
+items:
+  - item_key: ITEM0001
+    title: Restic Paper
+    item_type: journalArticle
+    doi: ""
+    tags: []
+''',
+        encoding="utf-8",
+    )
+
+    wiki = WikiManager(wiki_dir)
+    _library_id, collection_name, _collection_key, items = load_snapshot(snapshot)
+    plan = build_zotero_plan(
+        collect_zotero_bindings(wiki), items, collection_name=collection_name
+    )
+
+    item = plan.items[0]
+    assert "llm-wiki:AI/ML" in item.desired_tags       # 页面主题标签投影
+    assert "llm-wiki:Restic-Backup" not in item.desired_tags  # 绑定标签退役
+
+
+def test_collection_equivalent_topic_tag_excluded(tmp_path):
+    wiki_dir = tmp_path / "wiki"
+    wiki_dir.mkdir(parents=True)
+    (wiki_dir / "Some-Page.md").write_text(
+        '''---
+created: 2026-08-23
+updated: 2026-08-23
+sources_meta:
+  - {title: "Paper", type: "academic_paper", zotero_item_key: "ITEM0001"}
+tags:
+  - "Ubuntu"
+  - "QRF"
+status: "active"
+---
+
+# Some Page
+
+Body.
+''',
+        encoding="utf-8",
+    )
+    snapshot = tmp_path / "snap.yaml"
+    snapshot.write_text(
+        '''version: 1
+library_id: "0"
+collection:
+  name: QRF
+  key: QRFKEY01
+items:
+  - item_key: ITEM0001
+    title: Paper
+    item_type: journalArticle
+    doi: ""
+    tags: []
+''',
+        encoding="utf-8",
+    )
+
+    wiki = WikiManager(wiki_dir)
+    _library_id, collection_name, _collection_key, items = load_snapshot(snapshot)
+    plan = build_zotero_plan(
+        collect_zotero_bindings(wiki), items, collection_name=collection_name
+    )
+
+    item = plan.items[0]
+    assert "llm-wiki:Ubuntu" in item.desired_tags
+    assert "llm-wiki:QRF" not in item.desired_tags  # 与集合同名,去重
+
+
+def test_stale_page_stem_tag_flagged_for_removal(tmp_path):
+    wiki_dir = tmp_path / "wiki"
+    _write_page(wiki_dir, "New-Topic", item_key="ITEM0001", title="Paper")
+
+    snapshot = tmp_path / "snap.yaml"
+    snapshot.write_text(
+        '''version: 1
+library_id: "0"
+collection:
+  name: GNN
+  key: A9VNJUPI
+items:
+  - item_key: ITEM0001
+    title: Paper
+    item_type: journalArticle
+    doi: ""
+    tags:
+      - llm-wiki:New-Topic
+''',
+        encoding="utf-8",
+    )
+
+    wiki = WikiManager(wiki_dir)
+    _library_id, collection_name, _collection_key, items = load_snapshot(snapshot)
+    plan = build_zotero_plan(
+        collect_zotero_bindings(wiki), items, collection_name=collection_name
+    )
+
+    item = plan.items[0]
+    # 退役的绑定标签出现在移除审查候选中
+    assert "llm-wiki:New-Topic" in item.remove_candidates
+    assert "llm-wiki:New-Topic" not in item.desired_tags
 
 
 def test_unbound_snapshot_item_is_not_marked_ingested(tmp_path):

@@ -39,10 +39,30 @@ class ZoteroBinding:
     arxiv: str = ""
     citation_key: str = ""
     library_id: str = ""
+    page_tags: tuple[str, ...] = ()
 
     @property
     def page_tag(self) -> str:
+        """退役的页面级绑定标签(2026-08-28 起不再写入,仅用于识别历史残留)。"""
         return f"{MANAGED_TAG_PREFIX}{self.page_stem}"
+
+
+def managed_topic_tags(tags: Iterable[str], collection_name: str = "") -> frozenset[str]:
+    """把 wiki 页面主题标签投影为共享托管标签。
+
+    - 逐值加 ``llm-wiki:`` 前缀,使同主题条目在 Zotero 标签选择器中聚合;
+    - 跳过与目标集合同名的标签(集合成员关系已表达该范围);
+    - 空值忽略。
+    """
+    projected = set()
+    for tag in tags:
+        name = str(tag).strip()
+        if not name:
+            continue
+        if collection_name and name.casefold() == collection_name.casefold():
+            continue
+        projected.add(f"{MANAGED_TAG_PREFIX}{name}")
+    return frozenset(projected)
 
 
 @dataclass(frozen=True)
@@ -147,6 +167,7 @@ def collect_zotero_bindings(wiki: WikiManager) -> List[ZoteroBinding]:
                     arxiv=str(source.get("arxiv") or "").strip(),
                     citation_key=str(source.get("citation_key") or "").strip(),
                     library_id=str(source.get("library_id") or "").strip(),
+                    page_tags=tuple(str(tag) for tag in page.tags),
                 )
             )
     return bindings
@@ -273,7 +294,10 @@ def build_zotero_plan(
             continue
         binding_map.setdefault(binding.item_key, []).append(binding)
 
-    known_page_tags = {binding.page_tag for binding in all_bindings}
+    # 托管标签全集 = 主题投影 ∪ 退役的页面绑定标签(后者仅用于识别历史残留)
+    known_managed_tags = {binding.page_tag for binding in all_bindings}
+    for binding in all_bindings:
+        known_managed_tags.update(managed_topic_tags(binding.page_tags, collection_name))
     if snapshot_items is None:
         snapshot_items = [
             SnapshotItem(
@@ -319,7 +343,9 @@ def build_zotero_plan(
     plans: List[ZoteroPlanItem] = []
     for item in selected_items:
         item_bindings = binding_map.get(item.item_key, [])
-        desired_tags = {binding.page_tag for binding in item_bindings}
+        desired_tags: Set[str] = set()
+        for binding in item_bindings:
+            desired_tags.update(managed_topic_tags(binding.page_tags, collection_name))
         if any(binding.ingest_complete for binding in item_bindings):
             desired_tags.add("llm-wiki:ingested")
 
@@ -330,7 +356,7 @@ def build_zotero_plan(
         if item.tags_observed:
             if item_bindings:
                 remove_candidates.update(
-                    tag for tag in current_tags if tag in known_page_tags and tag not in desired_tags
+                    tag for tag in current_tags if tag in known_managed_tags and tag not in desired_tags
                 )
             if collection_name:
                 collection_equivalents = {

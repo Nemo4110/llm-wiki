@@ -361,7 +361,7 @@ items:
 
         assert rc == 0
         assert "Zotero Sync Plan: GNN" in out
-        assert "llm-wiki:Graph-Neural-Networks" in out
+        assert "llm-wiki:AI/ML" in out
         assert "llm-wiki:ingested" in out
         assert "GNN" in out
         assert "Read-only plan" in out

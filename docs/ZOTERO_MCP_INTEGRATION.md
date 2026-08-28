@@ -458,7 +458,7 @@ For a Zotero-backed source, optional synchronization occurs only after wiki cove
 
 1. Resolve every `sources_meta.zotero_item_key` and compute the union of desired managed state across all wiki pages that reference the item.
 2. Add `llm-wiki:ingested` only when at least one active, coverage-verified ingest for that source has completed.
-3. Add canonical page tags such as `llm-wiki:Vision-Transformers`; do not copy all ordinary wiki tags into Zotero.
+3. Add shared topic tags by projecting the bound wiki page's curated `tags:` (e.g. a page tagged `Ubuntu` produces `llm-wiki:Ubuntu`), so items sharing a topic group together in Zotero. Wiki page tags are already the curated set produced by the ingest protocol; do not invent additional tags from Zotero-side metadata. The legacy `llm-wiki:<page-stem>` binding tag form was retired on 2026-08-28: it restated item titles without adding topic structure, and survives only as a removal-review candidate.
 4. Do not create a scope tag when an equivalent Zotero collection already expresses that scope. Treat exact collection-name tags and `llm-wiki:<collection-name>` as review-only removal candidates.
 5. Remove stale llm-wiki-managed page tags only when the complete reverse mapping has been audited. Never replace the full tag list.
 6. Create or update a short index-card note only when requested or enabled by the workflow policy.
@@ -548,9 +548,11 @@ Use llm-wiki-managed tags as explicit workflow state, not as interchangeable lab
 | Tag form | Meaning | Add when |
 | --- | --- | --- |
 | `llm-wiki:<scope>` | Reviewed cross-collection scope classification | The classification audit has passed and no equivalent collection already expresses the scope |
-| `llm-wiki:<canonical-topic>` | Stable topic allocation, normally aligned with a reusable wiki topic/page | The topic assignment has been reviewed |
+| `llm-wiki:<topic>` | Shared topic tag projected from the bound wiki page's curated `tags:` (e.g. `llm-wiki:Ubuntu`); items sharing a topic aggregate under one tag | The topic assignment has been reviewed |
 | `llm-wiki:ingested` | The source has completed the llm-wiki ingest protocol | Wiki drafting, source coverage, depth review, linking, indexing, and logging have completed |
 | `llm-wiki:write-sentinel-*` | Temporary authorization test | Only during a write probe; remove and verify removal immediately |
+
+> Retired: `llm-wiki:<page-stem>` binding tags (written before 2026-08-28) restate item titles and add no topic structure. They are removal-review candidates, applied only after the complete reverse mapping has been audited.
 
 Collection membership does not imply ingest completion. Items that have been classified or moved but not yet synthesized may receive reviewed cross-collection scope and topic tags, but must not receive `llm-wiki:ingested`. Do not duplicate an existing collection name as a scope tag. Preserve user-managed tags and use incremental additions/removals rather than replacing the complete tag list.
 
