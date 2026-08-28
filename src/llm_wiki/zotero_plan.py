@@ -472,3 +472,67 @@ def plan_to_manifest(plan: ZoteroPlan) -> Dict[str, Any]:
         },
         "mutations": mutations,
     }
+
+
+def build_retired_binding_removal_plan(
+    plan: ZoteroPlan,
+    bindings: Iterable[ZoteroBinding],
+) -> Dict[str, Any]:
+    """Build an authorized-write plan removing ONLY retired page-stem binding tags.
+
+    A tag is whitelisted for removal only when it is some binding's retired
+    ``page_tag`` (``llm-wiki:<page_stem>``) and is not also a live topic
+    projection of any binding. Topic tags, ``llm-wiki:ingested``, preserved
+    tags, and unmanaged user tags are never proposed. The result still requires
+    human review and a separate ``zotero-writeback`` apply; the write-back
+    loader re-checks every removal against its own managed-tag guardrails.
+
+    Requires ``plan.collection_key`` (a snapshot-backed plan) so each item can
+    declare ``expected_collections``; raises ``ValueError`` otherwise.
+    """
+    if not plan.collection_key:
+        raise ValueError(
+            "retired-binding removal plan requires a snapshot-backed collection key"
+        )
+
+    all_bindings = list(bindings)
+    retired = {binding.page_tag for binding in all_bindings}
+    live_topics: Set[str] = set()
+    for binding in all_bindings:
+        live_topics |= managed_topic_tags(binding.page_tags, plan.collection_name)
+    whitelist = retired - live_topics - PRESERVED_MANAGED_TAGS - {f"{MANAGED_TAG_PREFIX}ingested"}
+
+    items: List[Dict[str, Any]] = []
+    for item in plan.items:
+        removable = sorted(item.remove_candidates & whitelist)
+        if not removable:
+            continue
+        items.append(
+            {
+                "item_key": item.item_key,
+                "expected_collections": [plan.collection_key],
+                "desired_managed_tags": [],
+                "reviewed_removals": removable,
+                "reviewed_relations": [],
+            }
+        )
+
+    return {
+        "version": 1,
+        "mode": "authorized-write",
+        "library_id": plan.library_id,
+        "collection": {
+            "key": plan.collection_key,
+            "name": plan.collection_name,
+        },
+        "policy": {
+            "preserve_existing_tags": True,
+            "replace_tags": False,
+            "write_notes": False,
+            "change_collections": False,
+            "change_metadata": False,
+            "relation_policy": "reviewed-only",
+            "allow_managed_removals": True,
+        },
+        "items": items,
+    }

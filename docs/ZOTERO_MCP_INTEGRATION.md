@@ -323,7 +323,8 @@ The executable schema is fail-closed:
 - credential-like fields are rejected; API keys never belong in plans or reports.
 - every desired tag must start with `llm-wiki:`.
 - existing tag objects, including automatic/manual tag metadata, are preserved.
-- tag replacement/removal, metadata edits, collection changes, notes, attachments, citation keys, and Trash are forbidden.
+- tag replacement, metadata edits, collection changes, notes, attachments, citation keys, and Trash are forbidden.
+- scoped tag removal is a separate opt-in: it requires `policy.allow_managed_removals: true` and an explicit per-item `reviewed_removals` list, and even then only managed `llm-wiki:` tags may be removed — never the protected `llm-wiki:ingested` status tag, never preserved tags (e.g. `llm-wiki:index-card`), never unmanaged/user tags, and never a tag also listed in the item's `desired_managed_tags`. Generate a whitelisted removal plan with `zotero-plan --removal-plan-out`, which proposes only retired `llm-wiki:<page_stem>` binding tags (excluding any tag that is still a live topic projection of a binding).
 - relation targets must be present in the plan and are added only as reviewed reciprocal `dc:relation` pairs.
 - writes use the live `Zotero-Server-ID`, `If-Unmodified-Since-Version`, one bounded retry after HTTP 412, and a mandatory GET-after-PATCH verification barrier.
 - reports classify items as `updated_verified`, `skipped_current`, or `failed`; partial failures remain visible and are never silently broadened.

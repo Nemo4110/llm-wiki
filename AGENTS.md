@@ -415,7 +415,7 @@ python scripts/agent-bridge.py zotero-writeback --plan temp/zotero-write-plan.ya
   --action verify --report-out temp/zotero-write-verify.yaml
 ```
 
-This restricted path adds managed `llm-wiki:*` tags and ensures user-reviewed reciprocal Related pairs only. It preserves full existing tag objects, uses live server identity plus version guards, retries one HTTP 412 from fresh state, and requires GET-after-PATCH verification. It cannot remove tags, edit metadata, change collections, write notes, or touch Trash. With `--memory-authorize`, the API key is not serialized.
+This restricted path adds managed `llm-wiki:*` tags and ensures user-reviewed reciprocal Related pairs only. It preserves full existing tag objects, uses live server identity plus version guards, retries one HTTP 412 from fresh state, and requires GET-after-PATCH verification. It cannot edit metadata, change collections, write notes, or touch Trash. Tag removal is a scoped opt-in: a plan must set `policy.allow_managed_removals: true` and list each tag under an item's `reviewed_removals`, and only managed `llm-wiki:*` tags other than the protected `llm-wiki:ingested` and preserved tags may be removed (never unmanaged/user tags). Generate a whitelisted removal plan with `zotero-plan --removal-plan-out` (retired `llm-wiki:<page_stem>` binding tags only). With `--memory-authorize`, the API key is not serialized.
 
 ---
 

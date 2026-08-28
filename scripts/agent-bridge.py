@@ -1018,6 +1018,7 @@ def cmd_zotero_plan(args: argparse.Namespace) -> int:
 
     from src.llm_wiki.core import WikiManager, find_wiki_root
     from src.llm_wiki.zotero_plan import (
+        build_retired_binding_removal_plan,
         build_zotero_plan,
         collect_zotero_bindings,
         load_snapshot,
@@ -1157,6 +1158,35 @@ def cmd_zotero_plan(args: argparse.Namespace) -> int:
             encoding="utf-8",
         )
         lines.append(_md_info(f"Review manifest written to: {resolved_manifest}"))
+        lines.append("")
+
+    if args.removal_plan_out:
+        removal_path = Path(args.removal_plan_out)
+        if removal_path.is_absolute():
+            resolved_removal = removal_path.resolve()
+        else:
+            resolved_removal = (wiki_root / removal_path).resolve()
+        allowed_root = (wiki_root / "temp").resolve()
+        if resolved_removal != allowed_root and allowed_root not in resolved_removal.parents:
+            print(_md_info("Error: --removal-plan-out must stay under the project temp/ directory."))
+            return 1
+        try:
+            removal_plan = build_retired_binding_removal_plan(plan, bindings)
+        except ValueError as exc:
+            print(_md_info(f"Error: cannot build retired-binding removal plan: {exc}"))
+            return 1
+        import yaml
+        resolved_removal.parent.mkdir(parents=True, exist_ok=True)
+        resolved_removal.write_text(
+            yaml.safe_dump(removal_plan, allow_unicode=True, sort_keys=False),
+            encoding="utf-8",
+        )
+        removable_count = sum(len(item["reviewed_removals"]) for item in removal_plan["items"])
+        lines.append(_md_info(
+            f"Retired-binding removal plan written to: {resolved_removal} "
+            f"({removable_count} tag(s) across {len(removal_plan['items'])} item(s)). "
+            "Review it, then apply with `zotero-writeback --action audit|apply|verify`."
+        ))
         lines.append("")
 
     print("\n".join(lines))
@@ -1587,10 +1617,17 @@ def cmd_zotero_writeback(args: argparse.Namespace) -> int:
     )
 
     lines = [_md_header(f"Zotero Write-Back: {args.action.title()}"), ""]
-    lines.append(_md_info(
-        "Restricted workflow: managed-tag additions and reviewed reciprocal Related pairs only; "
-        "metadata, collections, notes, tag removals, and Trash are outside this authorization."
-    ))
+    if plan.policy.allow_managed_removals:
+        lines.append(_md_info(
+            "Restricted workflow: managed-tag additions, reviewed reciprocal Related pairs, and "
+            "scoped reviewed managed-tag removals only; metadata, collections, notes, unmanaged/user "
+            "tags, protected tags, and Trash remain outside this authorization."
+        ))
+    else:
+        lines.append(_md_info(
+            "Restricted workflow: managed-tag additions and reviewed reciprocal Related pairs only; "
+            "metadata, collections, notes, tag removals, and Trash are outside this authorization."
+        ))
     lines.append("")
     lines.append(_md_table(
         ["Metric", "Value"],
@@ -1604,12 +1641,13 @@ def cmd_zotero_writeback(args: argparse.Namespace) -> int:
     ))
     lines.append("")
     lines.append(_md_table(
-        ["Item", "Status", "Missing Tags", "Relation Gaps", "Errors"],
+        ["Item", "Status", "Missing Tags", "Present Removals", "Relation Gaps", "Errors"],
         [
             [
                 item.item_key,
                 item.status,
                 ", ".join(item.missing_tags) or "—",
+                ", ".join(item.present_removals) or "—",
                 ", ".join(item.relation_gaps) or "—",
                 "; ".join(item.errors) or "—",
             ]
@@ -1964,6 +2002,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     zotero_parser.add_argument(
         "--manifest-out",
         help="Write a review-only YAML mutation manifest under temp/",
+    )
+    zotero_parser.add_argument(
+        "--removal-plan-out",
+        help="Write an authorized-write plan under temp/ removing only retired "
+        "llm-wiki:<page_stem> binding tags (requires snapshot; apply via zotero-writeback)",
     )
 
     # zotero-heal

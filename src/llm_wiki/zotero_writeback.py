@@ -2,8 +2,12 @@
 
 The executable manifest is deliberately narrower than Zotero's data model: it
 can add llm-wiki managed tags and ensure explicitly reviewed reciprocal Related
-pairs. It cannot remove tags, change metadata or collection membership, write
-notes, or touch Trash. Every apply run ends with a fresh verification pass.
+pairs. Tag removal is possible only through a scoped opt-in: a plan must set
+``policy.allow_managed_removals: true`` and list each tag under an item's
+``reviewed_removals``, and even then only managed ``llm-wiki:`` tags other than
+the protected status/preserved tags may be removed. It cannot change metadata
+or collection membership, write notes, or touch Trash. Every apply run ends
+with a fresh verification pass.
 """
 
 from __future__ import annotations
@@ -17,7 +21,7 @@ from typing import Any, Dict, List, Mapping, Tuple
 import yaml
 
 from .zotero_local import LocalWriteError, LocalZoteroWriter
-from .zotero_plan import MANAGED_TAG_PREFIX
+from .zotero_plan import MANAGED_TAG_PREFIX, PRESERVED_MANAGED_TAGS
 
 _ITEM_KEY_RE = re.compile(r"^[A-Z0-9]{8}$")
 _CREDENTIAL_FIELDS = {
@@ -30,6 +34,10 @@ _CREDENTIAL_FIELDS = {
     "secret",
     "token",
 }
+
+# Managed tags that must never be removed through the scoped write-back path:
+# the ingest status marker plus any explicitly preserved managed tags.
+_NON_REMOVABLE_TAGS = frozenset({f"{MANAGED_TAG_PREFIX}ingested"}) | PRESERVED_MANAGED_TAGS
 
 
 class WritePlanError(ValueError):
@@ -44,6 +52,10 @@ class WritePolicy:
     change_collections: bool = False
     change_metadata: bool = False
     relation_policy: str = "reviewed-only"
+    # Opt-in escape hatch: when True, items may carry `reviewed_removals` to
+    # delete specific managed tags. Deliberately excluded from the strict
+    # default-equality policy check; guarded separately at plan load.
+    allow_managed_removals: bool = False
 
 
 @dataclass(frozen=True)
@@ -52,6 +64,7 @@ class WritePlanItem:
     expected_collections: Tuple[str, ...]
     desired_managed_tags: Tuple[str, ...]
     reviewed_relations: Tuple[str, ...]
+    reviewed_removals: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -69,6 +82,7 @@ class WritebackItemReport:
     status: str
     missing_tags: Tuple[str, ...] = ()
     relation_gaps: Tuple[str, ...] = ()
+    present_removals: Tuple[str, ...] = ()
     errors: Tuple[str, ...] = ()
 
 
@@ -147,6 +161,40 @@ def _item_key(value: Any, *, field: str) -> str:
     return key
 
 
+def _validate_managed_tag(tag: str, *, field: str) -> None:
+    if (
+        not tag.startswith(MANAGED_TAG_PREFIX)
+        or len(tag) <= len(MANAGED_TAG_PREFIX)
+        or len(tag) > 255
+        or any(ord(char) < 32 or ord(char) == 127 for char in tag)
+    ):
+        raise WritePlanError(f"{field} contains an invalid managed tag: {tag!r}")
+
+
+def _validate_reviewed_removals(
+    removals: Tuple[str, ...],
+    desired: Tuple[str, ...],
+    *,
+    policy: WritePolicy,
+    field: str,
+) -> None:
+    if not removals:
+        return
+    if not policy.allow_managed_removals:
+        raise WritePlanError(
+            f"{field} requires policy.allow_managed_removals: true (scoped removal opt-in)"
+        )
+    desired_set = set(desired)
+    for tag in removals:
+        _validate_managed_tag(tag, field=field)
+        if tag in _NON_REMOVABLE_TAGS:
+            raise WritePlanError(f"{field} cannot remove protected managed tag: {tag!r}")
+        if tag in desired_set:
+            raise WritePlanError(
+                f"{field} cannot both add and remove the same tag (conflict): {tag!r}"
+            )
+
+
 def load_write_plan(path: Path) -> WritePlan:
     """Load a reviewed, executable, secret-free write plan."""
     data = _load_data(path)
@@ -173,6 +221,7 @@ def load_write_plan(path: Path) -> WritePlan:
             "change_collections",
             "change_metadata",
             "relation_policy",
+            "allow_managed_removals",
         },
         "policy",
     )
@@ -183,6 +232,7 @@ def load_write_plan(path: Path) -> WritePlan:
         change_collections=policy_raw.get("change_collections") is True,
         change_metadata=policy_raw.get("change_metadata") is True,
         relation_policy=str(policy_raw.get("relation_policy") or ""),
+        allow_managed_removals=policy_raw.get("allow_managed_removals") is True,
     )
     expected_policy = WritePolicy()
     for field in (
@@ -213,7 +263,13 @@ def load_write_plan(path: Path) -> WritePlan:
             raise WritePlanError(f"items[{index}] must be a mapping")
         _reject_unknown_fields(
             raw,
-            {"item_key", "expected_collections", "desired_managed_tags", "reviewed_relations"},
+            {
+                "item_key",
+                "expected_collections",
+                "desired_managed_tags",
+                "reviewed_relations",
+                "reviewed_removals",
+            },
             f"items[{index}]",
         )
         key = _item_key(raw.get("item_key"), field=f"items[{index}].item_key")
@@ -234,13 +290,17 @@ def load_write_plan(path: Path) -> WritePlan:
             field=f"items[{index}].desired_managed_tags",
         )
         for tag in tags:
-            if (
-                not tag.startswith(MANAGED_TAG_PREFIX)
-                or len(tag) <= len(MANAGED_TAG_PREFIX)
-                or len(tag) > 255
-                or any(ord(char) < 32 or ord(char) == 127 for char in tag)
-            ):
-                raise WritePlanError(f"items[{index}] contains an invalid managed tag: {tag!r}")
+            _validate_managed_tag(tag, field=f"items[{index}].desired_managed_tags")
+        removals = _string_list(
+            raw.get("reviewed_removals"),
+            field=f"items[{index}].reviewed_removals",
+        )
+        _validate_reviewed_removals(
+            removals,
+            tags,
+            policy=policy,
+            field=f"items[{index}].reviewed_removals",
+        )
         relations = tuple(
             _item_key(value, field=f"items[{index}].reviewed_relations")
             for value in _string_list(
@@ -250,7 +310,7 @@ def load_write_plan(path: Path) -> WritePlan:
         )
         if key in relations:
             raise WritePlanError(f"items[{index}] cannot relate an item to itself")
-        items.append(WritePlanItem(key, expected_collections, tags, relations))
+        items.append(WritePlanItem(key, expected_collections, tags, relations, removals))
 
     known = {item.item_key for item in items}
     for item in items:
@@ -325,10 +385,14 @@ async def _observe(
             missing_tags = tuple(
                 sorted(set(item_plan.desired_managed_tags) - _tag_names(observed.data.get("tags")))
             )
+            present_removals = tuple(
+                sorted(set(item_plan.reviewed_removals) & _tag_names(observed.data.get("tags")))
+            )
             reports[item_plan.item_key] = WritebackItemReport(
                 item_plan.item_key,
-                "ready" if missing_tags else "skipped_current",
+                "ready" if (missing_tags or present_removals) else "skipped_current",
                 missing_tags=missing_tags,
+                present_removals=present_removals,
             )
         except (LocalWriteError, KeyError, TypeError, ValueError) as exc:
             reports[item_plan.item_key] = WritebackItemReport(
@@ -358,6 +422,7 @@ async def _observe(
                     key,
                     "failed",
                     missing_tags=current.missing_tags,
+                    present_removals=current.present_removals,
                     errors=current.errors + (str(exc),),
                 )
 
@@ -370,6 +435,7 @@ async def _observe(
             "ready",
             missing_tags=current.missing_tags,
             relation_gaps=tuple(sorted(set(gaps))),
+            present_removals=current.present_removals,
             errors=current.errors,
         )
     return reports, relation_errors
@@ -401,10 +467,14 @@ async def verify_write_plan(
         current = reports[item.item_key]
         if current.status == "failed":
             verified.append(current)
-        elif current.missing_tags or current.relation_gaps:
+        elif current.missing_tags or current.relation_gaps or current.present_removals:
             errors: List[str] = []
             if current.missing_tags:
                 errors.append(f"managed tags missing after verification: {list(current.missing_tags)}")
+            if current.present_removals:
+                errors.append(
+                    f"reviewed removals still present after verification: {list(current.present_removals)}"
+                )
             if current.relation_gaps:
                 errors.append(f"reviewed Related pairs incomplete: {list(current.relation_gaps)}")
             verified.append(
@@ -413,6 +483,7 @@ async def verify_write_plan(
                     "failed",
                     missing_tags=current.missing_tags,
                     relation_gaps=current.relation_gaps,
+                    present_removals=current.present_removals,
                     errors=tuple(errors),
                 )
             )
@@ -442,12 +513,13 @@ async def apply_write_plan(
 
     for item_plan in plan.items:
         state = preflight[item_plan.item_key]
-        if state.status == "failed" or not state.missing_tags:
+        if state.status == "failed" or not (state.missing_tags or state.present_removals):
             continue
         try:
             result = await writer.write_safe_mutation(
                 item_plan.item_key,
                 add_tags=state.missing_tags,
+                remove_tags=state.present_removals,
             )
             if result.status == "updated_verified":
                 changed.add(item_plan.item_key)
@@ -477,6 +549,7 @@ async def apply_write_plan(
                     "failed",
                     missing_tags=item.missing_tags,
                     relation_gaps=item.relation_gaps,
+                    present_removals=item.present_removals,
                     errors=item_errors,
                 )
             )
@@ -509,6 +582,8 @@ def report_to_manifest(report: WritebackReport) -> Dict[str, Any]:
         }
         if item.missing_tags:
             row["missing_tags"] = list(item.missing_tags)
+        if item.present_removals:
+            row["present_removals"] = list(item.present_removals)
         if item.relation_gaps:
             row["relation_gaps"] = list(item.relation_gaps)
         if item.errors:

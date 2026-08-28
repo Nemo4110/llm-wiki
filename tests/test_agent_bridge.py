@@ -421,6 +421,104 @@ items:
         assert rc == 1
         assert "must stay under" in out
 
+    def test_zotero_plan_removal_plan_out_scoped_to_retired_bindings(
+        self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys
+    ):
+        page = temp_wiki_root / "wiki" / "Graph-Neural-Networks.md"
+        page.write_text(
+            """---
+created: 2026-08-23
+updated: 2026-08-23
+sources: []
+source_types:
+  - academic_paper
+sources_meta:
+  - title: Graph Paper
+    type: academic_paper
+    zotero_item_key: ITEM0001
+    library_id: "0"
+coverage_verified: true
+tags:
+  - AI/ML
+status: active
+---
+
+# Graph Neural Networks
+
+Knowledge body.
+""",
+            encoding="utf-8",
+        )
+        snapshot = temp_wiki_root / "gnn.yaml"
+        snapshot.write_text(
+            """version: 1
+library_id: "0"
+collection:
+  name: GNN
+  key: A9VNJUPI
+items:
+  - item_key: ITEM0001
+    title: Graph Paper
+    item_type: conferencePaper
+    doi: ""
+    tags: [llm-wiki:Graph-Neural-Networks, llm-wiki:AI/ML, manual-note]
+""",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        rc = agent_bridge_module.main([
+            "zotero-plan",
+            "--snapshot",
+            "gnn.yaml",
+            "--removal-plan-out",
+            "temp/gnn-removal.yaml",
+        ])
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert "Retired-binding removal plan written to" in out
+        removal = temp_wiki_root / "temp" / "gnn-removal.yaml"
+        assert removal.exists()
+        text = removal.read_text(encoding="utf-8")
+        assert "mode: authorized-write" in text
+        assert "allow_managed_removals: true" in text
+        # Only the retired page-stem binding tag is whitelisted for removal;
+        # the live topic tag and the unmanaged tag are excluded.
+        assert "llm-wiki:Graph-Neural-Networks" in text
+        assert "reviewed_removals" in text
+        removals_section = text.split("reviewed_removals:", 1)[1]
+        assert "llm-wiki:AI/ML" not in removals_section
+        assert "manual-note" not in removals_section
+
+    def test_zotero_plan_removal_plan_out_rejects_path_outside_temp(
+        self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys
+    ):
+        snapshot = temp_wiki_root / "gnn.yaml"
+        snapshot.write_text(
+            """version: 1
+collection: {name: GNN, key: A9VNJUPI}
+items:
+  - item_key: ITEMX
+    title: Example
+    item_type: conferencePaper
+    doi: ""
+    tags: []
+""",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        rc = agent_bridge_module.main([
+            "zotero-plan",
+            "--snapshot",
+            "gnn.yaml",
+            "--removal-plan-out",
+            "outside.yaml",
+        ])
+        out = capsys.readouterr().out
+
+        assert rc == 1
+        assert "must stay under" in out
+
 
 class TestCmdZoteroRefresh:
     def test_refresh_dry_run_writes_review_manifest_under_temp(
