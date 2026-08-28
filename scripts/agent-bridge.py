@@ -1301,6 +1301,51 @@ def cmd_zotero_heal(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_zotero_alias(args: argparse.Namespace) -> int:
+    """Render a sanitized sources/zotero alias from a wildcard template."""
+    from src.llm_wiki.alias_template import render_alias_template
+    from src.llm_wiki.config import load_config
+    from src.llm_wiki.core import find_wiki_root
+
+    wiki_root = find_wiki_root(PROJECT_ROOT)
+    if not wiki_root:
+        print(_md_info("Error: Cannot find wiki root."))
+        return 1
+
+    config = load_config(wiki_root)
+    pattern = (
+        args.pattern
+        or str((config.get("zotero_import") or {}).get("alias_pattern") or "").strip()
+        or "%c/%t"
+    )
+    context = {
+        "title": args.title or "",
+        "author": args.author or "",
+        "year": args.year or "",
+        "citekey": args.citekey or "",
+        "item_type": args.item_type or "",
+        "collection_path": "/".join(args.collections or []),
+    }
+    try:
+        alias = render_alias_template(pattern, context)
+    except ValueError as exc:
+        print(_md_info(f"Error: {exc}"))
+        return 1
+
+    lines = [
+        _md_header("Zotero Alias Render"),
+        "",
+        _md_table(["Field", "Value"], [["Pattern", pattern], ["Alias", alias]]),
+        "",
+        _md_action(
+            "Agent: use this alias as `source_alias` (plus the attachment's file "
+            "extension) when authoring sources/zotero/metadata.yaml entries."
+        ),
+    ]
+    print("\n".join(lines))
+    return 0
+
+
 def cmd_zotero_refresh(args: argparse.Namespace) -> int:
     """Run one-shot DOI, citation, and publication freshness checks."""
     import asyncio
@@ -1947,6 +1992,27 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Rewrite matched wiki frontmatter zotero_item_key values in place and log the change",
     )
 
+    # zotero-alias
+    alias_parser = subparsers.add_parser(
+        "zotero-alias",
+        help="Render a sanitized sources/zotero alias from a wildcard template (read-only)",
+    )
+    alias_parser.add_argument("--title", help="Source title (%t)")
+    alias_parser.add_argument("--author", help="First author (%a)")
+    alias_parser.add_argument("--year", help="Publication year (%y)")
+    alias_parser.add_argument("--citekey", help="Citation key (%b)")
+    alias_parser.add_argument("--item-type", help="Zotero item type (%T)")
+    alias_parser.add_argument(
+        "--collection",
+        dest="collections",
+        action="append",
+        help="Collection name; repeat from outermost to innermost for the %c hierarchy",
+    )
+    alias_parser.add_argument(
+        "--pattern",
+        help="Wildcard pattern override (default: config zotero_import.alias_pattern or %c/%t)",
+    )
+
     # zotero-refresh
     refresh_parser = subparsers.add_parser(
         "zotero-refresh",
@@ -2062,6 +2128,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "hot": cmd_hot,
         "zotero-plan": cmd_zotero_plan,
         "zotero-heal": cmd_zotero_heal,
+        "zotero-alias": cmd_zotero_alias,
         "zotero-refresh": cmd_zotero_refresh,
         "zotero-local-auth": cmd_zotero_local_auth,
         "zotero-writeback": cmd_zotero_writeback,

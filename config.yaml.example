@@ -86,6 +86,12 @@ zotero_enrichment:
   local:
     base_url: "http://127.0.0.1:23119"
 
+zotero_import:
+  # sources/zotero/ 别名命名模板（方案五;仅别名,不含 wiki 页面命名）。
+  # 通配符: %a 主作者 %y 年份 %t 标题 %c 分类层级路径 %b CiteKey %T 条目类型, %% 为字面值。
+  # 所有替换值都经跨平台清洗(去音标/非法字符/字节截断);用 `agent-bridge.py zotero-alias` 渲染。
+  alias_pattern: "%c/%t"
+
 retrieval:
   # 混合搜索返回的 top-k 结果数
   top_k: 10

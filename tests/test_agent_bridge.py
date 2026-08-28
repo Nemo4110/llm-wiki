@@ -1002,3 +1002,43 @@ items:
         monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
         rc = agent_bridge_module.main(["zotero-heal", "--snapshot", "missing.yaml"])
         assert rc == 1
+
+
+class TestCmdZoteroAlias:
+    def test_alias_render_with_default_pattern(
+        self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys
+    ):
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        rc = agent_bridge_module.main(
+            ["zotero-alias", "--title", "LoRA: Low-Rank Adaptation",
+             "--collection", "Machine Learning", "--collection", "LLM"]
+        )
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert "Machine-Learning/LLM/LoRA-Low-Rank-Adaptation" in out
+
+    def test_alias_render_with_config_pattern(
+        self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys
+    ):
+        config = temp_wiki_root / "config.yaml"
+        config.write_text(
+            config.read_text(encoding="utf-8")
+            + '\nzotero_import:\n  alias_pattern: "%y-%b"\n',
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        rc = agent_bridge_module.main(
+            ["zotero-alias", "--title", "Ignored", "--year", "2021", "--citekey", "hu2021lora"]
+        )
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert "2021-hu2021lora" in out
+
+    def test_alias_render_rejects_unknown_wildcard(
+        self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys
+    ):
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        rc = agent_bridge_module.main(["zotero-alias", "--title", "X", "--pattern", "%z"])
+        out = capsys.readouterr().out
+        assert rc == 1
+        assert "wildcard" in out

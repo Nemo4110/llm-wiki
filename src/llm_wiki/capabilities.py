@@ -81,6 +81,10 @@ CAPABILITIES: Dict[str, Capability] = {
         "zotero-heal", write_scope=("temp/", "wiki/", "log.md"), dry_run=True,
         description="Stale Zotero binding detection and in-place frontmatter rebinding",
     ),
+    "zotero-alias": Capability(
+        "zotero-alias",
+        description="Render a sanitized sources/zotero alias from a wildcard template",
+    ),
 }
 
 
