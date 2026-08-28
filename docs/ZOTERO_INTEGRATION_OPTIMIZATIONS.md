@@ -24,20 +24,29 @@
 - `llm-wiki` 在生成 `wiki/<stem>.md` 页面名或 `sources/zotero/` 别名时，极易因超长路径或非法字符在跨平台同步时遭遇 IO 异常。
 
 #### ZotMoov 的设计借鉴
-- **智能标点与分词截断**（`src/00-zotmoov-wildcard.js`）：
-  - 遇到冒号、问号等首个标点时优先截断为副标题前的内容；
+- **智能标点与分词截断**（`src/00-zotmoov-wildcard.js` `_truncateTitle`）：
+  - 遇到首个 `: . ? !` 标点时优先截断为副标题前的内容（默认最大长度 200 字符）；
   - 达到最大长度时，向前回溯至最近的单词边界（空格），避免截断单个单词。
-- **字节级安全截断与后缀保护**（`lib/01-zotlib.js`）：
-  - 精确计算 UTF-8 字节长度，严格预留文件扩展名（`.pdf` / `.md`）及唯一性冲突序号（如 ` 1.pdf`）的缓冲空间（预留 3~5 字节）。
-- **音标/变音符号清理**：通过 `removeDiacritics` 去除变音符，确保 ASCII 兼容性。
+- **跨平台非法字符清洗**（`lib/02-sanitize-filename.js`，派生自 node-sanitize-filename）：
+  - 清洗斜杠、问号、尖括号、反斜杠、冒号、星号、引号等非法字符与控制字符，处理全点号名称、Windows 保留名（`CON/PRN/AUX/NUL/COM0-9/LPT0-9`）及尾部点号/空格；
+  - 按 UTF-8 **字节**截断至 255 字节上限，截断处剥离 `�` 残片以保证多字节字符不被切半。
+- **字节级安全截断与后缀保护**（`lib/01-zotlib.js` `createShortened`）：
+  - 以 `Zotero.Utilities.Internal.byteLength` 精确计算 UTF-8 字节长度，保留文件扩展名，并预留 3 字节缓冲给唯一性冲突序号（如 ` 1.pdf`）；
+  - 针对 eCryptfs（143 字节）等特殊文件系统自动收紧上限——**路径长度与文件名长度是两类不同约束**（Windows 260 字符路径 vs ext4/HFS+ 255 字节文件名）。
+- **音标/变音符号清理**（`src/02-zotmoov.js`，由 `strip_diacritics` 偏好开关控制）：
+  - 调用 Zotero 内置 `Zotero.Utilities.removeDiacritics` 去除变音符，确保 ASCII 兼容性。
 
 #### `llm-wiki` 落地设计
-在 `src/llm_wiki/` 中增加文件路径规范化工具（如 `path_sanitizer.py`）：
+在 `src/llm_wiki/` 中增加文件路径规范化工具（`sanitizer.py`）：
 ```python
 def sanitize_title_stem(title: str, max_bytes: int = 120) -> str:
     """清理非法字符、去除音标、并在词边界安全截断以适配跨平台文件名"""
     ...
 ```
+
+现状接入点（已核对）：wiki 页面命名在 `src/llm_wiki/core.py` `create_page()`，目前仅 `title.replace(' ','-').replace('/','-')`，无长度截断与非法字符清洗，长 CJK 标题会在写盘时触发 `OSError: File name too long`；`sources/zotero/` 别名由 `scripts/zotero_sources.py` 从 `metadata.yaml` 原样消费，仅做路径 confinement 校验。新工具应同时覆盖这两处，Python 侧可用 `unicodedata.normalize('NFKD')` 复刻去音标、以 `encode()[:n].decode('utf-8', 'ignore')` 复刻多字节安全的字节截断。
+
+> **兼容性原则**：清洗规则只约束**新增**页面与别名；既有 wiki 页面名与别名是 `[[链接]]`、frontmatter `sources[]`、`metadata.yaml.source_alias` 的共同锚点，不随本方案重命名（详见文末"兼容性与迁移原则"）。
 
 ---
 
@@ -55,13 +64,14 @@ def sanitize_title_stem(title: str, max_bytes: int = 120) -> str:
 
 #### `llm-wiki` 落地设计
 修改 `scripts/zotero_sources.py`：
-1. **真实物理路径检测**：支持通过 MCP 或 local API 提取 `item.getFilePath()`，无论附件是 Stored 还是 Linked 均能定位真实物理文件。
-2. **Symlink 异常降级策略**：
+1. **真实物理路径检测**：支持通过 MCP 或 local API 提取 `item.getFilePath()` 等价信息，无论附件是 Stored 还是 Linked 均能定位真实物理文件。前置验证：zotero-mcp 是否暴露 Linked 附件真实路径需先实测确认；若 MCP 不暴露，可经由 Zotero local API（loopback）获取。
+2. **Symlink 异常降级策略**（按优先级排序）：
    - 尝试创建 Symlink；
-   - 若捕获 `OSError`（Windows 权限不足）：
-     - 选项 A：降级为 Hardlink（硬链接，同一分区下无需管理员权限）；
-     - 选项 B：降级为 Read-only Copy（只读副本）；
-     - 选项 C：仅在 `metadata.yaml` 记录绝对路径映射，Agent 读取时直接路由到源路径，不强求本地实体别名文件。
+   - 若捕获 `OSError`（如 Windows 权限不足），按以下顺序降级：
+     - **选项 C（首选）**：仅在 `metadata.yaml` 记录绝对路径映射，Agent 读取时直接路由到源路径，不强求本地实体别名文件——与现有 `local_path` 字段天然兼容，不引入数据漂移；
+     - **选项 B**：降级为 Read-only Copy（只读副本）——副本会与源文件产生双份漂移，仅在下游工具必须见到实体文件时使用；
+     - **选项 A**：降级为 Hardlink（硬链接）——同一分区下无需管理员权限，但跨设备（如网盘场景）必然失败，适用面最窄。
+   - 现状（已核对）：`zotero_sources.py` 对 `symlink_to` 无任何异常捕获，单次失败会中断整个批次并丢失已完成计数；降级实现应同时补上逐条容错。
 
 ---
 
@@ -72,17 +82,21 @@ def sanitize_title_stem(title: str, max_bytes: int = 120) -> str:
 - 科研工作流中，用户常在 Zotero 中执行“条目合并（Merge Items）”、“重新从 DOI 导入条目并删除旧项”或“转换附件”。此时 Wiki 页面中记录的旧 `item_key` 将悬空失效，导致后续 `zotero-refresh` 或写回操作失败。
 
 #### ZotMoov 的设计借鉴
-- **笔记与关联自愈算法**（`src/02-zotmoov-menu-helper.js`）：
-  - 遍历 Zotero 笔记中的引用 URI，检测引用的旧条目是否已在数据库中删除；
-  - 若已删除，自动基于关联信息或父条目检索有效的新条目 Key，并调用 `replaceItemKey` 全局修复。
+- **笔记引用自愈**（`src/02-zotmoov-menu-helper.js` `fixNoteLinks`，**手动菜单命令**）：
+  - 遍历 Zotero 笔记中的引用 URI，通过 `Zotero.Items.getIDFromLibraryAndKey` 检测引用的旧条目是否已从数据库删除；
+  - 若已删除，以当前有效附件条目（`item.getBestAttachment()`）作为替换目标，调用 `Zotero.Notes.replaceItemKey` 修复；
+  - 附件移动（move）过程中的自动修复发生在 `src/02-zotmoov.js` 的事务块内部，与手动自愈是两条独立路径。
+- **对 llm-wiki 的启示是"探测失效 → 二次寻址 → 原地修复"的三段式结构**；下文的多维寻址链（DOI → citation_key → 标题）是 llm-wiki 基于自身 frontmatter 元数据的设计，ZotMoov 并未提供等价实现。
 
 #### `llm-wiki` 落地设计
-在 `src/llm_wiki/zotero_ingest_verify.py` 和 `zotero_refresh.py` 中引入**条目自愈管道**：
+前置修复（独立于自愈管道的健壮性缺口，已核对）：`src/llm_wiki/zotero_mcp_client.py` 的 `get_items` 使用无 `return_exceptions` 的 `asyncio.gather`，**单个失效 key 会使整个 refresh 批次崩溃**；应先改为逐条容错，将失效条目降级为"待修复"记录。
+
+在此基础上，于 `src/llm_wiki/zotero_ingest_verify.py` 和 `zotero_refresh.py` 中引入**条目自愈管道**：
 1. **失效 Key 探测**：当 `zotero_get_item_metadata` 返回 404/not found 时，标记为待修复悬空条目。
 2. **多维二次寻址**：
    - 优先通过 Wiki Frontmatter 中的 `doi` 查询 Zotero 库匹配有效条目；
-   - 次优通过 `citation_key` 或标准化标题（Title matching）匹配有效条目；
-3. **自动迁移修复**：在用户确认或 `--apply-safe` 模式下，自动更新受影响 Wiki 文件的 `zotero_item_key`，并在 `log.md` 记录自愈日志。
+   - 次优通过 `citation_key` 或标准化标题（Title matching）匹配有效条目（`zotero_plan.py` 已读取 `citation_key` 与规范化标题，数据基础现成）；
+3. **自动迁移修复**：在用户确认或 `--apply-safe` 模式下，自动更新受影响 Wiki 文件的 `zotero_item_key`，并在 `log.md` 记录自愈日志。该修复为 frontmatter 字段原地更新，不涉及文件重命名，无迁移面。
 
 ---
 
@@ -95,15 +109,18 @@ def sanitize_title_stem(title: str, max_bytes: int = 120) -> str:
 
 #### ZotMoov 的设计借鉴
 - **同步挂起协调**（`src/01-zotmoov-notify-callback.js`）：
-  - 在大批量写入期间，通知同步器推迟后台同步（`Zotero.Sync.Runner.delayIndefinite()`），全部原子写入完成后再恢复同步。
-- **两阶段事务与回滚**：
-  - 核心写操作均置于事务块内，任何一步异常立即清理并回滚。
+  - 在大批量写入期间，通知同步器推迟后台同步（`Zotero.Sync.Runner.delayIndefinite()`），并在同步进行中时跳过执行，全部原子写入完成后再恢复同步。
+- **事务与失败清理**（`src/02-zotmoov.js` `move()`）：
+  - 核心写操作置于 `Zotero.DB.executeTransaction` 内，异常时数据库自动回滚，并由外层 catch 清理已复制的临时文件，不留孤儿文件。
 
 #### `llm-wiki` 落地设计
+前提说明（已核对）：`delayIndefinite()` 是 Zotero **插件进程内 API**，llm-wiki 作为外部客户端无等价物；`docs/ZOTERO_MCP_INTEGRATION.md` 中定义的 `metadata_sync_state` 是"权威端与写入端一致性"的状态分类（`disabled/pending/caught_up/divergent/unknown`），并非"同步进行中"的实时探针，目前也没有任何代码填充或消费它。因此本方案的落地重心放在客户端可达成的机制上：
+
 1. **两阶段关系写入与补偿机制**：
    - 在 `zotero_local.py` 中写入 `RelationWriteResult` 时，如果第二阶段失败，自动向第一阶段的 Source 条目触发补偿回滚，移除刚刚新增的关联 URI，确保双向关联的原子一致性。
-2. **同步状态检测门禁强化**：
-   - 强化 `docs/ZOTERO_MCP_INTEGRATION.md` 中定义的 `metadata_sync_state` 检测，在检测到 Zotero 处于同步活跃期时自动等待或增加退避重试延迟。
+   - 现状（已核对）：`zotero_local.py` 已有版本守卫（`If-Unmodified-Since-Version`）、单次 HTTP 412 重试与 GET-after-PATCH 验证；`ensure_relation_pair` 本身幂等（已存在的关联会跳过），单向残留可靠重跑自愈。补偿回滚属整洁性增强，优先级见路线图。
+2. **冲突退避强化（替代同步探针）**：
+   - 在现有单次 412 重试基础上加强为有界指数退避重试；`metadata_sync_state` 仅作为计划/审计输出中的只读状态呈现，不作为写入门禁。
 
 ---
 
@@ -126,14 +143,32 @@ zotero_import:
   alias_pattern: "%b"
 ```
 
+> **范围警示**：`%c/%y-%a-%t` 是文献管理式命名，而 wiki 页面名是 `[[链接]]` 体系的知识锚点，两者约束不同。建议本方案缩小为仅覆盖 `sources/zotero/` 别名与导入目录结构（`alias_pattern`），wiki 页面命名模板待真实需求出现后再做；任何模板输出都必须先经方案一的 `sanitize_title_stem` 清洗。
+
 ---
 
 ## 3. 实施优先级路线图
 
 | 阶段 | 优先级 | 优化内容 | 涉及模块 |
 | :--- | :---: | :--- | :--- |
-| **Phase 1** | **P0** | **路径清洗截断工具**：引入字节级文件名截断与非法字符清洗 | `src/llm_wiki/sanitizer.py`, `scripts/zotero_sources.py` |
-| **Phase 1** | **P0** | **Symlink 降级与 Linked File 支持**：解决 Windows 权限与外部附件路径解析 | `scripts/zotero_sources.py`, `docs/FILE_HANDLING.md` |
+| **Phase 1** | **P0** | **路径清洗截断工具**：引入字节级文件名截断与非法字符清洗（前向兼容，仅约束新增命名） | `src/llm_wiki/sanitizer.py`, `core.py`, `scripts/zotero_sources.py` |
+| **Phase 1** | **P0** | **Symlink 降级与 Linked File 支持**：按 C（metadata-only）→ B（只读副本）→ A（hardlink）顺序降级，并补逐条容错 | `scripts/zotero_sources.py`, `docs/FILE_HANDLING.md` |
+| **Phase 1** | **P0** | **refresh 逐条容错**：`get_items` 改 `return_exceptions`，失效条目降级为待修复记录（自愈前置） | `src/llm_wiki/zotero_mcp_client.py`, `zotero_refresh.py` |
 | **Phase 2** | **P1** | **条目死链自愈机制**：支持条目合并/变更时的自动 DOI/CiteKey 重映射 | `src/llm_wiki/zotero_refresh.py`, `zotero_ingest_verify.py` |
-| **Phase 2** | **P1** | **双向关系原子补偿**：确保 `dc:relation` 写入失败时的回滚一致性 | `src/llm_wiki/zotero_local.py` |
-| **Phase 3** | **P2** | **可配置通配符模板引擎**：支持按 Collection 层级自定义生成路径与别名 | `src/llm_wiki/zotero_plan.py`, `config.yaml` |
+| **Phase 3** | **P2** | **冲突退避强化 + 双向关系补偿**：有界指数退避；`dc:relation` 失败补偿回滚（幂等重跑已可自愈，属整洁性增强） | `src/llm_wiki/zotero_local.py` |
+| **暂缓** | **P2** | **别名级通配符模板**：仅 `alias_pattern`；wiki 页面命名模板暂缓 | `scripts/zotero_sources.py`, `config.yaml` |
+
+---
+
+## 4. 兼容性与迁移原则
+
+本方案各优化均为**前向兼容**设计，既有产出物默认零迁移：
+
+1. **命名规则只约束新增**：既有 wiki 页面名与 `sources/zotero/` 别名是 `[[链接]]`、frontmatter `sources[]` / `sources_meta[].source_alias`、`metadata.yaml.source_alias` 三处的共同锚点。`sanitize` 接入后不改名既有文件；如确需规范化，应作为独立工具一次性同步三处引用并重建符号链接，而非默认行为。
+2. **标识符保持稳定**：`zotero_item_key`、`llm-wiki:` 标签前缀、`metadata.yaml` / snapshot / allocation / write-plan 的 `version: 1` schema 均为兼容契约，变更须走版本升级并保留旧版读取。
+3. **已知耦合风险**：`llm-wiki:<page_stem>` 标签把 wiki 页面名嵌入了 Zotero 标签——未来若重命名页面，对应标签将失配。长期应将关联主键固化为 `zotero_item_key`，标签仅作人类可读标记；页面重命名时需由 `zotero-writeback` 同步换标签。
+4. **能力契约门禁**：现有命令无一拥有 `sources/` 写权限；任何实体化/改名类新命令必须先在 `src/llm_wiki/capabilities.py` 声明 write_scope（机制上只能收窄、不能放宽）。
+
+---
+
+*核对说明：本方案于 2026-08-28 对照 ZotMoov 源码（`src/00-zotmoov-wildcard.js`、`lib/01-zotlib.js`、`lib/02-sanitize-filename.js`、`src/02-zotmoov.js`、`src/02-zotmoov-menu-helper.js`、`src/01-zotmoov-notify-callback.js`）与 llm-wiki 现状（`core.py` `create_page`、`zotero_sources.py`、`zotero_mcp_client.py` `get_items`、`zotero_local.py`、`zotero_plan.py`）逐条核对修订。*
