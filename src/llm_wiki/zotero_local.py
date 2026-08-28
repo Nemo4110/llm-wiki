@@ -16,7 +16,7 @@ import json
 import os
 import re
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 from urllib.parse import urlparse
 
@@ -34,6 +34,31 @@ _MAX_WRITE_TIMEOUT = 60.0
 _MAX_AUTH_TIMEOUT = 300.0
 _RELATION_PREDICATE = "dc:relation"
 _DEFAULT_RETRY_DELAYS = (0.5, 1.0, 2.0)
+# Zotero's portable linked-file form: a POSIX-relative path resolved against the
+# per-device Linked Attachment Base Directory.  This is the only cross-device-safe
+# representation; absolute paths break on any machine with a different root.
+ATTACHMENTS_PREFIX = "attachments:"
+
+
+def _validate_attachment_target(target: str) -> str:
+    """Validate a linked-file target: absolute local path or portable attachments: form."""
+    value = str(target or "").strip()
+    if not value:
+        raise LocalWriteError("attachment target path must not be empty")
+    if value.startswith(ATTACHMENTS_PREFIX):
+        relative = value[len(ATTACHMENTS_PREFIX):]
+        parts = PurePosixPath(relative).parts
+        if (
+            not relative
+            or "\\" in relative
+            or PurePosixPath(relative).is_absolute()
+            or any(part in {"", ".", ".."} for part in parts)
+        ):
+            raise LocalWriteError("attachments: target must be a safe POSIX-relative path")
+        return value
+    if not os.path.isabs(value):
+        raise LocalWriteError("attachment target path must be absolute or attachments:-relative")
+    return value
 
 
 class LocalWriteError(RuntimeError):
@@ -341,7 +366,12 @@ class LocalZoteroWriter:
         if resp.status_code == 412:
             return False
         if resp.status_code >= 400:
-            raise LocalWriteError(f"PATCH item {item_key} -> HTTP {resp.status_code}")
+            detail = resp.text.strip().replace("\n", " ")[:300]
+            if self._api_key:
+                detail = detail.replace(self._api_key, "<redacted>")
+            raise LocalWriteError(
+                f"PATCH item {item_key} -> HTTP {resp.status_code}: {detail or 'no body'}"
+            )
         return True
 
     @staticmethod
@@ -622,11 +652,7 @@ class LocalZoteroWriter:
         versioned PATCH.  It never creates, deletes, or re-keys Zotero items.
         """
         key = _validate_item_key(item_key)
-        target = str(target_path or "").strip()
-        if not target:
-            raise LocalWriteError("attachment target path must not be empty")
-        if not os.path.isabs(target):
-            raise LocalWriteError("attachment target path must be absolute")
+        target = _validate_attachment_target(target_path)
 
         before = await self.get_item(key)
         if str(before.data.get("itemType") or "") != "attachment":

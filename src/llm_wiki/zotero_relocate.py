@@ -14,7 +14,7 @@ import shutil
 import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Protocol
 
 import yaml
@@ -22,7 +22,12 @@ import yaml
 from .agent_logger import get_logger
 from .alias_template import render_alias_template
 from .sanitizer import sanitize_title_stem
-from .zotero_local import AttachmentRepointResult, LocalItem, LocalWriteError
+from .zotero_local import (
+    ATTACHMENTS_PREFIX,
+    AttachmentRepointResult,
+    LocalItem,
+    LocalWriteError,
+)
 
 LOG = get_logger("zotero_relocate")
 
@@ -71,6 +76,7 @@ class RelocationSettings:
     update_metadata: bool = True
     materialize_aliases: bool = True
     on_symlink_error: str = "metadata"
+    base_dir_relative: bool = False
 
     @classmethod
     def from_mapping(
@@ -147,6 +153,7 @@ class RelocationSettings:
             update_metadata=bool(section.get("update_metadata", True)),
             materialize_aliases=bool(section.get("materialize_aliases", True)),
             on_symlink_error=symlink_mode,
+            base_dir_relative=bool(section.get("base_dir_relative", False)),
         )
 
 
@@ -288,6 +295,7 @@ class RelocationPlan:
     source_resolution: str = ""
     target_exists: bool = False
     target_same_content: bool = False
+    stored_path: str = ""
     item: LocalItem | None = field(default=None, repr=False, compare=False)
 
     def manifest(self) -> dict[str, Any]:
@@ -299,6 +307,7 @@ class RelocationPlan:
             "reason": self.reason,
             "source": str(self.source) if self.source else "",
             "target": str(self.target) if self.target else "",
+            "zotero_path": self.stored_path,
             "source_resolution": self.source_resolution,
             "target_exists": self.target_exists,
             "target_same_content": self.target_same_content,
@@ -445,11 +454,36 @@ def _resolve_source(binding: MetadataBinding, item: LocalItem, settings: Relocat
     if link_mode not in _SUPPORTED_LINK_MODES:
         raise RelocationError(f"unsupported Zotero attachment linkMode: {link_mode or 'missing'}")
     if not raw_path:
+        if link_mode == "imported_file":
+            # The Zotero 10 local API omits `path` for imported files; the
+            # on-disk layout is always storage/<ATTACHMENT_KEY>/<filename>.
+            filename = str(data.get("filename") or binding.filename or "").strip()
+            if filename and Path(filename).name == filename:
+                if settings.storage_root is None:
+                    raise RelocationError(
+                        "imported-file attachment requires zotero_relocation.storage_root for local resolution"
+                    )
+                return (
+                    settings.storage_root / binding.attachment_key / filename,
+                    "zotero-storage-filename",
+                )
         raise RelocationError("Zotero attachment returned no path")
     if link_mode == "linked_file":
+        if raw_path.startswith(ATTACHMENTS_PREFIX):
+            relative = raw_path[len(ATTACHMENTS_PREFIX):].strip()
+            rel_path = PurePosixPath(relative)
+            if (
+                not relative
+                or rel_path.is_absolute()
+                or any(part in {"", ".", ".."} for part in rel_path.parts)
+            ):
+                raise RelocationError("base-directory-relative attachment path is unsafe")
+            return settings.root / Path(*rel_path.parts), "zotero-base-relative-path"
         path = Path(raw_path).expanduser()
         if not path.is_absolute():
-            raise RelocationError("linked-file attachment path must be absolute")
+            raise RelocationError(
+                "linked-file attachment path must be absolute or attachments:-relative"
+            )
         return path, "zotero-linked-path"
     if raw_path.startswith("storage:"):
         if settings.storage_root is None:
@@ -471,8 +505,11 @@ def _target_for(
     item: LocalItem,
     source: Path,
     settings: RelocationSettings,
+    context_data: Mapping[str, Any] | None = None,
 ) -> Path:
-    data = item.data
+    # Naming context is normally the parent bibliographic item: attachment rows
+    # often carry only a generic title like "PDF" and no creators/date.
+    data = context_data if context_data is not None else item.data
     context = {
         "collection_path": binding.collection_name,
         "author": _first_author(data),
@@ -498,6 +535,19 @@ def _target_for(
     ) + Path(name).suffix
     relative = Path(*components)
     return _check_target_path(settings.root, relative)
+
+
+def _stored_path(target: Path, settings: RelocationSettings) -> str:
+    """Path written back to Zotero: absolute, or portable attachments:-relative to root.
+
+    The relative form resolves against each device's own Linked Attachment Base
+    Directory, so it is the only cross-device-safe representation; the root must
+    match that base directory on every device.
+    """
+    if not settings.base_dir_relative:
+        return str(target)
+    relative = target.relative_to(settings.root)
+    return ATTACHMENTS_PREFIX + relative.as_posix()
 
 
 def _candidate_with_suffix(path: Path, number: int) -> Path:
@@ -537,6 +587,29 @@ def _choose_target(
     raise RelocationError("target collision limit exceeded")
 
 
+async def _template_context_data(
+    adapter: AttachmentAdapter,
+    binding: MetadataBinding,
+    attachment_item: LocalItem,
+) -> Mapping[str, Any]:
+    """Prefer the parent bibliographic item's metadata for path templating."""
+    if not binding.item_key:
+        return attachment_item.data
+    try:
+        parent = await adapter.get_item(binding.item_key)
+    except Exception as exc:
+        LOG.warning(
+            "parent item %s unavailable for naming %s: %s",
+            binding.item_key,
+            binding.attachment_key,
+            exc,
+        )
+        return attachment_item.data
+    if str(parent.data.get("itemType") or "") == "attachment":
+        return attachment_item.data
+    return parent.data
+
+
 async def build_plans(
     store: MetadataStore,
     adapter: AttachmentAdapter,
@@ -562,7 +635,8 @@ async def build_plans(
             if not source.exists() or not source.is_file():
                 raise RelocationError(f"local attachment source is missing or not a file: {source}")
             fingerprint = _file_fingerprint(source)
-            candidate = _target_for(binding, item, source, settings)
+            context_data = await _template_context_data(adapter, binding, item)
+            candidate = _target_for(binding, item, source, settings, context_data)
             target, target_exists, same_content = _choose_target(
                 candidate, source, fingerprint, settings, reserved
             )
@@ -580,6 +654,7 @@ async def build_plans(
                     source_resolution=resolution,
                     target_exists=target_exists,
                     target_same_content=same_content,
+                    stored_path=_stored_path(target, settings),
                     item=item,
                 )
             )
@@ -704,6 +779,7 @@ def _result_base(plan: RelocationPlan) -> dict[str, Any]:
         "reason": plan.reason,
         "source": str(plan.source) if plan.source else "",
         "target": str(plan.target) if plan.target else "",
+        "zotero_path": plan.stored_path,
     }
 
 
@@ -751,7 +827,7 @@ async def relocate(
             expected_parent = str(plan.item.data.get("parentItem") or "") if plan.item else None
             repoint = await adapter.repoint_attachment(
                 plan.binding.attachment_key,
-                str(plan.target),
+                plan.stored_path,
                 expected_parent_item=expected_parent or None,
             )
             zotero_repointed = repoint.status != "skipped_current"

@@ -73,6 +73,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "update_metadata": True,
         "materialize_aliases": True,
         "on_symlink_error": "metadata",
+        "base_dir_relative": False,
     },
     "retrieval": {
         "top_k": 10,

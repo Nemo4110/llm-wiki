@@ -252,6 +252,30 @@ def test_imported_attachment_requires_explicit_storage_root(tmp_path):
     assert with_root.results[0]["status"] == "complete"
 
 
+def test_imported_attachment_without_path_uses_filename_under_storage(tmp_path):
+    """The Zotero 10 local API omits `path` for imported files; fall back to filename."""
+    project_root = tmp_path / "project"
+    source = tmp_path / "storage" / "ATTACH01" / "paper.pdf"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"stored bytes")
+    metadata_path = _write_metadata(project_root, source)
+    item = _linked_item(source)
+    item.data["linkMode"] = "imported_file"
+    item.data["path"] = ""
+    adapter = FakeAttachmentAdapter(item)
+
+    report = run(relocate(
+        metadata_path,
+        project_root,
+        _settings(project_root, tmp_path / "managed", storage_root=str(tmp_path / "storage")),
+        adapter,
+        apply=True,
+    ))
+
+    assert report.results[0]["status"] == "complete"
+    assert report.plans[0].source_resolution == "zotero-storage-filename"
+
+
 def test_source_cleanup_is_scoped_and_removes_only_verified_source(tmp_path):
     project_root = tmp_path / "project"
     source = tmp_path / "original" / "paper.pdf"
@@ -320,3 +344,121 @@ def test_same_target_is_never_deleted_during_cleanup(tmp_path):
     assert report.results[0]["status"] == "complete"
     assert report.results[0]["cleanup"] == "same-target"
     assert source.exists()
+
+
+def test_base_relative_apply_writes_portable_zotero_path(tmp_path):
+    project_root = tmp_path / "project"
+    source = tmp_path / "original" / "paper.pdf"
+    source.parent.mkdir()
+    source.write_bytes(b"pdf bytes")
+    metadata_path = _write_metadata(project_root, source)
+    managed_root = tmp_path / "managed"
+    adapter = FakeAttachmentAdapter(_linked_item(source))
+
+    report = run(relocate(
+        metadata_path,
+        project_root,
+        _settings(project_root, managed_root, base_dir_relative=True),
+        adapter,
+        apply=True,
+    ))
+
+    assert report.failed_count == 0
+    target = managed_root / "Papers" / "2024-Alice-Smith-A-Paper.pdf"
+    assert target.read_bytes() == b"pdf bytes"
+    # Zotero receives the portable base-directory-relative form, not an absolute path.
+    portable = "attachments:Papers/2024-Alice-Smith-A-Paper.pdf"
+    assert adapter.repoint_calls == [("ATTACH01", portable)]
+    assert adapter.items["ATTACH01"].data["path"] == portable
+    assert report.results[0]["zotero_path"] == portable
+    # Local layers still track the absolute on-disk path.
+    stored = MetadataStore.load(metadata_path)
+    assert stored.bindings()[0].local_path == target
+
+
+def test_base_relative_source_resolves_against_root_for_idempotent_rerun(tmp_path):
+    project_root = tmp_path / "project"
+    managed_root = tmp_path / "managed"
+    target = managed_root / "Papers" / "2024-Alice-Smith-A-Paper.pdf"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"pdf bytes")
+    metadata_path = _write_metadata(project_root, target)
+    item = _linked_item(target)
+    item.data["path"] = "attachments:Papers/2024-Alice-Smith-A-Paper.pdf"
+    adapter = FakeAttachmentAdapter(item)
+
+    report = run(relocate(
+        metadata_path,
+        project_root,
+        _settings(project_root, managed_root, base_dir_relative=True),
+        adapter,
+        apply=False,
+    ))
+
+    assert report.failed_count == 0
+    assert report.plans[0].status == "same_target"
+    assert report.plans[0].source_resolution == "zotero-base-relative-path"
+    assert report.plans[0].stored_path == "attachments:Papers/2024-Alice-Smith-A-Paper.pdf"
+
+
+def test_base_relative_source_rejects_unsafe_paths(tmp_path):
+    project_root = tmp_path / "project"
+    managed_root = tmp_path / "managed"
+    source = managed_root / "Papers" / "2024-Alice-Smith-A-Paper.pdf"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"pdf bytes")
+    metadata_path = _write_metadata(project_root, source)
+    item = _linked_item(source)
+    item.data["path"] = "attachments:../outside.pdf"
+    adapter = FakeAttachmentAdapter(item)
+
+    report = run(relocate(
+        metadata_path,
+        project_root,
+        _settings(project_root, managed_root, base_dir_relative=True),
+        adapter,
+        apply=False,
+    ))
+
+    assert report.failed_count == 1
+    assert report.plans[0].status not in {"ready", "ready_existing_content", "same_target"}
+    assert adapter.repoint_calls == []
+
+
+def test_target_naming_prefers_parent_item_metadata(tmp_path):
+    """Attachment rows often say only 'PDF'; naming must use the parent item."""
+    project_root = tmp_path / "project"
+    source = tmp_path / "original" / "paper.pdf"
+    source.parent.mkdir()
+    source.write_bytes(b"pdf bytes")
+    metadata_path = _write_metadata(project_root, source)
+    managed_root = tmp_path / "managed"
+    attachment = _linked_item(source)
+    attachment.data["title"] = "PDF"
+    attachment.data["creators"] = []
+    attachment.data["date"] = ""
+    parent = LocalItem(
+        key="ITEM0001",
+        version=9,
+        data={
+            "key": "ITEM0001",
+            "version": 9,
+            "itemType": "journalArticle",
+            "title": "Real Paper Title",
+            "date": "2023-05-01",
+            "creators": [{"creatorType": "author", "firstName": "Bob", "lastName": "Jones"}],
+        },
+    )
+    adapter = FakeAttachmentAdapter(attachment)
+    adapter.items["ITEM0001"] = parent
+
+    report = run(relocate(
+        metadata_path,
+        project_root,
+        _settings(project_root, managed_root),
+        adapter,
+        apply=False,
+    ))
+
+    assert report.failed_count == 0
+    assert report.plans[0].target == managed_root / "Papers" / "2023-Bob-Jones-Real-Paper-Title.pdf"

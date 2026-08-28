@@ -682,10 +682,57 @@ def test_repoint_attachment_preserves_item_identity_and_protected_fields(tmp_pat
     assert body == {"linkMode": "linked_file", "path": str(target)}
 
 
-def test_repoint_attachment_rejects_non_attachment_item():
+def test_repoint_attachment_rejects_non_attachment_item(tmp_path):
     captured = []
     http = httpx.AsyncClient(transport=make_transport(captured))
     writer = LocalZoteroWriter(API_KEY, http=http)
 
+    # tmp_path is absolute on every platform; the item-type check must be reached.
     with pytest.raises(LocalWriteError, match="not a Zotero attachment"):
-        run(writer.repoint_attachment(ITEM_KEY, "/tmp/paper.pdf"))
+        run(writer.repoint_attachment(ITEM_KEY, str(tmp_path / "paper.pdf")))
+
+
+def _attachment_item():
+    item = json.loads(json.dumps(BASE_ITEM))
+    item["data"].update(
+        {
+            "itemType": "attachment",
+            "linkMode": "imported_file",
+            "path": "storage:paper.pdf",
+            "parentItem": "PARENT01",
+            "filename": "paper.pdf",
+            "contentType": "application/pdf",
+        }
+    )
+    return item
+
+
+def test_repoint_attachment_accepts_base_relative_target():
+    captured = []
+    http = httpx.AsyncClient(transport=make_transport(captured, item=_attachment_item()))
+    writer = LocalZoteroWriter(API_KEY, http=http)
+
+    result = run(writer.repoint_attachment(
+        ITEM_KEY, "attachments:Papers/paper.pdf", expected_parent_item="PARENT01"
+    ))
+
+    assert result.status.startswith("updated")
+    body = json.loads(captured[0].content)
+    assert body == {"linkMode": "linked_file", "path": "attachments:Papers/paper.pdf"}
+
+
+def test_repoint_attachment_rejects_unsafe_base_relative_target():
+    captured = []
+    http = httpx.AsyncClient(transport=make_transport(captured, item=_attachment_item()))
+    writer = LocalZoteroWriter(API_KEY, http=http)
+
+    for bad in (
+        "attachments:../evil.pdf",
+        "attachments:",
+        "attachments:C:\\evil.pdf",
+        "attachments:/absolute/evil.pdf",
+        "relative/no-prefix.pdf",
+    ):
+        with pytest.raises(LocalWriteError):
+            run(writer.repoint_attachment(ITEM_KEY, bad))
+    assert captured == []
