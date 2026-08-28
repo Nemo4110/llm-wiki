@@ -653,3 +653,39 @@ def test_relation_pair_reports_residue_when_compensation_fails():
 
     with pytest.raises(LocalWriteError, match="compensation"):
         run(writer.ensure_relation_pair(ITEM_KEY, target_key))
+
+
+def test_repoint_attachment_preserves_item_identity_and_protected_fields(tmp_path):
+    item = json.loads(json.dumps(BASE_ITEM))
+    item["data"].update(
+        {
+            "itemType": "attachment",
+            "linkMode": "imported_file",
+            "path": "storage:paper.pdf",
+            "parentItem": "PARENT01",
+            "filename": "paper.pdf",
+            "contentType": "application/pdf",
+            "relations": {"dc:relation": ["http://zotero.org/users/1/items/OTHER001"]},
+        }
+    )
+    captured = []
+    target = tmp_path / "managed" / "paper.pdf"
+    http = httpx.AsyncClient(transport=make_transport(captured, item=item))
+    writer = LocalZoteroWriter(API_KEY, http=http)
+
+    result = run(writer.repoint_attachment(ITEM_KEY, str(target), expected_parent_item="PARENT01"))
+
+    assert result.status.startswith("updated")
+    assert result.before_link_mode == "imported_file"
+    assert result.before_path == "storage:paper.pdf"
+    body = json.loads(captured[0].content)
+    assert body == {"linkMode": "linked_file", "path": str(target)}
+
+
+def test_repoint_attachment_rejects_non_attachment_item():
+    captured = []
+    http = httpx.AsyncClient(transport=make_transport(captured))
+    writer = LocalZoteroWriter(API_KEY, http=http)
+
+    with pytest.raises(LocalWriteError, match="not a Zotero attachment"):
+        run(writer.repoint_attachment(ITEM_KEY, "/tmp/paper.pdf"))

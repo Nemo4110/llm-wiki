@@ -219,6 +219,7 @@ Every wiki task falls into exactly one of three categories. **The category deter
 | **A** | Zotero alias render | No | `agent-bridge.py zotero-alias` | Hand-sanitize a source_alias string |
 | **C** | Apply safe Zotero enrichment | Agent reviews | `zotero-refresh --apply-safe` | Use MCP tools manually if the worker cannot verify write-back |
 | **C** | Authorized Zotero tag/relation write-back | Agent + user review | `agent-bridge.py zotero-writeback` | Use reviewed incremental MCP writes when the local exception is unavailable |
+| **C** | Controlled Zotero attachment relocation | Agent + user review | `agent-bridge.py zotero-relocate` | Review dry-run, require local authorization, and stop when the attachment API gate is unavailable |
 | **B** | Ingest material | **Yes** | Protocol mode (direct file ops) | N/A |
 | **B** | Query & synthesize | **Yes** | Protocol mode (direct file ops) | N/A |
 | **C** | Apply link results | **Agent judges** | `merge` (after reviewing diff) | Manual edit |
@@ -371,7 +372,7 @@ python scripts/agent-bridge.py zotero-plan --snapshot temp/zotero-snapshot.yaml 
 ```
 
 3. Review managed-tag additions, collection-equivalent removal candidates, DOI states, and preprint publication checks.
-4. Apply approved mutations through Zotero MCP by default. When the user has explicitly authorized the documented Zotero 10 loopback exception, promote only reviewed additions/relations into an `authorized-write` plan and use `zotero-writeback`; then re-read the write backend and pass the synchronization barrier.
+4. Apply approved mutations through Zotero MCP by default. When the user has explicitly authorized the documented Zotero 10 loopback exception, promote only reviewed additions/relations into an `authorized-write` plan and use `zotero-writeback`; for attachment relocation, use the separately gated `zotero-relocate` workflow described in the canonical protocol; then re-read the write backend and pass the synchronization barrier.
 
 The planner never connects to Zotero and never mutates Zotero or wiki files. An omitted `doi` means unobserved; `doi: ""` means the Zotero DOI field was read and is missing. A `--manifest-out` target must stay under `temp/`; the emitted `mode: review-only` manifest is not an executable mutation script, and `remove_tags_review` / `relation_candidates_review` still require Agent and MCP review.
 
@@ -599,7 +600,7 @@ python -m src.llm_wiki --verbose link --source "X" --mode light
 
 ### Zotero-Linked Sources
 
-All Zotero source discovery, attachment access, private bindings, provenance fields, and write-back rules are defined in [`docs/ZOTERO_MCP_INTEGRATION.md`](docs/ZOTERO_MCP_INTEGRATION.md). Use only `54yyyu/zotero-mcp` for Zotero operations, except the temporary opt-in Zotero 10 loopback write paths (`zotero-refresh --write-backend local` and restricted `zotero-writeback`) documented there.
+All Zotero source discovery, attachment access, private bindings, provenance fields, and write-back rules are defined in [`docs/ZOTERO_MCP_INTEGRATION.md`](docs/ZOTERO_MCP_INTEGRATION.md). Use only `54yyyu/zotero-mcp` for Zotero operations, except the temporary opt-in Zotero 10 loopback write paths (`zotero-refresh --write-backend local`, restricted `zotero-writeback`, and separately gated `zotero-relocate`) documented there.
 
 ### Standard Network Fetch Template
 

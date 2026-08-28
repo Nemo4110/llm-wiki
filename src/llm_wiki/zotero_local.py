@@ -94,6 +94,18 @@ class RelationWriteResult:
 
 
 @dataclass(frozen=True)
+class AttachmentRepointResult:
+    """Verified result of changing an attachment to a linked-file path."""
+
+    item_key: str
+    status: str
+    attempts: int
+    before_link_mode: str
+    before_path: str
+    target_path: str
+
+
+@dataclass(frozen=True)
 class _MutationExpectation:
     baseline_tags: Tuple[Dict[str, Any], ...]
     add_tags: frozenset[str]
@@ -594,6 +606,70 @@ class LocalZoteroWriter:
                 f"verification failed for Related-item pair {source.key}/{target.key}"
             )
         return RelationWriteResult(source.key, target.key, tuple(changed))
+
+    async def repoint_attachment(
+        self,
+        item_key: str,
+        target_path: str,
+        *,
+        expected_parent_item: str | None = None,
+    ) -> AttachmentRepointResult:
+        """Convert one attachment to a linked-file path and verify invariants.
+
+        This deliberately exposes a narrower mutation than ``write_safe_mutation``:
+        only attachment ``linkMode`` and ``path`` may change.  The method keeps the
+        original item key and verifies the attachment identity and parent after the
+        versioned PATCH.  It never creates, deletes, or re-keys Zotero items.
+        """
+        key = _validate_item_key(item_key)
+        target = str(target_path or "").strip()
+        if not target:
+            raise LocalWriteError("attachment target path must not be empty")
+        if not os.path.isabs(target):
+            raise LocalWriteError("attachment target path must be absolute")
+
+        before = await self.get_item(key)
+        if str(before.data.get("itemType") or "") != "attachment":
+            raise LocalWriteError(f"item {key} is not a Zotero attachment")
+        data_key = str(before.data.get("key") or key).strip().upper()
+        if data_key != key:
+            raise LocalWriteError(f"attachment {key} returned a different item key")
+        parent_before = str(before.data.get("parentItem") or "").strip().upper()
+        expected_parent = (
+            str(expected_parent_item).strip().upper() if expected_parent_item is not None else None
+        )
+        if expected_parent is not None and parent_before != expected_parent:
+            raise LocalWriteError(f"attachment {key} parent item changed before write")
+
+        before_link_mode = str(before.data.get("linkMode") or "")
+        before_path = str(before.data.get("path") or "")
+        if before_link_mode == "linked_file" and before_path == target:
+            return AttachmentRepointResult(
+                key, "skipped_current", 0, before_link_mode, before_path, target
+            )
+
+        mutation = await self.write_safe_mutation(
+            key,
+            fields={"linkMode": "linked_file", "path": target},
+        )
+        after = await self.get_item(key)
+        if str(after.data.get("itemType") or "") != "attachment":
+            raise LocalWriteError(f"verification failed for attachment {key}: item type changed")
+        if str(after.data.get("key") or key).strip().upper() != key:
+            raise LocalWriteError(f"verification failed for attachment {key}: item key changed")
+        if expected_parent is not None and str(after.data.get("parentItem") or "").strip().upper() != expected_parent:
+            raise LocalWriteError(f"verification failed for attachment {key}: parent item changed")
+        if str(after.data.get("linkMode") or "") != "linked_file" or str(after.data.get("path") or "") != target:
+            raise LocalWriteError(f"verification failed for attachment {key}: linked path did not persist")
+
+        for field in ("parentItem", "filename", "contentType", "charset", "relations", "tags", "extra"):
+            if field in before.data and after.data.get(field) != before.data.get(field):
+                raise LocalWriteError(
+                    f"verification failed for attachment {key}: protected field {field!r} changed"
+                )
+        return AttachmentRepointResult(
+            key, mutation.status, mutation.attempts, before_link_mode, before_path, target
+        )
 
     @classmethod
     def from_store(cls, store_path, **kwargs) -> "LocalZoteroWriter":

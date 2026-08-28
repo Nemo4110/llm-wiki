@@ -86,6 +86,24 @@ zotero_enrichment:
   local:
     base_url: "http://127.0.0.1:23119"
 
+zotero_relocation:
+  # 附件搬迁默认关闭；启用前先阅读 docs/ZOTERO_ATTACHMENT_RELOCATION.md。
+  enabled: false
+  # 必须是绝对路径；不能放在项目 sources/ 或 Zotero 数据库目录中。
+  root: ""
+  # imported_file 的 storage:filename 需要显式的 Zotero storage 根目录才能解析。
+  storage_root: ""
+  path_template: "%c/%y-%a-%t"
+  max_component_bytes: 120
+  collision_policy: "suffix"
+  max_collision_attempts: 100
+  # 旧源删除必须另外配置允许的源根目录，默认不删除。
+  delete_source: false
+  allowed_source_roots: []
+  update_metadata: true
+  materialize_aliases: true
+  on_symlink_error: "metadata"
+
 zotero_import:
   # sources/zotero/ 别名命名模板（方案五;仅别名,不含 wiki 页面命名）。
   # 通配符: %a 主作者 %y 年份 %t 标题 %c 分类层级路径 %b CiteKey %T 条目类型, %% 为字面值。

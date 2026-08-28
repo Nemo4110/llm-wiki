@@ -1,7 +1,7 @@
 ---
 name: llm-wiki
 version: "1.5.2"
-description: "Use when an AI Agent (Claude Code, Codex, OpenClaw, or similar) needs to operate an llm-wiki knowledge base: ingest source files into Markdown wiki pages, answer questions from wiki/index.md and linked pages, run agent-bridge status/lint/link/relink/merge/query/index tasks, preserve provenance and temporal metadata, or use Zotero as a literature-discovery layer."
+description: "Use when an AI Agent (Claude Code, Codex, OpenClaw, or similar) needs to operate an llm-wiki knowledge base: ingest source files into Markdown wiki pages, answer questions from wiki/index.md and linked pages, run agent-bridge status/lint/link/relink/merge/query/index/Zotero relocation tasks, preserve provenance and temporal metadata, or use Zotero as a literature-discovery layer."
 ---
 
 # LLM-Wiki
@@ -29,6 +29,7 @@ Keep this file as the operational skill. Use `README.md` for user-facing overvie
 | Ingest source material | Protocol mode | Requires LLM judgment: read source, extract metadata, create/update pages. |
 | Answer wiki questions | Protocol mode | Read `wiki/index.md`, relevant pages, and link neighbors; synthesize with `[[PageName]]` citations. |
 | Apply relation updates | Hybrid | Let `agent-bridge.py` discover candidates, then review and merge only safe changes. |
+| Plan/apply Zotero attachment relocation | Hybrid | Use `zotero-relocate`; review dry-run, require local authorization for apply, and never bypass the Phase 0/API gate. |
 
 Agent Bridge quick commands:
 
@@ -46,6 +47,7 @@ Agent Bridge quick commands:
 <PY> scripts/agent-bridge.py zotero-ingest-verify --snapshot temp/zotero-snapshot.yaml --allocation temp/zotero-allocation.yaml --report-out temp/zotero-ingest-report.yaml
 <PY> scripts/agent-bridge.py zotero-heal --snapshot temp/zotero-snapshot.yaml --manifest-out temp/zotero-heal.yaml
 <PY> scripts/agent-bridge.py zotero-writeback --plan temp/zotero-write-plan.yaml --action audit --report-out temp/zotero-write-audit.yaml
+<PY> scripts/agent-bridge.py zotero-relocate --root "/absolute/path/to/managed-attachments"
 ```
 
 Use legacy `python -m src.llm_wiki ...` only for human scripting or debugging. Do not use the legacy CLI as a substitute for LLM judgment during ingest.
@@ -93,7 +95,7 @@ Never treat `created` or `updated` as publication dates. They are wiki maintenan
 
 All Zotero discovery, reads, source access, metadata planning, and normal writes for this skill **MUST use the MCP tools provided by [`54yyyu/zotero-mcp`](https://github.com/54yyyu/zotero-mcp)**. Before any Zotero task, read and follow [`docs/ZOTERO_MCP_INTEGRATION.md`](docs/ZOTERO_MCP_INTEGRATION.md), the single operational source of truth for availability gates, read/write workflows, source bindings, provenance, and safety.
 
-The only temporary exception is the user-authorized Zotero 10 loopback write path documented there. `zotero-writeback` accepts only a reviewed `mode: authorized-write` plan, adds `llm-wiki:*` tags, ensures reviewed reciprocal Related pairs, and performs read-after-write verification. It cannot change metadata or collection membership, write notes, or touch Trash. Tag removal is a separate scoped opt-in: only when a plan sets `policy.allow_managed_removals: true` and lists a tag under an item's `reviewed_removals`, and even then only managed `llm-wiki:*` tags other than the protected `llm-wiki:ingested` status tag and preserved tags (e.g. `llm-wiki:index-card`) may be removed — never unmanaged/user tags. `zotero-plan --removal-plan-out` generates such a plan whitelisted to retired `llm-wiki:<page_stem>` binding tags only. `--memory-authorize` keeps the local key in process memory only.
+The only temporary exceptions are the user-authorized Zotero 10 loopback write paths documented there. `zotero-writeback` accepts only a reviewed `mode: authorized-write` plan, adds `llm-wiki:*` tags, ensures reviewed reciprocal Related pairs, and performs read-after-write verification. `zotero-relocate` is separately gated and may update only an existing attachment `linkMode` / `path` plus private local bindings after filesystem and post-write verification. Neither path may clone/delete items, edit notes, change collections, or perform arbitrary API access. Tag removal is a separate scoped opt-in: only when a plan sets `policy.allow_managed_removals: true` and lists a tag under an item's `reviewed_removals`, and even then only managed `llm-wiki:*` tags other than the protected `llm-wiki:ingested` status tag and preserved tags (e.g. `llm-wiki:index-card`) may be removed — never unmanaged/user tags. `zotero-plan --removal-plan-out` generates such a plan whitelisted to retired `llm-wiki:<page_stem>` binding tags only. `--memory-authorize` keeps the local key in process memory only.
 
 Do not substitute another Zotero skill/client or bypass Zotero MCP with direct SQLite/Web API access. If the required MCP or restricted local capability is unavailable, report the blocker, stop Zotero-side work, and continue only with useful wiki-local work.
 

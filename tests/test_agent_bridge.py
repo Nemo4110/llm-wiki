@@ -1140,3 +1140,89 @@ class TestCmdZoteroAlias:
         out = capsys.readouterr().out
         assert rc == 1
         assert "wildcard" in out
+
+
+class TestCmdZoteroRelocate:
+    def test_dry_run_reports_without_writing(self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys):
+        import yaml
+        from src.llm_wiki.zotero_local import LocalItem
+
+        source = temp_wiki_root.parent / "relocate-source.pdf"
+        source.write_bytes(b"pdf bytes")
+        metadata_path = temp_wiki_root / "sources" / "zotero" / "metadata.yaml"
+        metadata_path.parent.mkdir(parents=True)
+        metadata_path.write_text(
+            yaml.safe_dump(
+                {
+                    "version": 1,
+                    "collections": [{
+                        "name": "Papers",
+                        "items": [{
+                            "title": "A Paper",
+                            "zotero_item_key": "ITEM0001",
+                            "attachments": [{
+                                "zotero_attachment_key": "ATTACH01",
+                                "local_path": str(source),
+                                "source_alias": "sources/zotero/paper.pdf",
+                                "filename": "relocate-source.pdf",
+                            }],
+                        }],
+                    }],
+                },
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
+        managed = temp_wiki_root.parent / "managed"
+        config = (temp_wiki_root / "config.yaml").read_text(encoding="utf-8")
+        (temp_wiki_root / "config.yaml").write_text(
+            config + f"\nzotero_relocation:\n  root: {str(managed)!r}\n  path_template: '%t'\n",
+            encoding="utf-8",
+        )
+
+        class FakeWriter:
+            def __init__(self, *args, **kwargs):
+                self.item = LocalItem(
+                    key="ATTACH01",
+                    version=1,
+                    data={
+                        "key": "ATTACH01",
+                        "itemType": "attachment",
+                        "linkMode": "linked_file",
+                        "path": str(source),
+                        "parentItem": "ITEM0001",
+                        "title": "A Paper",
+                        "date": "2024",
+                        "filename": "relocate-source.pdf",
+                    },
+                )
+
+            async def get_item(self, item_key):
+                return self.item
+
+            async def aclose(self):
+                return None
+
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        monkeypatch.setattr("src.llm_wiki.zotero_local.LocalZoteroWriter", FakeWriter)
+        args = _args(
+            metadata="sources/zotero/metadata.yaml",
+            root=None,
+            storage_root=None,
+            pattern=None,
+            item_keys=None,
+            attachment_keys=None,
+            apply=False,
+            delete_source=False,
+            memory_authorize=False,
+            app_name="llm-wiki",
+            report_out="temp/zotero-relocate.yaml",
+        )
+
+        rc = agent_bridge_module.cmd_zotero_relocate(args)
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert "Dry-run only" in out
+        assert (temp_wiki_root / "temp" / "zotero-relocate.yaml").exists()
+        assert not managed.exists()

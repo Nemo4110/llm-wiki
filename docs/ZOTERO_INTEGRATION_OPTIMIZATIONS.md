@@ -147,6 +147,33 @@ zotero_import:
 
 ---
 
+### 方案六：附件受控搬迁与定位一致性 (Controlled Attachment Relocation)
+
+#### 现有痛点
+- `sources/zotero/metadata.yaml` 的 `local_path` 是**收录时点的路径快照**，不是 Zotero 附件位置的权威来源。
+- 用户随后用 ZotMoov 重组附件目录，或在 Zotero 中转换附件后，`local_path` 与其 alias/symlink 可能悬空：`zotero_sources.py` 报 missing source，Agent 读源失败，且目前没有机制在保持 provenance 的同时完成修复。
+- 仅修复 metadata 或 symlink 不能解决 Zotero 侧定位不一致；仅修改 Zotero 路径又会让 llm-wiki 本地来源层继续指向旧位置。
+
+#### 设计纠正：llm-wiki 负责搬迁编排
+ZotMoov 的附件重组是其本体功能，而不是 llm-wiki 只能借用的外围模式。llm-wiki 将通过独立、显式授权的 `zotero-relocate` 能力承担受控搬迁：
+
+- 以配置的附件根目录和 Collection/作者/年份/标题等白名单字段生成目标布局；
+- 先通过 MCP 或经过授权的本地能力解析 Zotero 当前真实路径，不信任旧 `local_path`；
+- 采用 copy → verify → Zotero repoint → verify → metadata/alias 更新 → 可选清理的有序状态机；
+- 通过原 attachment item key 的路径写回优先保持父项、子项、批注和关系；无法验证时拒绝 clone-and-repoint，不制造可能丢失笔记引用的替代条目；
+- 对目标路径、旧源删除、配置根目录和 metadata 文件执行独立能力契约与 containment 校验。
+
+ZotMoov 在 Zotero 插件内部还能迁移子项、批注、关系、full-text 索引并重写笔记引用；llm-wiki 不拥有这些内部 API，也不修改笔记正文。因此“负责搬迁”不等于假设外部 API 具备 ZotMoov 的全部能力。详细设计、Phase 0 API 门槛和失败恢复策略见 [Zotero 附件受控搬迁设计](ZOTERO_ATTACHMENT_RELOCATION.md)。
+
+#### 实施入口与边界
+1. **Phase 0 验证**：在隔离测试库确认现有 attachment item 的 `linkMode` / `path` 写回、item key 保持、子项/批注完整性及写后重读能力；未通过前只提供 dry-run/audit。
+2. **受控搬迁**：新增独立命令和能力契约，默认关闭；目标路径永不覆盖既有文件，模板字段先清洗并按字节安全截断。
+3. **本地层同步**：Zotero 写回成功后才更新 `metadata.yaml.local_path`，再幂等重建 alias/symlink；source alias 作为既有 wiki provenance 锚点默认不改名。
+4. **恢复与清理**：跨 Zotero、文件系统和 YAML 不宣称真正原子事务；以可恢复状态机记录半完成状态。旧源删除必须显式启用、位于允许根目录且通过逐项引用检查。
+5. **同步警示**：stored → linked 可能改变 Zotero File Sync 行为；Web-only、无法解析本地路径、已发生本地/Web 分叉和 group library 默认阻断，而不是静默降级。
+
+---
+
 ## 3. 实施优先级路线图
 
 | 阶段 | 优先级 | 优化内容 | 涉及模块 |
@@ -157,6 +184,11 @@ zotero_import:
 | **Phase 2** | **P1** | **条目死链自愈机制**：支持条目合并/变更时的自动 DOI/CiteKey 重映射 | `src/llm_wiki/zotero_refresh.py`, `zotero_ingest_verify.py` |
 | **Phase 3** | **P2** | **冲突退避强化 + 双向关系补偿**：有界指数退避；`dc:relation` 失败补偿回滚（幂等重跑已可自愈，属整洁性增强） | `src/llm_wiki/zotero_local.py` |
 | **暂缓** | **P2** | **别名级通配符模板**：仅 `alias_pattern`；wiki 页面命名模板暂缓 | `scripts/zotero_sources.py`, `config.yaml` |
+| **Phase 0** | **P0** | **附件搬迁能力验证**：隔离测试库验证 attachment `linkMode` / `path` 写回、item key/子项/批注保持和写后重读；未通过前仅 dry-run/audit | `docs/ZOTERO_ATTACHMENT_RELOCATION.md`, `src/llm_wiki/zotero_attachment_adapter.py` |
+| **Phase 1** | **P1** | **受控附件搬迁核心**：模板字段白名单、字节级清洗、目标 containment、冲突避让与 copy-verify-repoint-verify 状态机 | `src/llm_wiki/zotero_relocate.py`, `src/llm_wiki/capabilities.py` |
+| **Phase 2** | **P1** | **Zotero 与本地来源层一致性**：原子更新 `metadata.yaml.local_path`、alias 修复、半完成状态 reconcile | `src/llm_wiki/zotero_relocate.py`, `scripts/zotero_sources.py` |
+| **Phase 3** | **P2** | **附件路径漂移审计与受控清理**：权威路径重解析、旧源引用检查和显式允许根目录下的 cleanup-pending 恢复 | `src/llm_wiki/zotero_relocate.py`, `zotero_ingest_verify.py` |
+| **Phase 3** | **P2** | **主题标签投影**：将 wiki 页面 `tags:` 映射为共享 `llm-wiki:<topic>` 托管标签（绑定标签只负责溯源，不负责主题聚类——2026-08-28 实测暴露） | `src/llm_wiki/zotero_plan.py` |
 
 ---
 

@@ -213,6 +213,12 @@ python scripts/agent-bridge.py zotero-ingest-verify \
 python scripts/agent-bridge.py zotero-writeback --plan temp/zotero-write-plan.yaml \
   --action audit --report-out temp/zotero-write-audit.yaml
 
+# Plan controlled attachment relocation (apply requires explicit config + local authorization)
+python scripts/agent-bridge.py zotero-relocate --root "/absolute/path/to/managed-attachments"
+
+# Apply relocation only after reviewing the dry-run report
+python scripts/agent-bridge.py zotero-relocate --apply --report-out temp/zotero-relocate.yaml
+
 # Apply multi-file writes (page + index + log) atomically; always dry-run first
 python scripts/agent-bridge.py apply-bundle temp/tx-bundle.yaml --dry-run
 python scripts/agent-bridge.py apply-bundle temp/tx-bundle.yaml
@@ -233,6 +239,8 @@ python scripts/agent-bridge.py hot
 `agent-bridge.py zotero-ingest-verify` compares a verified MCP snapshot with an explicit allocation ledger (example: `docs/examples/zotero-ingest-allocation.example.yaml`). It fails on missing/duplicate allocations, unexplained omissions, missing `sources_meta` bindings, invalid frontmatter, broken page invariants, control characters, trailing whitespace, or machine-specific private paths. Suspiciously identical three-page batch structure is advisory rather than an automatic failure.
 
 `agent-bridge.py zotero-writeback` is the temporary, explicitly authorized Zotero 10 loopback exception for additions that the current MCP cannot express. It accepts only a secret-free `mode: authorized-write` plan (example: `docs/examples/zotero-write-plan.example.yaml`), supports separate `audit`, `apply`, and `verify` phases, adds only `llm-wiki:*` tags, and ensures reviewed reciprocal Related pairs. It preserves existing tag objects, retries one version conflict from a fresh GET, and verifies every accepted PATCH. Metadata, collection membership, notes, tag removal, and Trash remain out of scope. `--memory-authorize` keeps the key in process memory only.
+
+`agent-bridge.py zotero-relocate` is the opt-in, verified attachment relocation workflow. It plans from `sources/zotero/metadata.yaml` bindings but reads the current attachment path from Zotero, never overwrites an existing target, and defaults to dry-run. Apply requires `zotero_relocation.enabled: true`, local Zotero authorization, and a path template/root that pass the capability and containment checks. It changes only the attachment's `linkMode`/`path`, preserves the original item key, updates private metadata and aliases after post-write verification, never edits notes, and leaves old sources in place unless explicitly configured for scoped cleanup. See `docs/ZOTERO_ATTACHMENT_RELOCATION.md` for the Phase 0 API gate and recovery rules.
 
 #### Depth lint warnings
 

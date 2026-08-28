@@ -178,6 +178,12 @@ python scripts/agent-bridge.py zotero-ingest-verify \
 python scripts/agent-bridge.py zotero-writeback --plan temp/zotero-write-plan.yaml \
   --action audit --report-out temp/zotero-write-audit.yaml
 
+# 规划受控附件搬迁（apply 需要显式配置和本地授权）
+python scripts/agent-bridge.py zotero-relocate --root "/absolute/path/to/managed-attachments"
+
+# 审阅 dry-run 报告后再执行搬迁
+python scripts/agent-bridge.py zotero-relocate --apply --report-out temp/zotero-relocate.yaml
+
 # 将多文件写入（页面 + index + log）作为事务原子应用；务必先 dry-run
 python scripts/agent-bridge.py apply-bundle temp/tx-bundle.yaml --dry-run
 python scripts/agent-bridge.py apply-bundle temp/tx-bundle.yaml
@@ -198,6 +204,8 @@ python scripts/agent-bridge.py hot
 `agent-bridge.py zotero-ingest-verify` 会把经过核验的 MCP snapshot 与显式 allocation ledger（示例：`docs/examples/zotero-ingest-allocation.example.yaml`）对照。缺失或重复 allocation、无理由 omission、缺失 `sources_meta` 绑定、非法 frontmatter、页面不变量缺失、控制字符、行尾空白或机器私有绝对路径都会使校验失败；三页以上结构和深度近乎相同的 batch-template-collapse 只作为 advisory warning。
 
 `agent-bridge.py zotero-writeback` 是临时、显式授权的 Zotero 10 loopback 写入例外，用于当前 MCP 无法表达的已审核 addition。它只接受不含 secret 的 `mode: authorized-write` plan（示例：`docs/examples/zotero-write-plan.example.yaml`），将 `audit`、`apply`、`verify` 分阶段执行，只增量添加 `llm-wiki:*` tag 并确保经过审核的双向 Related pair。实现会保留已有 tag object，在版本冲突时基于最新 GET 最多重试一次，并对每个 PATCH 做回读验证。metadata、collection membership、note、tag 删除和 Trash 都不在授权范围内；`--memory-authorize` 使 key 只保存在当前进程内存。
+
+`agent-bridge.py zotero-relocate` 是显式开启、带回读验证的附件搬迁流程。它以 `sources/zotero/metadata.yaml` 作为绑定入口，但从 Zotero 重新读取当前附件路径，不覆盖既有目标，默认只做 dry-run。apply 需要 `zotero_relocation.enabled: true`、Zotero 本地授权，以及通过能力契约和 containment 校验的根目录与模板。它只更新附件的 `linkMode` / `path`，保留原 attachment item key，在写回验证成功后再更新私有 metadata 和 alias；不修改 note，旧源也不会删除，除非另行显式配置受控清理。详见 `docs/ZOTERO_ATTACHMENT_RELOCATION.md`。
 
 #### 内容深度 lint 告警
 

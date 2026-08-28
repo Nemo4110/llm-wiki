@@ -67,6 +67,21 @@ This runs the Zotero 10 local-write handshake: read `Zotero-Server-ID` from `GET
 - The local API requires Zotero Desktop running with "Allow other applications on this computer to communicate with Zotero" enabled.
 - If the key is missing or expired, `zotero-refresh --write-backend local` fails closed and tells you to re-run `zotero-local-auth`.
 
+## Controlled Attachment Relocation
+
+`zotero-relocate` is a separate, opt-in exception for the narrow case in which llm-wiki must move a local attachment and update its Zotero linked-file path. It is not a general Zotero client and does not replace the MCP discovery/read boundary.
+
+Before enabling apply against a user library:
+
+- Run the Phase 0 isolated-library spike described in `docs/ZOTERO_ATTACHMENT_RELOCATION.md` and confirm that Zotero can update the existing attachment item in place while preserving its item key, parent, child items, and annotations.
+- Use only the command's `zotero-relocate` capability contract. Its filesystem writes are limited to the configured managed attachment root, the private `sources/zotero/` binding/alias layer, and explicitly allowed source roots for cleanup.
+- Use the current Zotero attachment key as the stable identity. Do not clone/delete items or rewrite notes when the backend cannot prove equivalent preservation.
+- Re-read the attachment after every accepted PATCH and update `metadata.yaml` only after the Zotero path is verified. A Web API success response or a stale metadata path is not sufficient.
+- Keep `zotero_relocation.enabled` false until the user has reviewed the dry-run report. `--delete-source` is opt-in and remains bounded by `allowed_source_roots` and reference checks.
+- Treat stored-to-linked conversion as a sync-impacting operation: Zotero File Sync may no longer manage the file bytes, and other machines may not have access to the configured external root.
+
+The workflow is implemented by `scripts/agent-bridge.py zotero-relocate`; its design, state machine, failure recovery, and unresolved API questions are documented in `docs/ZOTERO_ATTACHMENT_RELOCATION.md`.
+
 ## Required Tool Boundary
 
 All Zotero discovery, reads, source access, metadata identity work, semantic-index maintenance, and normal writes performed by this skill **MUST go through the MCP tools exposed by [`54yyyu/zotero-mcp`](https://github.com/54yyyu/zotero-mcp)**. Direct local writes are permitted only by the narrowly defined temporary exception below.
@@ -81,7 +96,7 @@ Agents must not substitute:
 
 The `zotero-mcp` CLI may be used for installation, upgrades, setup, and diagnostics. Zotero library reads, writes, and semantic-index maintenance should use the connected MCP tool surface. Use a CLI maintenance command only when the required MCP maintenance tool is unavailable and the user has approved that fallback. Installing, updating, or reconfiguring `zotero-mcp` requires user confirmation under the normal dependency and external-service rules.
 
-**Temporary exception:** direct writes to the Zotero 10 *local* API are permitted only through the reviewed `zotero-refresh --write-backend local` path or the restricted `zotero-writeback` authorized-plan path described in this document. All discovery, source access, collection reads, and bibliographic identity work still go through zotero-mcp.
+**Temporary exception:** direct writes to the Zotero 10 *local* API are permitted only through the reviewed `zotero-refresh --write-backend local` path, the restricted `zotero-writeback` authorized-plan path, or the separately gated `zotero-relocate` attachment path described in this document. All discovery, source access, collection reads, and bibliographic identity work still go through zotero-mcp.
 
 ## Compatibility and Capability Gate
 
@@ -90,7 +105,7 @@ Before every Zotero task:
 1. Verify that the configured MCP integration is intended to be an installation of `54yyyu/zotero-mcp` and that its Zotero tools are exposed in the current Agent session. If the host does not expose package provenance, verify the expected capability surface and state that repository provenance could not be independently confirmed.
 2. Verify access to the intended Zotero library. Discover libraries before switching; do not guess a library ID or type.
 3. For read-only work, verify the specific path needed by the task, such as collection search, item metadata, annotations, attachment paths, or full text.
-4. For write work, verify the exact write tool and authorization before changing anything. Note creation/update, incremental tag updates, item metadata changes, collection membership changes, attachment uploads, annotations, and related-item operations are separate capability gates.
+4. For write work, verify the exact write tool and authorization before changing anything. Note creation/update, incremental tag updates, item metadata changes, collection membership changes, attachment uploads, annotations, related-item operations, and attachment path relocation are separate capability gates.
 5. Use only capabilities actually exposed by the connected `zotero-mcp` instance. Do not infer a tool exists from this document, an old example, or another installation.
 6. When observable, distinguish whether a capability is not installed, not exposed by the configured toolsets, not configured, unavailable in the active access mode, or unauthorized.
 
@@ -143,7 +158,7 @@ Use the following metadata write gate:
 
 Do not infer backend consistency from configuration values alone. A valid API key, an exposed write tool, or a successful single-item write proves only that one route is writable; it does not prove that local and Web state agree.
 
-> **Note on `metadata_write_backend = local`:** not reachable *through zotero-mcp* — v0.11.0 routes its writes through the Web API even against Zotero 10. The `local` write backend is reachable only via the temporary direct local path (`zotero-refresh --write-backend local`); the gate's Web-backend rows still govern anything written through zotero-mcp. See "Temporary Direct Local Writes".
+> **Note on `metadata_write_backend = local`:** not reachable *through zotero-mcp* — v0.11.0 routes its writes through the Web API even against Zotero 10. The `local` write backend is reachable only via the temporary direct local paths (`zotero-refresh --write-backend local`, reviewed `zotero-writeback`, or reviewed `zotero-relocate`); the gate's Web-backend rows still govern anything written through zotero-mcp. See "Temporary Direct Local Writes".
 
 ### Backend Consistency Gate
 
@@ -641,4 +656,4 @@ If local is authoritative, distinguish `cloud write succeeded` from `verified lo
 
 ## llm-wiki Boundary
 
-Do not add a general native Zotero client or duplicate `zotero-mcp` inside `src/llm_wiki`. `scripts/agent-bridge.py` remains the entry point for llm-wiki workflows. Zotero library discovery, reads, source access, metadata identity, and normal writes remain behind `54yyyu/zotero-mcp`; `zotero_local.py` is a temporary, loopback-only, addition-only exception for the reviewed schemas and verification barriers defined above. Do not expand it to metadata replacement, collection mutation, notes, attachments, deletion, or arbitrary API access without a new explicit architecture decision.
+Do not add a general native Zotero client or duplicate `zotero-mcp` inside `src/llm_wiki`. `scripts/agent-bridge.py` remains the entry point for llm-wiki workflows. Zotero library discovery, reads, source access, metadata identity, and normal writes remain behind `54yyyu/zotero-mcp`; `zotero_local.py` remains a temporary, loopback-only exception for the reviewed schemas and verification barriers defined above. The separately reviewed `zotero-relocate` path may update only an existing attachment's `linkMode` / `path` and the private local binding layer; it must not clone/delete items, edit notes, change collections, or perform arbitrary API access.

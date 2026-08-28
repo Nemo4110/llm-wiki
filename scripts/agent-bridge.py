@@ -25,6 +25,7 @@ Usage:
     python scripts/agent-bridge.py zotero-plan --snapshot temp/zotero-snapshot.yaml
     python scripts/agent-bridge.py zotero-ingest-verify --snapshot temp/zotero-snapshot.yaml --allocation temp/zotero-allocation.yaml --report-out temp/zotero-ingest-report.yaml
     python scripts/agent-bridge.py zotero-writeback --plan temp/zotero-write-plan.yaml --action audit --report-out temp/zotero-write-audit.yaml
+    python scripts/agent-bridge.py zotero-relocate --root "/absolute/path/to/managed-attachments"
     python scripts/agent-bridge.py merge --source "NewPage" --target "OldPage" \
         --strategy append_related --dry-run
 """
@@ -1577,7 +1578,7 @@ def cmd_zotero_writeback(args: argparse.Namespace) -> int:
 
     config = load_config(wiki_root)
     local_cfg = (config.get("zotero_enrichment") or {}).get("local") or {}
-    writer_kwargs: Dict[str, Any] = {}
+    writer_kwargs: dict[str, Any] = {}
     base_url = str(local_cfg.get("base_url") or "").strip()
     if base_url:
         writer_kwargs["base_url"] = base_url
@@ -1658,6 +1659,164 @@ def cmd_zotero_writeback(args: argparse.Namespace) -> int:
     lines.append(_md_info(f"Machine-readable report written to: {report_path}"))
     print("\n".join(lines))
     return 1 if report.failed_count else 0
+
+
+def cmd_zotero_relocate(args: argparse.Namespace) -> int:
+    """Plan or apply verified Zotero attachment relocation."""
+    import asyncio
+
+    import yaml
+
+    from src.llm_wiki.capabilities import CapabilityError, check_write_paths
+    from src.llm_wiki.config import load_config
+    from src.llm_wiki.core import find_wiki_root
+    from src.llm_wiki.zotero_local import (
+        LocalWriteError,
+        LocalZoteroWriter,
+        authorize_local,
+        load_local_key,
+    )
+    from src.llm_wiki.zotero_relocate import (
+        DEFAULT_METADATA_PATH,
+        RelocationError,
+        RelocationSettings,
+        relocate,
+        report_to_manifest,
+    )
+
+    wiki_root = find_wiki_root(PROJECT_ROOT)
+    if not wiki_root:
+        print(_md_info("Error: Cannot find wiki root."))
+        return 1
+
+    def resolve_input(raw: str) -> Path:
+        path = Path(raw)
+        return path.resolve() if path.is_absolute() else (wiki_root / path).resolve()
+
+    metadata_path = resolve_input(args.metadata or str(DEFAULT_METADATA_PATH))
+    expected_metadata = (wiki_root / DEFAULT_METADATA_PATH).resolve()
+    if metadata_path != expected_metadata or not metadata_path.exists():
+        print(_md_info(
+            "Error: --metadata must point to the existing project "
+            "sources/zotero/metadata.yaml."
+        ))
+        return 1
+
+    report_path = resolve_input(args.report_out or "temp/zotero-relocate.yaml")
+    allowed_temp = (wiki_root / "temp").resolve()
+    if report_path == allowed_temp or allowed_temp not in report_path.parents:
+        print(_md_info("Error: --report-out must stay under the project temp/ directory."))
+        return 1
+
+    try:
+        config = load_config(wiki_root)
+        section = config.get("zotero_relocation") or {}
+        settings = RelocationSettings.from_mapping(
+            section,
+            project_root=wiki_root,
+            root_override=args.root,
+            storage_root_override=args.storage_root,
+            pattern_override=args.pattern,
+            delete_source_override=args.delete_source,
+        )
+        check_write_paths(
+            "zotero-relocate",
+            [Path("sources/zotero/metadata.yaml"), report_path.relative_to(wiki_root)],
+            config,
+        )
+        if args.apply and not settings.enabled:
+            raise RelocationError(
+                "zotero_relocation.enabled must be true before apply; "
+                "dry-run remains available for an explicit root"
+            )
+    except (CapabilityError, LocalWriteError, RelocationError, OSError, ValueError) as exc:
+        print(_md_info(f"Error: invalid relocation configuration: {exc}"))
+        return 1
+
+    local_cfg = (config.get("zotero_enrichment") or {}).get("local") or {}
+    writer_kwargs: dict[str, Any] = {}
+    base_url = str(local_cfg.get("base_url") or "").strip()
+    if base_url:
+        writer_kwargs["base_url"] = base_url
+    timeout = local_cfg.get("timeout_seconds")
+    if timeout is not None:
+        writer_kwargs["timeout"] = float(timeout)
+
+    async def run_relocation():
+        api_key = ""
+        if args.apply:
+            if args.memory_authorize:
+                auth_kwargs = {
+                    key: value for key, value in writer_kwargs.items() if key == "base_url"
+                }
+                api_key = await authorize_local(args.app_name, None, **auth_kwargs)
+            else:
+                api_key = load_local_key(wiki_root / "var" / "zotero-local.json")
+        writer = LocalZoteroWriter(api_key, **writer_kwargs)
+        try:
+            return await relocate(
+                metadata_path,
+                wiki_root,
+                settings,
+                writer,
+                apply=args.apply,
+                item_keys={str(key).strip().upper() for key in (args.item_keys or [])},
+                attachment_keys={
+                    str(key).strip().upper() for key in (args.attachment_keys or [])
+                },
+            )
+        finally:
+            await writer.aclose()
+
+    try:
+        report = asyncio.run(run_relocation())
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(
+            yaml.safe_dump(report_to_manifest(report), allow_unicode=True, sort_keys=False),
+            encoding="utf-8",
+        )
+    except Exception as exc:
+        LOG.exception("Zotero attachment relocation failed")
+        print(_md_info(f"Error: Zotero attachment relocation failed: {exc}"))
+        return 1
+
+    lines = [_md_header("Zotero Attachment Relocation"), ""]
+    if args.apply:
+        lines.append(_md_info("Apply mode: every Zotero path mutation was requested through the local API and verified."))
+    else:
+        lines.append(_md_info("Dry-run only: no files, Zotero items, metadata, or aliases were modified."))
+    lines.extend([
+        "",
+        _md_header("Summary", level=3),
+        _md_table(
+            ["Metric", "Value"],
+            [
+                ["Attachments", str(len(report.plans))],
+                ["Ready", str(sum(plan.status in {"ready", "ready_existing_content", "same_target"} for plan in report.plans))],
+                ["Blocked / errors", str(report.failed_count)],
+                ["Report", str(report_path)],
+            ],
+        ),
+        "",
+        _md_header("Items", level=3),
+        _md_table(
+            ["Item", "Attachment", "Status", "Target", "Reason"],
+            [
+                [
+                    result.get("item_key", ""),
+                    result.get("attachment_key", ""),
+                    result.get("status", ""),
+                    Path(result.get("target", "")).name or "—",
+                    result.get("reason", "") or result.get("cleanup_reason", "") or "—",
+                ]
+                for result in report.results
+            ],
+        ),
+        "",
+        _md_info(f"Machine-readable report written to: {report_path}"),
+    ])
+    print("\n".join(lines))
+    return 1 if args.apply and report.failed_count else 0
 
 
 def cmd_zotero_ingest_verify(args: argparse.Namespace) -> int:
@@ -2129,6 +2288,66 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Application name shown in the Zotero authorization dialog",
     )
 
+    # zotero-relocate
+    relocate_parser = subparsers.add_parser(
+        "zotero-relocate",
+        help="Plan or apply verified Zotero attachment relocation",
+    )
+    relocate_parser.add_argument(
+        "--metadata",
+        default="sources/zotero/metadata.yaml",
+        help="Private Zotero metadata file (must be project sources/zotero/metadata.yaml)",
+    )
+    relocate_parser.add_argument(
+        "--root",
+        help="Override the configured absolute managed attachment root",
+    )
+    relocate_parser.add_argument(
+        "--storage-root",
+        help="Override the absolute Zotero storage root for imported-file attachments",
+    )
+    relocate_parser.add_argument(
+        "--pattern",
+        help="Override zotero_relocation.path_template",
+    )
+    relocate_parser.add_argument(
+        "--item-key",
+        dest="item_keys",
+        action="append",
+        help="Restrict to a parent item key (repeatable)",
+    )
+    relocate_parser.add_argument(
+        "--attachment-key",
+        dest="attachment_keys",
+        action="append",
+        help="Restrict to an attachment item key (repeatable)",
+    )
+    relocate_parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Apply the relocation; without this flag the command is dry-run",
+    )
+    relocate_parser.add_argument(
+        "--delete-source",
+        action="store_true",
+        help="Request old-source cleanup (still requires allowed_source_roots)",
+    )
+    relocate_parser.add_argument(
+        "--memory-authorize",
+        action="store_true",
+        help="For apply, request a process-memory-only Zotero key",
+    )
+    relocate_parser.add_argument(
+        "--app-name",
+        default="llm-wiki",
+        help="Application name shown in the Zotero authorization dialog",
+    )
+    relocate_parser.add_argument(
+        "--report-out",
+        default="temp/zotero-relocate.yaml",
+        help="Machine-readable report path under project temp/",
+    )
+
     # zotero-ingest-verify
     ingest_verify_parser = subparsers.add_parser(
         "zotero-ingest-verify",
@@ -2155,7 +2374,12 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     args = parser.parse_args(argv)
 
-    LOG.info("Agent Bridge invoked: command=%s args=%s", args.command, vars(args))
+    log_args = vars(args).copy()
+    if args.command == "zotero-relocate":
+        for field in ("root", "storage_root", "metadata", "report_out"):
+            if log_args.get(field):
+                log_args[field] = "<redacted-path>"
+    LOG.info("Agent Bridge invoked: command=%s args=%s", args.command, log_args)
 
     dispatch = {
         "check": cmd_check,
@@ -2175,6 +2399,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "zotero-refresh": cmd_zotero_refresh,
         "zotero-local-auth": cmd_zotero_local_auth,
         "zotero-writeback": cmd_zotero_writeback,
+        "zotero-relocate": cmd_zotero_relocate,
         "zotero-ingest-verify": cmd_zotero_ingest_verify,
     }
 
