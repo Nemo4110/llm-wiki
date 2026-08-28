@@ -126,6 +126,8 @@ apply 必须重新读取关键前置条件，而不是盲目执行旧计划：
 ```yaml
 zotero_relocation:
   enabled: false
+  # 推荐在 config.yaml 配置一次，而不是每次用 --root 传入；跨设备同步时指向网盘同步目录，
+  # 并用环境变量保持可移植，例如 "${OneDrive}/zotero-attachments"。
   root: "/absolute/path/to/managed-attachments"
   storage_root: "/absolute/path/to/zotero/storage"
   path_template: "%c/%y-%a-%t"
@@ -135,12 +137,15 @@ zotero_relocation:
   allowed_source_roots: []
   update_metadata: true
   materialize_aliases: true
+  # true:写回 Zotero 的 path 为 "attachments:<相对路径>"(相对于 root),由每台设备的
+  # Linked Attachment Base Directory 各自解析,跨操作系统(Windows/Linux)可移植。
+  base_dir_relative: false
 ```
 
 约束如下：
 
 - `enabled` 默认为 `false`；未显式启用时命令 fail closed。
-- `root` 必须是绝对路径，启动时解析并固定；不能是项目根、`sources/`、Zotero 数据库目录或未解析的相对路径。
+- `root` 必须是绝对路径，启动时解析并固定；不能是项目根、`sources/`、Zotero 数据库目录或未解析的相对路径。`root` 应在 `config.yaml` 中配置（`--root` 仅为一次性覆盖）；跨设备同步时应指向网盘同步目录，且每台设备都必须能访问同一根目录，可用 `${OneDrive}` 等环境变量保持路径可移植。跨操作系统（如 Windows + Linux）时绝对路径不可能一致，必须设 `base_dir_relative: true`，使写回 Zotero 的路径为 `attachments:<相对路径>` 便携形式，并在每台设备上把 Zotero 的 Linked Attachment Base Directory 指向本机的 `root` 等价路径；重跑时 `attachments:` 源路径也会相对 `root` 解析，保证幂等。
 - `path_template` 只生成附件布局，不参与 wiki 页面命名。模板字段必须是白名单字段，字段值先按路径组件清洗，禁止把原始 `/`、`\\`、`.` 或 `..` 当作组件直接拼接。
 - `max_component_bytes` 应小于目标文件系统上限，并为扩展名和冲突序号预留空间；默认值应由实现和跨平台测试最终确定。
 - `collision_policy: suffix` 表示永不覆盖，按有限次数尝试 `name 2.ext`、`name 3.ext` 等候选名；达到上限则报告冲突并跳过。
@@ -334,7 +339,7 @@ metadata 更新完成后，复用 `scripts/zotero_sources.py` 的幂等 material
 
 ## 11. 待 Phase 0 决定的问题
 
-1. Zotero 10 Local API 是否允许在不新建附件条目的情况下更新现有 attachment item 的 `linkMode` 与 `path`？
+1. ~~Zotero 10 Local API 是否允许在不新建附件条目的情况下更新现有 attachment item 的 `linkMode` 与 `path`？~~ **已由实证回答（2026-08-29）：不允许 imported→linked 转换。** 对 `{linkMode: "linked_file", path: "attachments:..."}` 的 PATCH 返回 HTTP 500 但部分生效：7 个条目被置为 `linkMode: linked_file`、`path` 保留旧的 `storage:` 伪路径、`filename` 清空、`version` 归零，处于不一致状态；文件本身无损。反向的简单字段回退（`linkMode: imported_file` + `filename`）可正常 PATCH 并恢复。因此 imported→linked 转换必须走 Zotero 原生 "Convert Stored Files to Linked Files" 或 ZotMoov 等内部 API；`zotero-relocate` 的写回只适用于已是 linked_file 的路径变更（linked→linked 尚未实证，默认按不可用对待，仅在写前 dry-run 与用户确认后尝试）。
 2. imported-file → linked-file 转换后，原 storage 文件由 Zotero 自动清理，还是必须由调用方处理？
 3. 通过当前 zotero-mcp 版本是否能获得附件路径写回能力；如果不能，临时 direct Local API 例外的精确授权边界是什么？
 4. `metadata.yaml` 的受管写范围是否应继续由 `sources/zotero/` 这一单文件收窄，而不是开放整个 `sources/`？
