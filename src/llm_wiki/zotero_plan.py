@@ -57,6 +57,7 @@ class SnapshotItem:
     doi_observed: bool = False
     arxiv: str = ""
     url: str = ""
+    citation_key: str = ""
     tags: frozenset[str] = frozenset()
     tags_observed: bool = False
     collections: tuple[str, ...] = ()
@@ -204,6 +205,7 @@ def load_snapshot(path: Path) -> tuple[str, str, str, List[SnapshotItem]]:
                 doi_observed="doi" in raw,
                 arxiv=str(raw.get("arxiv") or "").strip(),
                 url=str(raw.get("url") or "").strip(),
+                citation_key=str(raw.get("citation_key") or "").strip(),
                 tags=_normalize_tags(raw.get("tags")),
                 tags_observed="tags" in raw,
                 collections=collections,
@@ -390,6 +392,18 @@ def build_zotero_plan(
                 actions=tuple(actions),
             )
         )
+
+    if snapshot_items is not None:
+        snapshot_keys = {item.item_key for item in selected_items}
+        stale_keys = sorted(
+            {binding.item_key for binding in all_bindings} - snapshot_keys
+        )
+        if stale_keys:
+            warnings.append(
+                f"{len(stale_keys)} wiki binding(s) reference item keys absent from "
+                f"the snapshot ({', '.join(stale_keys)}); run `zotero-heal --snapshot` "
+                "to diagnose and rebind stale keys."
+            )
 
     return ZoteroPlan(
         library_id=library_id,

@@ -215,6 +215,7 @@ Every wiki task falls into exactly one of three categories. **The category deter
 | **A** | Zotero sync plan | No | `agent-bridge.py zotero-plan` | Manually compare wiki provenance with MCP reads |
 | **A** | Zotero enrichment dry-run | No | `agent-bridge.py zotero-refresh` | Review provider results and the generated manifest |
 | **A** | Zotero collection ingest verification | No | `agent-bridge.py zotero-ingest-verify` | Manually audit allocation, provenance, and page invariants |
+| **C** | Zotero stale binding heal | Agent reviews | `agent-bridge.py zotero-heal` | Manually rebind frontmatter item keys |
 | **C** | Apply safe Zotero enrichment | Agent reviews | `zotero-refresh --apply-safe` | Use MCP tools manually if the worker cannot verify write-back |
 | **C** | Authorized Zotero tag/relation write-back | Agent + user review | `agent-bridge.py zotero-writeback` | Use reviewed incremental MCP writes when the local exception is unavailable |
 | **B** | Ingest material | **Yes** | Protocol mode (direct file ops) | N/A |
@@ -392,6 +393,15 @@ python scripts/agent-bridge.py zotero-ingest-verify \
 ```
 
 The verifier checks snapshot/allocation counts, unique item keys and indices, omission reasons, non-omitted `sources_meta.zotero_item_key` coverage, duplicate provenance rows, YAML/frontmatter validity, page invariants, control characters, trailing whitespace, private path leakage, and advisory batch-template collapse.
+
+For stale binding repair — Zotero item merges, re-imports, or attachment conversions that leave a dangling `zotero_item_key` in wiki frontmatter — run:
+
+```bash
+python scripts/agent-bridge.py zotero-heal --snapshot temp/zotero-snapshot.yaml \
+  --manifest-out temp/zotero-heal.yaml
+```
+
+The healer is dry-run by default: it detects wiki-bound item keys absent from the snapshot and re-addresses them via DOI, then citation key, then normalized title (unique matches only). Review the manifest, then re-run with `--apply` to rewrite the affected pages' `sources_meta[].zotero_item_key` in place (file names never change) and append a `log.md` record. It never writes to Zotero. The candidate pool is limited to the snapshot's collection; unmatched keys need manual lookup.
 
 For an explicitly reviewed local write-back, copy only approved additions and Related pairs into a secret-free `mode: authorized-write` plan (see `docs/examples/zotero-write-plan.example.yaml`), then run audit, apply, and verify as separate phases:
 

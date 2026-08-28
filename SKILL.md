@@ -44,6 +44,7 @@ Agent Bridge quick commands:
 <PY> scripts/agent-bridge.py zotero-plan --snapshot temp/zotero-snapshot.yaml --manifest-out temp/zotero-mutation-manifest.yaml
 <PY> scripts/agent-bridge.py zotero-refresh --collection-key A9VNJUPI --manifest-out temp/zotero-refresh.yaml
 <PY> scripts/agent-bridge.py zotero-ingest-verify --snapshot temp/zotero-snapshot.yaml --allocation temp/zotero-allocation.yaml --report-out temp/zotero-ingest-report.yaml
+<PY> scripts/agent-bridge.py zotero-heal --snapshot temp/zotero-snapshot.yaml --manifest-out temp/zotero-heal.yaml
 <PY> scripts/agent-bridge.py zotero-writeback --plan temp/zotero-write-plan.yaml --action audit --report-out temp/zotero-write-audit.yaml
 ```
 

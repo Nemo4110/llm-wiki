@@ -77,6 +77,10 @@ CAPABILITIES: Dict[str, Capability] = {
         "zotero-ingest-verify", write_scope=("temp/",),
         description="Collection ingest allocation, provenance, and page verification",
     ),
+    "zotero-heal": Capability(
+        "zotero-heal", write_scope=("temp/", "wiki/", "log.md"), dry_run=True,
+        description="Stale Zotero binding detection and in-place frontmatter rebinding",
+    ),
 }
 
 

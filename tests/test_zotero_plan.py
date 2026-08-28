@@ -10,6 +10,7 @@ from src.llm_wiki.zotero_plan import (
     load_snapshot,
     normalize_doi,
     plan_to_manifest,
+    SnapshotItem,
 )
 
 
@@ -375,3 +376,18 @@ items:
     assert [mutation["item_key"] for mutation in manifest["mutations"]] == ["ITEM1"]
     assert manifest["mutations"][0]["remove_tags_review"] == ["GNN"]
     assert manifest["mutations"][0]["metadata_review"]["doi_state"] == "missing"
+
+
+def test_build_plan_warns_about_stale_bindings(tmp_path):
+    wiki_dir = tmp_path / "wiki"
+    _write_page(wiki_dir, "Stale-Page", item_key="DEAD0001", title="Stale Paper")
+
+    wiki = WikiManager(wiki_dir)
+    bindings = collect_zotero_bindings(wiki)
+    # 快照中没有 DEAD0001 —— 绑定悬空
+    snapshot_items = [
+        SnapshotItem(item_key="LIVE0001", title="Other", item_type="journalArticle")
+    ]
+    plan = build_zotero_plan(bindings, snapshot_items)
+    assert any("zotero-heal" in warning for warning in plan.warnings)
+    assert any("DEAD0001" in warning for warning in plan.warnings)

@@ -1163,6 +1163,144 @@ def cmd_zotero_plan(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_zotero_heal(args: argparse.Namespace) -> int:
+    """Detect stale wiki->Zotero bindings and rebind via DOI/citation-key/title."""
+    LOG.info("cmd_zotero_heal: snapshot=%s apply=%s", args.snapshot, args.apply)
+
+    from src.llm_wiki.capabilities import CapabilityError, check_write_paths
+    from src.llm_wiki.config import load_config
+    from src.llm_wiki.core import WikiManager, find_wiki_root
+    from src.llm_wiki.zotero_heal import (
+        apply_heal_plan,
+        plan_heal,
+        plan_to_heal_manifest,
+    )
+    from src.llm_wiki.zotero_plan import collect_zotero_bindings, load_snapshot
+
+    wiki_root = find_wiki_root(PROJECT_ROOT)
+    if not wiki_root:
+        print(_md_info("Error: Cannot find wiki root."))
+        return 1
+
+    config = load_config(wiki_root)
+    wiki = WikiManager(wiki_root / "wiki")
+
+    snapshot_path = Path(args.snapshot)
+    if not snapshot_path.is_absolute():
+        snapshot_path = wiki_root / snapshot_path
+    if not snapshot_path.exists():
+        print(_md_info(f"Error: Snapshot not found: {snapshot_path}"))
+        return 1
+    try:
+        _library_id, collection_name, collection_key, snapshot_items = load_snapshot(snapshot_path)
+    except (OSError, ValueError, TypeError) as exc:
+        LOG.error("Cannot load Zotero snapshot: %s", exc)
+        print(_md_info(f"Error: Cannot load Zotero snapshot: {exc}"))
+        return 1
+
+    bindings = collect_zotero_bindings(wiki)
+    if args.item_keys:
+        selected = set(args.item_keys)
+        bindings = [binding for binding in bindings if binding.item_key in selected]
+
+    plan = plan_heal(
+        bindings,
+        snapshot_items,
+        collection_name=collection_name,
+        collection_key=collection_key,
+    )
+
+    lines: List[str] = []
+    title = "Zotero Binding Heal"
+    if plan.collection_name:
+        title += f": {plan.collection_name}"
+    lines.append(_md_header(title))
+    lines.append("")
+    if not args.apply:
+        lines.append(_md_info(
+            "Read-only plan. No wiki or Zotero files are mutated; re-run with `--apply` "
+            "to rebind matched stale keys in place."
+        ))
+        lines.append("")
+
+    if not plan.stale:
+        lines.append(_md_info("No stale bindings: every wiki-bound item key exists in the snapshot."))
+        lines.append("")
+    else:
+        matched_count = sum(1 for candidate in plan.stale if candidate.new_item_key)
+        lines.append(_md_header("Stale Bindings", level=3))
+        lines.append(_md_table(
+            ["Stale Key", "Page", "Matched By", "New Key", "New Title"],
+            [
+                [
+                    candidate.item_key,
+                    candidate.page_stem,
+                    candidate.matched_by or "unmatched",
+                    candidate.new_item_key or "—",
+                    candidate.new_title or "—",
+                ]
+                for candidate in plan.stale
+            ],
+        ))
+        lines.append("")
+        lines.append(_md_info(f"Stale: {len(plan.stale)} | Matched: {matched_count} | Unmatched: {len(plan.stale) - matched_count}"))
+        lines.append("")
+
+    lines.append(_md_header("Actionable Items", level=3))
+    lines.append(_md_action(
+        "Agent: review matched rebinding candidates above; unmatched stale keys need manual "
+        "Zotero lookup (the candidate pool is limited to this snapshot's collection)."
+    ))
+    lines.append("")
+
+    if args.manifest_out:
+        manifest_path = Path(args.manifest_out)
+        if manifest_path.is_absolute():
+            resolved_manifest = manifest_path.resolve()
+        else:
+            resolved_manifest = (wiki_root / manifest_path).resolve()
+        allowed_root = (wiki_root / "temp").resolve()
+        if resolved_manifest != allowed_root and allowed_root not in resolved_manifest.parents:
+            print(_md_info("Error: --manifest-out must stay under the project temp/ directory."))
+            return 1
+        resolved_manifest.parent.mkdir(parents=True, exist_ok=True)
+        import yaml
+        resolved_manifest.write_text(
+            yaml.safe_dump(plan_to_heal_manifest(plan), allow_unicode=True, sort_keys=False),
+            encoding="utf-8",
+        )
+        lines.append(_md_info(f"Review manifest written to: {resolved_manifest}"))
+        lines.append("")
+
+    if args.apply and plan.stale:
+        write_paths: List[Path] = []
+        for candidate in plan.stale:
+            if not candidate.new_item_key:
+                continue
+            page = wiki.get_page(candidate.page_stem)
+            if page is not None:
+                write_paths.append(page.path)
+        write_paths.append(wiki.log_file)
+        try:
+            check_write_paths(
+                "zotero-heal",
+                [str(path.relative_to(wiki_root)) for path in write_paths],
+                config,
+            )
+        except CapabilityError as exc:
+            LOG.error("zotero-heal apply blocked: %s", exc)
+            print(_md_info(f"Error: capability contract rejected the write set: {exc}"))
+            return 1
+        changed = apply_heal_plan(wiki, plan)
+        lines.append(_md_info(
+            f"Applied: rebound {len(changed)} page(s); see log.md for the heal record."
+        ))
+        lines.append("")
+
+    print("\n".join(lines))
+    return 0
+
+
 def cmd_zotero_refresh(args: argparse.Namespace) -> int:
     """Run one-shot DOI, citation, and publication freshness checks."""
     import asyncio
@@ -1783,6 +1921,32 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Write a review-only YAML mutation manifest under temp/",
     )
 
+    # zotero-heal
+    heal_parser = subparsers.add_parser(
+        "zotero-heal",
+        help="Detect stale Zotero item keys in wiki bindings and rebind via DOI/citation-key/title",
+    )
+    heal_parser.add_argument(
+        "--snapshot",
+        required=True,
+        help="MCP-produced Zotero collection snapshot in YAML or JSON (candidate pool)",
+    )
+    heal_parser.add_argument(
+        "--item-key",
+        dest="item_keys",
+        action="append",
+        help="Restrict healing to a stale item key (repeatable)",
+    )
+    heal_parser.add_argument(
+        "--manifest-out",
+        help="Write a review-only heal manifest under temp/",
+    )
+    heal_parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Rewrite matched wiki frontmatter zotero_item_key values in place and log the change",
+    )
+
     # zotero-refresh
     refresh_parser = subparsers.add_parser(
         "zotero-refresh",
@@ -1897,6 +2061,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "capabilities": cmd_capabilities,
         "hot": cmd_hot,
         "zotero-plan": cmd_zotero_plan,
+        "zotero-heal": cmd_zotero_heal,
         "zotero-refresh": cmd_zotero_refresh,
         "zotero-local-auth": cmd_zotero_local_auth,
         "zotero-writeback": cmd_zotero_writeback,

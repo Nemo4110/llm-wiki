@@ -920,3 +920,85 @@ The source-specific mechanism is described with enough detail for verification.
         report = temp / "ingest-report.yaml"
         assert report.exists()
         assert "passed: true" in report.read_text(encoding="utf-8")
+
+
+class TestCmdZoteroHeal:
+    def _setup_stale_binding(self, temp_wiki_root):
+        page = temp_wiki_root / "wiki" / "Deep-Learning-Paper.md"
+        page.write_text(
+            """---
+created: 2026-08-01
+updated: 2026-08-01
+sources_meta:
+  - title: Deep Learning Paper
+    type: academic_paper
+    doi: 10.1000/xyz
+    zotero_item_key: DEAD0001
+tags: []
+status: active
+---
+
+# Deep Learning Paper
+
+Knowledge body.
+""",
+            encoding="utf-8",
+        )
+        snapshot = temp_wiki_root / "snap.yaml"
+        snapshot.write_text(
+            """version: 1
+library_id: "0"
+collection:
+  name: GNN
+  key: A9VNJUPI
+items:
+  - item_key: NEWKEY01
+    title: Deep Learning Paper (reprinted)
+    item_type: journalArticle
+    doi: 10.1000/xyz
+    tags: []
+""",
+            encoding="utf-8",
+        )
+        return page
+
+    def test_heal_dry_run_reports_stale_without_mutation(
+        self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys
+    ):
+        page = self._setup_stale_binding(temp_wiki_root)
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        rc = agent_bridge_module.main(
+            ["zotero-heal", "--snapshot", "snap.yaml", "--manifest-out", "temp/heal.yaml"]
+        )
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert "DEAD0001" in out
+        assert "NEWKEY01" in out
+        manifest = temp_wiki_root / "temp" / "heal.yaml"
+        assert manifest.exists()
+        assert "mode: review-only" in manifest.read_text(encoding="utf-8")
+        # dry-run 不改页面
+        assert "DEAD0001" in page.read_text(encoding="utf-8")
+
+    def test_heal_apply_rebinds_frontmatter(
+        self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys
+    ):
+        page = self._setup_stale_binding(temp_wiki_root)
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        rc = agent_bridge_module.main(["zotero-heal", "--snapshot", "snap.yaml", "--apply"])
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        text = page.read_text(encoding="utf-8")
+        assert "NEWKEY01" in text
+        assert "DEAD0001" not in text
+        log_text = (temp_wiki_root / "log.md").read_text(encoding="utf-8")
+        assert "zotero-heal" in log_text
+
+    def test_heal_requires_snapshot(
+        self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys
+    ):
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        rc = agent_bridge_module.main(["zotero-heal", "--snapshot", "missing.yaml"])
+        assert rc == 1
