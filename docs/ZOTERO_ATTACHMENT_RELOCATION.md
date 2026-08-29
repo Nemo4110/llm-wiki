@@ -339,7 +339,7 @@ metadata 更新完成后，复用 `scripts/zotero_sources.py` 的幂等 material
 
 ## 11. 待 Phase 0 决定的问题
 
-1. ~~Zotero 10 Local API 是否允许在不新建附件条目的情况下更新现有 attachment item 的 `linkMode` 与 `path`？~~ **已由实证回答（2026-08-29）：不允许 imported→linked 转换。** 对 `{linkMode: "linked_file", path: "attachments:..."}` 的 PATCH 返回 HTTP 500 但部分生效：7 个条目被置为 `linkMode: linked_file`、`path` 保留旧的 `storage:` 伪路径、`filename` 清空、`version` 归零，处于不一致状态；文件本身无损。反向的简单字段回退（`linkMode: imported_file` + `filename`）可正常 PATCH 并恢复。因此 imported→linked 转换必须走 Zotero 原生 "Convert Stored Files to Linked Files" 或 ZotMoov 等内部 API；`zotero-relocate` 的写回只适用于已是 linked_file 的路径变更（linked→linked 尚未实证，默认按不可用对待，仅在写前 dry-run 与用户确认后尝试）。
+1. ~~Zotero 10 Local API 是否允许在不新建附件条目的情况下更新现有 attachment item 的 `linkMode` 与 `path`？~~ **已由实证回答（2026-08-29）：不允许 imported→linked 转换。** 对 `{linkMode: "linked_file", path: "attachments:..."}` 的 PATCH 返回 HTTP 500 但部分生效：7 个条目被置为 `linkMode: linked_file`、`path` 保留旧的 `storage:` 伪路径、`filename` 清空、`version` 归零，处于不一致状态；文件本身无损。反向的简单字段回退（`linkMode: imported_file` + `filename`）可正常 PATCH 并恢复。因此 imported→linked 转换必须走 Zotero 原生 "Convert Stored Files to Linked Files" 或 ZotMoov 等内部 API。同一日补充实证：**linked→linked 的纯路径变更 PATCH 可用**，且接受 `attachments:` 便携相对路径（3 个旧机器死链附件已用此形式修复并写后验证）。`zotero-relocate` 的写回范围据此限定为 linked_file 附件的路径更新。
 2. imported-file → linked-file 转换后，原 storage 文件由 Zotero 自动清理，还是必须由调用方处理？
 3. 通过当前 zotero-mcp 版本是否能获得附件路径写回能力；如果不能，临时 direct Local API 例外的精确授权边界是什么？
 4. `metadata.yaml` 的受管写范围是否应继续由 `sources/zotero/` 这一单文件收窄，而不是开放整个 `sources/`？
