@@ -128,6 +128,17 @@ def _knowledge_blocks(content: str) -> tuple[list[str], list[str]]:
     return paragraphs, sections
 
 
+import functools
+
+
+@functools.lru_cache(maxsize=1024)
+def _read_source_file_chars(path_str: str) -> int:
+    try:
+        return len(Path(path_str).read_text(encoding="utf-8"))
+    except (OSError, UnicodeError):
+        return 0
+
+
 def _local_source_chars(sources: Sequence[Any], project_root: Path) -> int:
     total = 0
     root = project_root.absolute()
@@ -142,10 +153,7 @@ def _local_source_chars(sources: Sequence[Any], project_root: Path) -> int:
             continue
         if not candidate.exists() or candidate.suffix.lower() not in TEXT_SOURCE_SUFFIXES:
             continue
-        try:
-            total += len(candidate.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError):
-            continue
+        total += _read_source_file_chars(str(candidate))
     return total
 
 
