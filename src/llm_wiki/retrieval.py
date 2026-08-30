@@ -148,23 +148,26 @@ class EmbeddingIndex:
             kw_score += 0.3 * bm25_scores.get(title, 0.0)
             scores[title] = kw_score * keyword_weight
 
-        # 2. Vector Search
-        query_vec = np.array(self.provider.embed_query(query), dtype=np.float32)
-        query_norm = np.linalg.norm(query_vec)
-        if query_norm == 0:
-            query_norm = 1.0
+        # 2. Vector Search (Vectorized)
+        if vector_weight > 0 and self.cache.get("pages"):
+            query_vec = np.array(self.provider.embed_query(query), dtype=np.float32)
+            query_norm = np.linalg.norm(query_vec)
+            norm_query = (query_vec / query_norm) if query_norm > 0 else query_vec
 
-        for title, record in self.cache["pages"].items():
-            if title not in pages:
-                continue
-            vec = np.array(record["embedding"], dtype=np.float32)
-            vec_norm = np.linalg.norm(vec)
-            if vec_norm == 0:
-                vec_norm = 1.0
-            similarity = float(np.dot(query_vec, vec) / (query_norm * vec_norm))
-            # 将 [-1, 1] 映射到 [0, 1]
-            similarity = (similarity + 1.0) / 2.0
-            scores[title] = scores.get(title, 0.0) + similarity * vector_weight
+            cached_items = [
+                (title, record["embedding"])
+                for title, record in self.cache["pages"].items()
+                if title in pages and "embedding" in record
+            ]
+            if cached_items:
+                titles, embeddings = zip(*cached_items)
+                matrix = np.array(embeddings, dtype=np.float32)
+                norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+                norms[norms == 0] = 1.0
+                norm_matrix = matrix / norms
+                sims = (np.dot(norm_matrix, norm_query) + 1.0) / 2.0
+                for title, sim in zip(titles, sims):
+                    scores[title] = scores.get(title, 0.0) + float(sim) * vector_weight
 
         # 3. Link Traversal
         if enable_link_traversal and link_weight > 0:

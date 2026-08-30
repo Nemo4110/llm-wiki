@@ -36,29 +36,27 @@ class WikiPage:
     content: str
     frontmatter: Dict
     path: Path
+    _link_occurrences: Optional[List[Tuple[str, str]]] = field(default=None, repr=False, compare=False)
 
     @property
     def links(self) -> Set[str]:
         """提取页面中的所有 [[Link]]，alias 链接只取目标页。"""
-        pattern = r'\[\[([^\]]+)\]\]'
-        links = set()
-        for target, _ in self.link_occurrences:
-            if target:
-                links.add(target)
-        return links
+        return {target for target, _ in self.link_occurrences if target}
 
     @property
     def link_occurrences(self) -> List[Tuple[str, str]]:
         """Return all wiki links as (target, display_text)."""
-        pattern = r'\[\[([^\]]+)\]\]'
-        links: List[Tuple[str, str]] = []
-        for raw in re.findall(pattern, self.content):
-            parts = raw.split('|', 1)
-            target = parts[0].strip()
-            display = parts[1].strip() if len(parts) > 1 else target
-            if target:
-                links.append((target, display))
-        return links
+        if self._link_occurrences is None:
+            pattern = r'\[\[([^\]]+)\]\]'
+            links: List[Tuple[str, str]] = []
+            for raw in re.findall(pattern, self.content):
+                parts = raw.split('|', 1)
+                target = parts[0].strip()
+                display = parts[1].strip() if len(parts) > 1 else target
+                if target:
+                    links.append((target, display))
+            self._link_occurrences = links
+        return self._link_occurrences
 
     @property
     def status(self) -> str:
@@ -181,7 +179,7 @@ class WikiManager:
         return self.create_page(title, final_content, page.frontmatter, path=page.path)
 
     def append_log(self, action: str, description: str,
-                   details: List[str] = None):
+                   details: Optional[List[str]] = None):
         """追加日志条目"""
         date_str = datetime.now().strftime('%Y-%m-%d')
         log_entry = f"\n## [{date_str}] {action} | {description}\n"
@@ -327,7 +325,7 @@ class WikiManager:
                 if page.status in ('mature', 'evergreen'):
                     issues['lifecycle_mismatch'].append(
                         f"{page.title}: status={page.status} but content is shallow "
-                        f"({", ".join(depth_issue.reasons)})"
+                        f"({', '.join(depth_issue.reasons)})"
                     )
 
             # 论断级溯源校验(advisory)
@@ -341,7 +339,7 @@ class WikiManager:
                     upd_date = datetime.strptime(updated, '%Y-%m-%d')
                     if (datetime.now() - upd_date).days > 90:
                         issues['stale'].append(page.title)
-                except:
+                except (ValueError, TypeError):
                     pass
 
         # 检查孤儿页面（没有被引用的页面）
@@ -390,7 +388,7 @@ class WikiManager:
                     try:
                         frontmatter = yaml.safe_load(parts[1]) or {}
                         content = parts[2].strip()
-                    except:
+                    except (yaml.YAMLError, ValueError):
                         pass
 
             # 提取标题（第一个 # 行）
@@ -433,13 +431,13 @@ class WikiManager:
 
 
 def find_wiki_root(start_path: Path = None) -> Optional[Path]:
-    """向上查找 wiki 根目录（包含 CLAUDE.md 的目录）"""
+    """向上查找 wiki 根目录（包含 AGENTS.md 或 CLAUDE.md 的目录）"""
     if start_path is None:
         start_path = Path.cwd()
 
     current = start_path.resolve()
     while current != current.parent:
-        if (current / "CLAUDE.md").exists():
+        if (current / "AGENTS.md").exists() or (current / "CLAUDE.md").exists():
             return current
         current = current.parent
 
@@ -450,7 +448,7 @@ def find_wiki_root(start_path: Path = None) -> Optional[Path]:
         Path.cwd() / "llm-wiki",
     ]
     for cand in candidates:
-        if cand.exists() and (cand / "CLAUDE.md").exists():
+        if cand.exists() and ((cand / "AGENTS.md").exists() or (cand / "CLAUDE.md").exists()):
             return cand
 
     return None

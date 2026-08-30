@@ -74,6 +74,11 @@ class BM25:
 
     def scores(self, query: List[str]) -> List[float]:
         """对语料中每篇文档打分,与构造顺序一致。"""
+        unique_terms = [t for t in dict.fromkeys(query) if t in self.df]
+        if not unique_terms:
+            return [0.0] * self.n_docs
+
+        term_weights = {term: self.idf(term) * (self.k1 + 1) for term in unique_terms}
         results: List[float] = []
         for i in range(self.n_docs):
             score = 0.0
@@ -82,10 +87,11 @@ class BM25:
                 if self.avgdl > 0
                 else self.k1
             )
-            for term in dict.fromkeys(query):  # 去重且保序,确定性
-                f = self.tf[i].get(term, 0)
+            tf_i = self.tf[i]
+            for term, weight in term_weights.items():
+                f = tf_i.get(term, 0)
                 if f == 0:
                     continue
-                score += self.idf(term) * (f * (self.k1 + 1)) / (f + length_norm)
+                score += weight * f / (f + length_norm)
             results.append(score)
         return results

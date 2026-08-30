@@ -85,20 +85,8 @@ class RelationGraph:
 
 
 def _extract_keywords(text: str) -> Set[str]:
-    """从文本中提取关键词（简单启发式）"""
-    # 英文单词
-    words = re.findall(r"[a-zA-Z]{2,}", text.lower())
-    # 中文字符：提取单个中文字符（去掉停用词）+ 2-8字连续序列
-    zh_words = set()
-    zh_chars = re.findall(r"[\u4e00-\u9fff]", text)
-    for c in zh_chars:
-        if c not in _STOP_WORDS:
-            zh_words.add(c)
-    zh_seqs = re.findall(r"[\u4e00-\u9fff]{2,8}", text)
-    zh_words.update(zh_seqs)
-    # 合并并过滤停用词
-    all_words = set(words) | zh_words
-    return all_words - _STOP_WORDS
+    """从文本中提取关键词（基于统一分词与停用词）"""
+    return set(tokenize(text))
 
 
 def _jaccard_similarity(a: Set[str], b: Set[str]) -> float:
@@ -154,6 +142,8 @@ class KnowledgeLinker:
         keyword_weight: float = 0.4,
         vector_weight: float = 0.4,
         link_weight: float = 0.2,
+        cached_pages: Optional[List[WikiPage]] = None,
+        cached_corpus: Optional[BM25] = None,
     ) -> List[PageRelation]:
         """
         发现与 query 内容最相关的 wiki 页面。
@@ -168,13 +158,15 @@ class KnowledgeLinker:
             keyword_weight: keyword match 权重
             vector_weight: vector match 权重
             link_weight: link proximity 权重
+            cached_pages: 可选已加载的页面列表（避免重复读取磁盘）
+            cached_corpus: 可选已构建的 BM25 语料（避免重复分词）
 
         Returns:
             按 score 降序排列的 PageRelation 列表
         """
         LOG.info("find_related: query=%s mode=kw_w=%.1f vec_w=%.1f link_w=%.1f top_k=%d min_score=%.2f",
                  query, keyword_weight, vector_weight, link_weight, top_k, min_score)
-        pages = self.wiki.list_pages()
+        pages = cached_pages if cached_pages is not None else self.wiki.list_pages()
         if not pages:
             LOG.warning("Wiki has no pages")
             return []
@@ -192,7 +184,9 @@ class KnowledgeLinker:
 
         # 1. Keyword Match:标题/标签/内容引用启发式 + BM25 内容相关性
         LOG.debug("Phase 1: keyword match (weight=%.1f)", keyword_weight)
-        corpus = BM25([tokenize(f"{p.title} {' '.join(p.tags)} {p.content}") for p in pages])
+        corpus = cached_corpus if cached_corpus is not None else BM25([
+            tokenize(f"{p.title} {' '.join(p.tags)} {p.content}") for p in pages
+        ])
         raw_scores = corpus.scores(tokenize(full_query))
         # s/(s+k1) 压缩到 (0,1):弱匹配保持弱,不随查询内最大值虚高
         bm25_scores = {
@@ -365,10 +359,17 @@ class KnowledgeLinker:
             RelationGraph 包含所有发现的关联
         """
         LOG.info("build_relation_graph: %d new pages, mode=%s, top_k=%d", len(new_pages), mode, top_k)
+        pages = self.wiki.list_pages()
+        if not pages:
+            LOG.warning("Wiki has no pages")
+            return RelationGraph(relations=[])
+
+        corpus = BM25([tokenize(f"{p.title} {' '.join(p.tags)} {p.content}") for p in pages])
+        page_dict = {p.title: p for p in pages}
         all_relations: List[PageRelation] = []
 
         for page_title in new_pages:
-            page = self.wiki.get_page(page_title)
+            page = page_dict.get(page_title) or self.wiki.get_page(page_title)
             if not page:
                 LOG.warning("Page not found in graph build: %s", page_title)
                 continue
@@ -385,6 +386,8 @@ class KnowledgeLinker:
                     keyword_weight=0.6,
                     vector_weight=0.0,
                     link_weight=0.4,
+                    cached_pages=pages,
+                    cached_corpus=corpus,
                 )
             else:  # deep
                 rels = self.find_related(
@@ -397,6 +400,8 @@ class KnowledgeLinker:
                     keyword_weight=0.4,
                     vector_weight=0.4,
                     link_weight=0.2,
+                    cached_pages=pages,
+                    cached_corpus=corpus,
                 )
 
             all_relations.extend(rels)
@@ -425,9 +430,10 @@ class KnowledgeLinker:
         t_title = _normalize_title(target.title)
 
         # UPDATES: 标题高度相似（编辑距离 < 3 且标题长度 > 3）
-        dist = _edit_distance(s_title, t_title)
-        if dist < 3 and len(s_title) > 3 and len(t_title) > 3:
-            return RelationType.UPDATES
+        if len(s_title) > 3 and len(t_title) > 3 and abs(len(s_title) - len(t_title)) < 3:
+            dist = _edit_distance(s_title, t_title)
+            if dist < 3:
+                return RelationType.UPDATES
 
         # CONTRASTS: 新标题包含旧标题（通常是 "X vs Y" 形式）
         if t_title in s_title and s_title != t_title:
