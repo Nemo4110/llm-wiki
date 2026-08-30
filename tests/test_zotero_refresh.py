@@ -1,22 +1,22 @@
 from __future__ import annotations
 
 import asyncio
-
-import pytest
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from pathlib import Path
 
-from src.llm_wiki.zotero.cache import EnrichmentCache
-from src.llm_wiki.zotero.mcp_client import ZoteroMCPClient
-from src.llm_wiki.zotero.refresh import (
+import pytest
+
+from llm_wiki.zotero.cache import EnrichmentCache
+from llm_wiki.zotero.mcp_client import ZoteroMCPClient
+from llm_wiki.zotero.refresh import (
     DOI_MISSING_TAG,
     PUBLICATION_REVIEW_TAG,
     RefreshItem,
     RefreshSettings,
     RefreshWorker,
+    build_refresh_report,
     parse_extra_keys,
     report_to_manifest,
-    build_refresh_report,
     title_similarity,
 )
 
@@ -64,7 +64,6 @@ def make_item(**overrides):
     return RefreshItem(**values)
 
 
-
 def test_mcp_get_items_returns_metadata_in_input_order():
     client = ZoteroMCPClient(Path("ignored"))
 
@@ -75,34 +74,43 @@ def test_mcp_get_items_returns_metadata_in_input_order():
     result = asyncio.run(client.get_items(["ITEM0001", "ITEM0002"], concurrency=2))
     assert result == [{"key": "ITEM0001"}, {"key": "ITEM0002"}]
 
+
 def test_parse_extra_keys_uses_last_value():
-    result = parse_extra_keys("TLDR: hello\nLLM-Wiki DOI Status: missing\nLLM-Wiki DOI Status: verified")
+    result = parse_extra_keys(
+        "TLDR: hello\nLLM-Wiki DOI Status: missing\nLLM-Wiki DOI Status: verified"
+    )
     assert result["TLDR"] == "hello"
     assert result["LLM-Wiki DOI Status"] == "verified"
 
 
 def test_title_similarity_accepts_subtitle_difference():
-    assert title_similarity(
-        "Mining Heterogeneous Information Networks: A Structural Analysis Approach",
-        "Mining heterogeneous information networks",
-    ) >= 0.94
+    assert (
+        title_similarity(
+            "Mining Heterogeneous Information Networks: A Structural Analysis Approach",
+            "Mining heterogeneous information networks",
+        )
+        >= 0.94
+    )
 
 
 def test_cache_respects_freshness(tmp_path: Path):
     path = tmp_path / "cache.sqlite"
-    now = datetime(2026, 8, 23, tzinfo=timezone.utc)
+    now = datetime(2026, 8, 23, tzinfo=UTC)
     with EnrichmentCache(path) as cache:
         cache.put_json("ITEM0001", "crossref", "doi:x", {"ok": True}, checked_at=now)
         assert cache.get_json(
             "ITEM0001", "crossref", "doi:x", max_age_days=30, now=now
         ) == {"ok": True}
-        assert cache.get_json(
-            "ITEM0001",
-            "crossref",
-            "doi:x",
-            max_age_days=30,
-            now=datetime(2026, 9, 23, tzinfo=timezone.utc),
-        ) is None
+        assert (
+            cache.get_json(
+                "ITEM0001",
+                "crossref",
+                "doi:x",
+                max_age_days=30,
+                now=datetime(2026, 9, 23, tzinfo=UTC),
+            )
+            is None
+        )
 
 
 def test_verified_doi_builds_safe_metric_updates(tmp_path: Path):
@@ -118,9 +126,7 @@ def test_verified_doi_builds_safe_metric_updates(tmp_path: Path):
         "cited_by_count": 512,
         "primary_location": {"source": {"id": "https://openalex.org/S4210176598"}},
     }
-    openalex_source = {
-        "summary_stats": {"2yr_mean_citedness": 10.5, "h_index": 106}
-    }
+    openalex_source = {"summary_stats": {"2yr_mean_citedness": 10.5, "h_index": 106}}
     with EnrichmentCache(tmp_path / "cache.sqlite") as cache:
         worker = RefreshWorker(
             FakeCrossref(work=crossref_work),
@@ -144,8 +150,9 @@ def test_verified_doi_builds_safe_metric_updates(tmp_path: Path):
     assert not mutation.metadata_review
 
 
-
-def test_existing_doi_accepts_crossref_short_title_when_author_and_year_match(tmp_path: Path):
+def test_existing_doi_accepts_crossref_short_title_when_author_and_year_match(
+    tmp_path: Path,
+):
     item = make_item(
         title="LightGCN: Simplifying and Powering Graph Convolution Network for Recommendation",
         date="2020",
@@ -173,6 +180,7 @@ def test_existing_doi_accepts_crossref_short_title_when_author_and_year_match(tm
 
     assert mutation.doi_status == "verified"
     assert not mutation.metadata_review
+
 
 def test_preprint_candidate_requires_review(tmp_path: Path):
     candidate = {
@@ -204,14 +212,18 @@ def test_preprint_candidate_requires_review(tmp_path: Path):
 
     assert mutation.doi_status == "review"
     assert mutation.metadata_review["doi_candidate"]["doi"] == "10.1000/published"
-    assert mutation.metadata_review["published_version_candidate"]["doi"] == "10.1000/published"
+    assert (
+        mutation.metadata_review["published_version_candidate"]["doi"]
+        == "10.1000/published"
+    )
     assert mutation.safe_set_keys["LLM-Wiki Publication Status"] == "candidate-found"
     assert mutation.add_tags == {PUBLICATION_REVIEW_TAG}
     assert "doi" not in mutation.safe_fields
 
 
-
-def test_review_candidate_is_reconstructed_from_extra_without_provider_call(tmp_path: Path):
+def test_review_candidate_is_reconstructed_from_extra_without_provider_call(
+    tmp_path: Path,
+):
     item = make_item(
         item_type="preprint",
         doi="",
@@ -235,8 +247,12 @@ def test_review_candidate_is_reconstructed_from_extra_without_provider_call(tmp_
         mutation = asyncio.run(worker.refresh_item(item))
 
     assert mutation.metadata_review["doi_candidate"]["doi"] == "10.1000/published"
-    assert mutation.metadata_review["published_version_candidate"]["source"] == "Zotero Extra"
+    assert (
+        mutation.metadata_review["published_version_candidate"]["source"]
+        == "Zotero Extra"
+    )
     assert not mutation.has_safe_changes
+
 
 def test_missing_doi_adds_managed_status_tag(tmp_path: Path):
     item = make_item(doi="", url="", tags=frozenset(), creators=("Unknown",))
@@ -257,7 +273,9 @@ def test_missing_doi_adds_managed_status_tag(tmp_path: Path):
 
 
 def test_report_manifest_keeps_safe_and_review_sections(tmp_path: Path):
-    item = make_item(doi="", item_type="preprint", creators=("Example",), tags=frozenset())
+    item = make_item(
+        doi="", item_type="preprint", creators=("Example",), tags=frozenset()
+    )
     candidate = {
         "DOI": "10.1000/published",
         "title": [item.title],
@@ -290,7 +308,7 @@ def test_report_manifest_keeps_safe_and_review_sections(tmp_path: Path):
 
 
 def test_get_items_tolerant_keeps_successes_and_reports_failures():
-    from src.llm_wiki.zotero.mcp_client import ZoteroMCPError
+    from llm_wiki.zotero.mcp_client import ZoteroMCPError
 
     client = ZoteroMCPClient(Path("ignored"))
 
@@ -308,7 +326,7 @@ def test_get_items_tolerant_keeps_successes_and_reports_failures():
 
 
 def test_get_items_remains_strict_for_atomic_callers():
-    from src.llm_wiki.zotero.mcp_client import ZoteroMCPError
+    from llm_wiki.zotero.mcp_client import ZoteroMCPError
 
     client = ZoteroMCPClient(Path("ignored"))
 
@@ -321,7 +339,7 @@ def test_get_items_remains_strict_for_atomic_callers():
 
 
 def test_failed_item_mutations_marks_pending_heal():
-    from src.llm_wiki.zotero.refresh import failed_item_mutations
+    from llm_wiki.zotero.refresh import failed_item_mutations
 
     mutations = failed_item_mutations([("DEAD0001", "not found")])
     assert len(mutations) == 1

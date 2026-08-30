@@ -7,7 +7,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-import pytest
 
 from llm_wiki.claims import validate_claims
 from llm_wiki.core import WikiManager
@@ -19,8 +18,10 @@ def _page_with(tmp_path, claims, sources=None, status="active"):
     wiki_dir.mkdir(exist_ok=True)
     wiki = WikiManager(wiki_dir)
     fm = {
-        "created": "2026-08-01", "updated": "2026-08-01",
-        "tags": ["test"], "status": status,
+        "created": "2026-08-01",
+        "updated": "2026-08-01",
+        "tags": ["test"],
+        "status": status,
         "sources": sources or [],
         "claims": claims,
     }
@@ -30,24 +31,32 @@ def _page_with(tmp_path, claims, sources=None, status="active"):
 
 class TestClaimSchema:
     def test_valid_claims_pass(self, tmp_path):
-        wiki, page = _page_with(
+        _wiki, page = _page_with(
             tmp_path,
-            claims=[{"text": "LoRA 用低秩分解", "source": "sources/lora.pdf", "status": "accepted"}],
+            claims=[
+                {
+                    "text": "LoRA 用低秩分解",
+                    "source": "sources/lora.pdf",
+                    "status": "accepted",
+                }
+            ],
             sources=["sources/lora.pdf"],
         )
         assert validate_claims(page, tmp_path) == []
 
     def test_claim_must_cite_declared_source(self, tmp_path):
-        wiki, page = _page_with(
+        _wiki, page = _page_with(
             tmp_path,
-            claims=[{"text": "X 结论", "source": "sources/other.pdf", "status": "accepted"}],
+            claims=[
+                {"text": "X 结论", "source": "sources/other.pdf", "status": "accepted"}
+            ],
             sources=["sources/lora.pdf"],
         )
         issues = validate_claims(page, tmp_path)
         assert any("undeclared" in i and "sources/other.pdf" in i for i in issues)
 
     def test_claim_status_vocabulary(self, tmp_path):
-        wiki, page = _page_with(
+        _wiki, page = _page_with(
             tmp_path,
             claims=[{"text": "X", "source": "sources/lora.pdf", "status": "proven"}],
             sources=["sources/lora.pdf"],
@@ -56,7 +65,7 @@ class TestClaimSchema:
         assert any("proven" in i and "status" in i for i in issues)
 
     def test_claim_missing_fields(self, tmp_path):
-        wiki, page = _page_with(
+        _wiki, page = _page_with(
             tmp_path,
             claims=[{"text": "只有文本"}],
         )
@@ -68,10 +77,20 @@ class TestClaimSchema:
         wiki_dir.mkdir(exist_ok=True)
         wiki = WikiManager(wiki_dir)
         fm = {
-            "created": "2026-08-01", "updated": "2026-08-01", "status": "active",
+            "created": "2026-08-01",
+            "updated": "2026-08-01",
+            "status": "active",
             "sources": ["sources/zotero/paper.md"],
-            "sources_meta": [{"title": "Paper", "source_alias": "sources/zotero/paper.md"}],
-            "claims": [{"text": "X", "source": "sources/zotero/paper.md", "status": "provisional"}],
+            "sources_meta": [
+                {"title": "Paper", "source_alias": "sources/zotero/paper.md"}
+            ],
+            "claims": [
+                {
+                    "text": "X",
+                    "source": "sources/zotero/paper.md",
+                    "status": "provisional",
+                }
+            ],
         }
         wiki.create_page("P2", "# P2\n\n正文。\n", fm)
         page = wiki.get_page("P2")
@@ -80,9 +99,11 @@ class TestClaimSchema:
 
 class TestMaturityClaims:
     def test_mature_page_with_unsettled_claims_flagged(self, tmp_path):
-        wiki, page = _page_with(
+        _wiki, page = _page_with(
             tmp_path,
-            claims=[{"text": "未定论", "source": "sources/lora.pdf", "status": "contested"}],
+            claims=[
+                {"text": "未定论", "source": "sources/lora.pdf", "status": "contested"}
+            ],
             sources=["sources/lora.pdf"],
             status="mature",
         )
@@ -90,9 +111,11 @@ class TestMaturityClaims:
         assert any("contested" in i and "mature" in i for i in issues)
 
     def test_developing_page_with_unsettled_claims_ok(self, tmp_path):
-        wiki, page = _page_with(
+        _wiki, page = _page_with(
             tmp_path,
-            claims=[{"text": "未定论", "source": "sources/lora.pdf", "status": "contested"}],
+            claims=[
+                {"text": "未定论", "source": "sources/lora.pdf", "status": "contested"}
+            ],
             sources=["sources/lora.pdf"],
             status="developing",
         )

@@ -33,27 +33,31 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import importlib.util
+import logging
 import os
 import subprocess
 import sys
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 # ---------------------------------------------------------------------------
-# Ensure we can import src.llm_wiki when run from project root
+# Resolve the active knowledge-base root for source and installed entry points
 # ---------------------------------------------------------------------------
 PROJECT_ROOT = Path.cwd()
+_PROJECT_ROOT_OVERRIDE: Path | None = None
 
 
 def _get_project_root() -> Path:
-    """Return the active project root, honoring test monkeypatches if present."""
+    """Return the active project root, honoring test and CLI overrides."""
     if "agent_bridge" in sys.modules:
         ab = sys.modules["agent_bridge"]
         if hasattr(ab, "PROJECT_ROOT"):
             return Path(ab.PROJECT_ROOT)
+    if _PROJECT_ROOT_OVERRIDE is not None:
+        return _PROJECT_ROOT_OVERRIDE
     return Path(globals().get("PROJECT_ROOT", Path.cwd()))
+
 
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -61,7 +65,7 @@ if str(PROJECT_ROOT) not in sys.path:
 # ---------------------------------------------------------------------------
 # Logging setup (must happen before any other imports that might log)
 # ---------------------------------------------------------------------------
-from src.llm_wiki.agent_logger import setup_agent_logging, get_logger
+from .agent_logger import get_logger, set_agent_log_level, setup_agent_logging
 
 setup_agent_logging(PROJECT_ROOT)
 LOG = get_logger("agent_bridge")
@@ -79,21 +83,24 @@ def _probe_imports(py_path: str) -> bool:
         [py_path, "-B", "-c", probe],
         capture_output=True,
         cwd=_get_project_root(),
+        check=False,
     )
     return result.returncode == 0
 
 
-def _find_python() -> Tuple[str, bool]:
+def _find_python() -> tuple[str, bool]:
     """
     Find the best Python interpreter for running llm-wiki code.
     Returns (python_path, is_venv).
     """
-    candidates: List[Tuple[str, bool]] = []
+    candidates: list[tuple[str, bool]] = []
 
     # 1. conda environment
     conda_prefix = os.environ.get("CONDA_PREFIX", "")
     if conda_prefix:
-        py = Path(conda_prefix) / ("python.exe" if sys.platform == "win32" else "bin/python")
+        py = Path(conda_prefix) / (
+            "python.exe" if sys.platform == "win32" else "bin/python"
+        )
         if py.exists():
             candidates.append((str(py), True))
 
@@ -123,7 +130,7 @@ def _find_python() -> Tuple[str, bool]:
     return sys.executable, False
 
 
-def _detect_environment() -> Dict[str, Any]:
+def _detect_environment() -> dict[str, Any]:
     """Probe the runtime environment and return a structured report."""
     LOG.info("Probing environment...")
 
@@ -137,15 +144,14 @@ def _detect_environment() -> Dict[str, Any]:
 
     # Can we import the library?
     try:
-        import src.llm_wiki
-        from src.llm_wiki.config import load_config
-        from src.llm_wiki.core import WikiManager, find_wiki_root
+        from .config import load_config
+        from .core import WikiManager, find_wiki_root
 
         env["library_available"] = True
-    except Exception as e:
-        LOG.error("Cannot import src.llm_wiki: %s", e)
+    except ImportError as exc:
+        LOG.error("Cannot import llm_wiki: %s", exc)
         env["library_available"] = False
-        env["error"] = str(e)
+        env["error"] = str(exc)
         return env
 
     # Wiki root
@@ -160,8 +166,8 @@ def _detect_environment() -> Dict[str, Any]:
     try:
         config = load_config(wiki_root)
         env["config"] = config
-    except Exception as e:
-        LOG.error("Failed to load config: %s", e)
+    except (OSError, TypeError, ValueError) as exc:
+        LOG.error("Failed to load config: %s", exc)
         env["config"] = None
 
     # Wiki pages
@@ -171,12 +177,16 @@ def _detect_environment() -> Dict[str, Any]:
         env["wiki_ready"] = True
         env["page_count"] = len(pages)
         env["pages"] = [p.title for p in pages]
-    except Exception as e:
-        LOG.error("Failed to list wiki pages: %s", e)
+    except (OSError, TypeError, ValueError) as exc:
+        LOG.error("Failed to list wiki pages: %s", exc)
         env["wiki_ready"] = False
 
-    LOG.info("Environment probe complete: library=%s wiki_ready=%s pages=%s",
-             env.get("library_available"), env.get("wiki_ready"), env.get("page_count"))
+    LOG.info(
+        "Environment probe complete: library=%s wiki_ready=%s pages=%s",
+        env.get("library_available"),
+        env.get("wiki_ready"),
+        env.get("page_count"),
+    )
     return env
 
 
@@ -190,9 +200,9 @@ def _md_header(title: str, level: int = 2) -> str:
 
 
 def _md_table(
-    headers: List[str],
-    rows: List[List[str]],
-    alignments: Optional[List[str]] = None,
+    headers: list[str],
+    rows: list[list[str]],
+    alignments: list[str] | None = None,
 ) -> str:
     resolved_alignments = alignments or ["left"] * len(headers)
     separators = {
@@ -235,7 +245,7 @@ def cmd_check(args: argparse.Namespace) -> int:
     """Environment self-check."""
     env = _detect_environment()
 
-    lines: List[str] = []
+    lines: list[str] = []
     lines.append(_md_header("Agent Bridge Environment Check"))
     lines.append("")
 
@@ -274,9 +284,13 @@ def cmd_check(args: argparse.Namespace) -> int:
         if config:
             emb = config.get("embedding", {})
             linking = config.get("linking", {})
-            wiki_rows.append(["Embedding", "Enabled" if emb.get("enabled") else "Disabled"])
+            wiki_rows.append(
+                ["Embedding", "Enabled" if emb.get("enabled") else "Disabled"]
+            )
             wiki_rows.append(["Provider", str(emb.get("provider", "N/A"))])
-            wiki_rows.append(["Linking", "Enabled" if linking.get("enabled") else "Disabled"])
+            wiki_rows.append(
+                ["Linking", "Enabled" if linking.get("enabled") else "Disabled"]
+            )
         lines.append(_md_table(["Key", "Value"], wiki_rows))
         lines.append("")
 
@@ -296,9 +310,13 @@ def cmd_check(args: argparse.Namespace) -> int:
     # Actionable
     lines.append(_md_header("Next Steps", level=3))
     if not lib_ok:
-        lines.append(_md_action("Install dependencies: `pip install -r src/requirements.txt`"))
+        lines.append(
+            _md_action("Install dependencies: `pip install -r src/requirements.txt`")
+        )
     elif not wiki_ok:
-        lines.append(_md_action("Initialize wiki: ensure `wiki/` and `CLAUDE.md` exist"))
+        lines.append(
+            _md_action("Initialize wiki: ensure `wiki/` and `CLAUDE.md` exist")
+        )
     else:
         lines.append(_md_action("Environment ready. Proceed with wiki tasks."))
 
@@ -308,7 +326,8 @@ def cmd_check(args: argparse.Namespace) -> int:
 
 def cmd_init(args: argparse.Namespace) -> int:
     """Initialize a knowledge-base directory."""
-    from src.llm_wiki.init_cmd import scaffold
+    from .init_cmd import scaffold
+
     target_dir = Path(args.target_dir)
     actions = scaffold(target_dir, force=args.force)
     resolved = target_dir.expanduser().resolve()
@@ -324,7 +343,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     lines.append(_md_header("Next Steps", level=3))
     lines.append(f"1. `cd {args.target_dir}`")
     lines.append("2. Place raw source materials into `sources/`")
-    lines.append("3. Ask your AI Agent: `\"Ingest sources/[filename] into wiki\"`")
+    lines.append('3. Ask your AI Agent: `"Ingest sources/[filename] into wiki"`')
     lines.append("4. Check status with `llm-wiki status`")
     print("\n".join(lines))
     return 0
@@ -339,10 +358,12 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     lines = [
         _md_header(f"Ingest Guide: {source.name}"),
         "",
-        _md_info("Ingestion requires LLM semantic reasoning and judgment (Protocol Mode)."),
+        _md_info(
+            "Ingestion requires LLM semantic reasoning and judgment (Protocol Mode)."
+        ),
         "",
         "Please ask your AI Agent in chat:",
-        f"> *\"Please ingest source `{source.name}` into the wiki with proper frontmatter, citations, and linking.\"*",
+        f'> *"Please ingest source `{source.name}` into the wiki with proper frontmatter, citations, and linking."*',
     ]
     print("\n".join(lines))
     return 0
@@ -352,11 +373,11 @@ def cmd_link(args: argparse.Namespace) -> int:
     """Run relation discovery between a new page and existing wiki."""
     LOG.info("cmd_link: source=%s mode=%s", args.source, args.mode)
 
-    from src.llm_wiki.config import load_config
-    from src.llm_wiki.core import WikiManager, find_wiki_root
-    from src.llm_wiki.linker import KnowledgeLinker
-    from src.llm_wiki.embeddings import create_provider
-    from src.llm_wiki.retrieval import EmbeddingIndex
+    from .config import load_config
+    from .core import WikiManager, find_wiki_root
+    from .embeddings import create_provider
+    from .linker import KnowledgeLinker
+    from .retrieval import EmbeddingIndex
 
     wiki_root = find_wiki_root(_get_project_root())
     if not wiki_root:
@@ -376,7 +397,7 @@ def cmd_link(args: argparse.Namespace) -> int:
                     LOG.info("Embedding available, auto-selecting deep mode")
                 else:
                     args.mode = "light"
-            except Exception:
+            except Exception:  # noqa: BLE001 - optional provider fallback
                 args.mode = "light"
         else:
             args.mode = "light"
@@ -399,11 +420,13 @@ def cmd_link(args: argparse.Namespace) -> int:
                 if provider:
                     linker.index = EmbeddingIndex(wiki, provider)
                     LOG.info("Embedding index attached for deep mode")
-            except Exception as e:
-                LOG.warning("Embedding index unavailable: %s", e)
+            except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                LOG.warning("Embedding index unavailable: %s", exc)
 
     # Run discovery
-    LOG.info("Running relation discovery (mode=%s, top_k=%d)...", args.mode, args.max_related)
+    LOG.info(
+        "Running relation discovery (mode=%s, top_k=%d)...", args.mode, args.max_related
+    )
     if args.mode == "light":
         light_cfg = config.get("linking", {}).get("light_mode", {})
         rels = linker.find_related(
@@ -434,7 +457,7 @@ def cmd_link(args: argparse.Namespace) -> int:
     LOG.info("Found %d relations", len(rels))
 
     # Output structured markdown
-    lines: List[str] = []
+    lines: list[str] = []
     lines.append(_md_header(f"Relation Discovery: {args.source}"))
     lines.append("")
     lines.append(_md_info(f"Mode: `{args.mode}` | Relations found: {len(rels)}"))
@@ -449,12 +472,14 @@ def cmd_link(args: argparse.Namespace) -> int:
     lines.append(_md_header("Relations", level=3))
     table_rows = []
     for r in rels:
-        table_rows.append([
-            f"[[{r.target}]]",
-            f"{r.score:.2f}",
-            r.relation_type.value.upper(),
-            "; ".join(r.evidence) if r.evidence else "—",
-        ])
+        table_rows.append(
+            [
+                f"[[{r.target}]]",
+                f"{r.score:.2f}",
+                r.relation_type.value.upper(),
+                "; ".join(r.evidence) if r.evidence else "—",
+            ]
+        )
     lines.append(_md_table(["Target", "Score", "Type", "Evidence"], table_rows))
     lines.append("")
 
@@ -466,22 +491,28 @@ def cmd_link(args: argparse.Namespace) -> int:
     if high:
         lines.append(_md_info(f"High confidence (≥0.5): {len(high)}"))
         for r in high:
-            lines.append(_md_action(
-                f"Review relation to [[{r.target}]] (score={r.score:.2f}, type={r.relation_type.value})"
-            ))
+            lines.append(
+                _md_action(
+                    f"Review relation to [[{r.target}]] (score={r.score:.2f}, type={r.relation_type.value})"
+                )
+            )
             lines.append(f"  - Suggested: {r.suggested_action}")
-            lines.append(_md_code_block(
-                f"python scripts/agent-bridge.py merge "
-                f"--source \"{args.source}\" --target \"{r.target}\" "
-                f"--strategy {r.relation_type.value} --dry-run",
-                lang="bash",
-            ))
+            lines.append(
+                _md_code_block(
+                    f"python scripts/agent-bridge.py merge "
+                    f'--source "{args.source}" --target "{r.target}" '
+                    f"--strategy {r.relation_type.value} --dry-run",
+                    lang="bash",
+                )
+            )
         lines.append("")
 
     if medium:
         lines.append(_md_info(f"Medium confidence (0.3–0.5): {len(medium)}"))
         for r in medium:
-            lines.append(f"- [[{r.target}]] — score={r.score:.2f} — consider manual review")
+            lines.append(
+                f"- [[{r.target}]] — score={r.score:.2f} — consider manual review"
+            )
         lines.append("")
 
     print("\n".join(lines))
@@ -490,13 +521,15 @@ def cmd_link(args: argparse.Namespace) -> int:
 
 def cmd_relink(args: argparse.Namespace) -> int:
     """Batch global relation discovery for recently added pages."""
-    LOG.info("cmd_relink: since=%s mode=%s dry_run=%s", args.since, args.mode, args.dry_run)
+    LOG.info(
+        "cmd_relink: since=%s mode=%s dry_run=%s", args.since, args.mode, args.dry_run
+    )
 
-    from src.llm_wiki.config import load_config
-    from src.llm_wiki.core import WikiManager, find_wiki_root
-    from src.llm_wiki.linker import KnowledgeLinker
-    from src.llm_wiki.embeddings import create_provider
-    from src.llm_wiki.retrieval import EmbeddingIndex
+    from .config import load_config
+    from .core import WikiManager, find_wiki_root
+    from .embeddings import create_provider
+    from .linker import KnowledgeLinker
+    from .retrieval import EmbeddingIndex
 
     wiki_root = find_wiki_root(_get_project_root())
     if not wiki_root:
@@ -510,25 +543,33 @@ def cmd_relink(args: argparse.Namespace) -> int:
     # Filter new pages
     if args.since:
         try:
-            since_date = datetime.strptime(args.since, "%Y-%m-%d")
+            since_date = datetime.strptime(args.since, "%Y-%m-%d").replace(tzinfo=UTC)
         except ValueError:
             print(_md_info("Error: Invalid date format. Use YYYY-MM-DD."))
             return 1
     else:
-        since_date = datetime.now() - timedelta(days=7)
+        since_date = datetime.now(UTC) - timedelta(days=7)
 
     new_pages = [
-        p for p in all_pages
+        p
+        for p in all_pages
         if p.frontmatter.get("created")
-        and datetime.strptime(str(p.frontmatter.get("created")), "%Y-%m-%d") >= since_date
+        and datetime.strptime(str(p.frontmatter.get("created")), "%Y-%m-%d").replace(
+            tzinfo=UTC
+        )
+        >= since_date
     ]
 
     LOG.info("Found %d new pages since %s", len(new_pages), since_date.date())
 
-    lines: List[str] = []
+    lines: list[str] = []
     lines.append(_md_header("Global Relink Report"))
     lines.append("")
-    lines.append(_md_info(f"Since: {since_date.date()} | New pages: {len(new_pages)} | Mode: `{args.mode}`"))
+    lines.append(
+        _md_info(
+            f"Since: {since_date.date()} | New pages: {len(new_pages)} | Mode: `{args.mode}`"
+        )
+    )
     lines.append("")
 
     if not new_pages:
@@ -550,12 +591,16 @@ def cmd_relink(args: argparse.Namespace) -> int:
                 provider = create_provider(config)
                 if provider:
                     linker.index = EmbeddingIndex(wiki, provider)
-            except Exception as e:
-                LOG.warning("Embedding unavailable: %s", e)
+            except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                LOG.warning("Embedding unavailable: %s", exc)
 
     # Run global discovery
     titles = [p.title for p in new_pages]
-    top_k = config.get("linking", {}).get("deep_mode" if args.mode == "deep" else "light_mode", {}).get("top_k", 10)
+    top_k = (
+        config.get("linking", {})
+        .get("deep_mode" if args.mode == "deep" else "light_mode", {})
+        .get("top_k", 10)
+    )
     graph = linker.build_relation_graph(titles, mode=args.mode, top_k=top_k)
 
     LOG.info("Global discovery complete: %d relations", len(graph.relations))
@@ -566,7 +611,7 @@ def cmd_relink(args: argparse.Namespace) -> int:
         return 0
 
     # Group by source
-    by_source: Dict[str, List[Any]] = {}
+    by_source: dict[str, list[Any]] = {}
     for rel in graph.relations:
         by_source.setdefault(rel.source, []).append(rel)
 
@@ -575,20 +620,32 @@ def cmd_relink(args: argparse.Namespace) -> int:
         lines.append(f"\n#### [[{src}]]\n")
         rows = []
         for r in sorted(rels, key=lambda x: x.score, reverse=True):
-            rows.append([f"[[{r.target}]]", f"{r.score:.2f}", r.relation_type.value.upper()])
+            rows.append(
+                [f"[[{r.target}]]", f"{r.score:.2f}", r.relation_type.value.upper()]
+            )
         lines.append(_md_table(["Target", "Score", "Type"], rows))
 
     # Actionable
     lines.append("")
     lines.append(_md_header("Next Steps", level=3))
     if args.dry_run:
-        lines.append(_md_action("This was a dry-run. Review relations above, then run without `--dry-run`."))
+        lines.append(
+            _md_action(
+                "This was a dry-run. Review relations above, then run without `--dry-run`."
+            )
+        )
     else:
-        lines.append(_md_action("For each high-confidence relation, run `merge` to apply changes."))
-        lines.append(_md_code_block(
-            "python scripts/agent-bridge.py merge --source <PAGE> --target <PAGE> --strategy <STRATEGY> --dry-run",
-            lang="bash",
-        ))
+        lines.append(
+            _md_action(
+                "For each high-confidence relation, run `merge` to apply changes."
+            )
+        )
+        lines.append(
+            _md_code_block(
+                "python scripts/agent-bridge.py merge --source <PAGE> --target <PAGE> --strategy <STRATEGY> --dry-run",
+                lang="bash",
+            )
+        )
 
     print("\n".join(lines))
     return 0
@@ -598,8 +655,8 @@ def cmd_lint(args: argparse.Namespace) -> int:
     """Run wiki health check."""
     LOG.info("cmd_lint")
 
-    from src.llm_wiki.config import load_config
-    from src.llm_wiki.core import WikiManager, find_wiki_root
+    from .config import load_config
+    from .core import WikiManager, find_wiki_root
 
     wiki_root = find_wiki_root(_get_project_root())
     if not wiki_root:
@@ -613,13 +670,17 @@ def cmd_lint(args: argparse.Namespace) -> int:
     LOG.info(
         "Lint complete: orphans=%d dead_links=%d stale=%d empty_pages=%d "
         "duplicate_titles=%d noncanonical_links=%d drafts=%d shallow_pages=%d",
-        len(issues["orphans"]), len(issues["dead_links"]),
-        len(issues["stale"]), len(issues["empty_pages"]),
-        len(issues["duplicate_titles"]), len(issues["noncanonical_links"]),
-        len(issues["drafts"]), len(issues["shallow_pages"]),
+        len(issues["orphans"]),
+        len(issues["dead_links"]),
+        len(issues["stale"]),
+        len(issues["empty_pages"]),
+        len(issues["duplicate_titles"]),
+        len(issues["noncanonical_links"]),
+        len(issues["drafts"]),
+        len(issues["shallow_pages"]),
     )
 
-    lines: List[str] = []
+    lines: list[str] = []
     lines.append(_md_header("Wiki Health Check"))
     lines.append("")
 
@@ -630,22 +691,68 @@ def cmd_lint(args: argparse.Namespace) -> int:
         return 0
 
     lines.append(_md_header("Summary", level=3))
-    lines.append(_md_table(
-        ["Check", "Count", "Status"],
-        [
-            ["Orphan pages", str(len(issues["orphans"])), "⚠️" if issues["orphans"] else "✅"],
-            ["Dead links", str(len(issues["dead_links"])), "⚠️" if issues["dead_links"] else "✅"],
-            ["Stale pages", str(len(issues["stale"])), "⚠️" if issues["stale"] else "✅"],
-            ["Empty pages", str(len(issues["empty_pages"])), "⚠️" if issues["empty_pages"] else "✅"],
-            ["Duplicate titles", str(len(issues["duplicate_titles"])), "⚠️" if issues["duplicate_titles"] else "✅"],
-            ["Non-canonical links", str(len(issues["noncanonical_links"])), "⚠️" if issues["noncanonical_links"] else "✅"],
-            ["Draft pages", str(len(issues["drafts"])), "⚠️" if issues["drafts"] else "✅"],
-            ["Shallow pages", str(len(issues["shallow_pages"])), "⚠️" if issues["shallow_pages"] else "✅"],
-            ["Invalid status", str(len(issues["invalid_status"])), "⚠️" if issues["invalid_status"] else "✅"],
-            ["Lifecycle mismatch", str(len(issues["lifecycle_mismatch"])), "⚠️" if issues["lifecycle_mismatch"] else "✅"],
-            ["Claim issues", str(len(issues["claim_issues"])), "⚠️" if issues["claim_issues"] else "✅"],
-        ],
-    ))
+    lines.append(
+        _md_table(
+            ["Check", "Count", "Status"],
+            [
+                [
+                    "Orphan pages",
+                    str(len(issues["orphans"])),
+                    "⚠️" if issues["orphans"] else "✅",
+                ],
+                [
+                    "Dead links",
+                    str(len(issues["dead_links"])),
+                    "⚠️" if issues["dead_links"] else "✅",
+                ],
+                [
+                    "Stale pages",
+                    str(len(issues["stale"])),
+                    "⚠️" if issues["stale"] else "✅",
+                ],
+                [
+                    "Empty pages",
+                    str(len(issues["empty_pages"])),
+                    "⚠️" if issues["empty_pages"] else "✅",
+                ],
+                [
+                    "Duplicate titles",
+                    str(len(issues["duplicate_titles"])),
+                    "⚠️" if issues["duplicate_titles"] else "✅",
+                ],
+                [
+                    "Non-canonical links",
+                    str(len(issues["noncanonical_links"])),
+                    "⚠️" if issues["noncanonical_links"] else "✅",
+                ],
+                [
+                    "Draft pages",
+                    str(len(issues["drafts"])),
+                    "⚠️" if issues["drafts"] else "✅",
+                ],
+                [
+                    "Shallow pages",
+                    str(len(issues["shallow_pages"])),
+                    "⚠️" if issues["shallow_pages"] else "✅",
+                ],
+                [
+                    "Invalid status",
+                    str(len(issues["invalid_status"])),
+                    "⚠️" if issues["invalid_status"] else "✅",
+                ],
+                [
+                    "Lifecycle mismatch",
+                    str(len(issues["lifecycle_mismatch"])),
+                    "⚠️" if issues["lifecycle_mismatch"] else "✅",
+                ],
+                [
+                    "Claim issues",
+                    str(len(issues["claim_issues"])),
+                    "⚠️" if issues["claim_issues"] else "✅",
+                ],
+            ],
+        )
+    )
     lines.append("")
 
     if issues["orphans"]:
@@ -655,9 +762,15 @@ def cmd_lint(args: argparse.Namespace) -> int:
 
     if issues["dead_links"]:
         lines.append(_md_header("Dead Links (target is not a wiki file stem)", level=3))
-        lines.append(_md_code_block("\n".join(f"- [[{link}]]" for link in issues["dead_links"])))
+        lines.append(
+            _md_code_block("\n".join(f"- [[{link}]]" for link in issues["dead_links"]))
+        )
         lines.append("")
-        lines.append(_md_action("Create the missing canonical page file or rewrite the link target to an existing file stem."))
+        lines.append(
+            _md_action(
+                "Create the missing canonical page file or rewrite the link target to an existing file stem."
+            )
+        )
         lines.append("")
 
     if issues["stale"]:
@@ -667,25 +780,45 @@ def cmd_lint(args: argparse.Namespace) -> int:
 
     if issues["empty_pages"]:
         lines.append(_md_header("Empty Pages", level=3))
-        lines.append(_md_code_block("\n".join(f"- [[{p}]]" for p in issues["empty_pages"])))
+        lines.append(
+            _md_code_block("\n".join(f"- [[{p}]]" for p in issues["empty_pages"]))
+        )
         lines.append("")
-        lines.append(_md_action("Fill these pages with useful content or remove duplicate empty shells."))
+        lines.append(
+            _md_action(
+                "Fill these pages with useful content or remove duplicate empty shells."
+            )
+        )
         lines.append("")
 
     if issues["duplicate_titles"]:
         lines.append(_md_header("Duplicate Titles", level=3))
-        lines.append(_md_code_block("\n".join(f"- {p}" for p in issues["duplicate_titles"])))
+        lines.append(
+            _md_code_block("\n".join(f"- {p}" for p in issues["duplicate_titles"]))
+        )
         lines.append("")
-        lines.append(_md_action("Remove duplicate shell files or merge them into the canonical page file."))
+        lines.append(
+            _md_action(
+                "Remove duplicate shell files or merge them into the canonical page file."
+            )
+        )
         lines.append("")
 
     if issues["noncanonical_links"]:
         lines.append(_md_header("Non-Canonical Links", level=3))
-        lines.append(_md_code_block("\n".join(f"- {p}" for p in issues["noncanonical_links"][:50])))
+        lines.append(
+            _md_code_block(
+                "\n".join(f"- {p}" for p in issues["noncanonical_links"][:50])
+            )
+        )
         if len(issues["noncanonical_links"]) > 50:
             lines.append(f"... and {len(issues['noncanonical_links']) - 50} more")
         lines.append("")
-        lines.append(_md_action("Rewrite links to target the canonical file stem, e.g. `[[Page-Name|Page Name]]`."))
+        lines.append(
+            _md_action(
+                "Rewrite links to target the canonical file stem, e.g. `[[Page-Name|Page Name]]`."
+            )
+        )
         lines.append("")
 
     if issues["drafts"]:
@@ -695,28 +828,46 @@ def cmd_lint(args: argparse.Namespace) -> int:
 
     if issues["invalid_status"]:
         lines.append(_md_header("Invalid Status", level=3))
-        lines.append(_md_code_block("\n".join(f"- {m}" for m in issues["invalid_status"])))
+        lines.append(
+            _md_code_block("\n".join(f"- {m}" for m in issues["invalid_status"]))
+        )
         lines.append("")
-        lines.append(_md_action("Fix the status typo. Lifecycle: seed -> developing -> mature -> evergreen; draft/archived remain valid."))
+        lines.append(
+            _md_action(
+                "Fix the status typo. Lifecycle: seed -> developing -> mature -> evergreen; draft/archived remain valid."
+            )
+        )
         lines.append("")
 
     if issues["lifecycle_mismatch"]:
         lines.append(_md_header("Lifecycle Mismatch (advisory)", level=3))
-        lines.append(_md_code_block("\n".join(f"- {m}" for m in issues["lifecycle_mismatch"])))
+        lines.append(
+            _md_code_block("\n".join(f"- {m}" for m in issues["lifecycle_mismatch"]))
+        )
         lines.append("")
-        lines.append(_md_action("Either deepen the page to justify mature/evergreen, or lower its status to developing."))
+        lines.append(
+            _md_action(
+                "Either deepen the page to justify mature/evergreen, or lower its status to developing."
+            )
+        )
         lines.append("")
 
     if issues["claim_issues"]:
         lines.append(_md_header("Claim Issues (advisory)", level=3))
-        lines.append(_md_code_block("\n".join(f"- {m}" for m in issues["claim_issues"])))
+        lines.append(
+            _md_code_block("\n".join(f"- {m}" for m in issues["claim_issues"]))
+        )
         lines.append("")
-        lines.append(_md_action("Bind every claim to a source declared in the page's own sources/sources_meta, and keep claim statuses within accepted/provisional/contested/unsupported."))
+        lines.append(
+            _md_action(
+                "Bind every claim to a source declared in the page's own sources/sources_meta, and keep claim statuses within accepted/provisional/contested/unsupported."
+            )
+        )
         lines.append("")
 
     if issues["shallow_pages"]:
         lines.append(_md_header("Shallow Pages (advisory)", level=3))
-        shallow_rows: List[List[str]] = []
+        shallow_rows: list[list[str]] = []
         for finding in issues["shallow_page_details"]:
             ratio = finding["compression_ratio"]
             compression = "n/a" if ratio is None else f"{ratio:.2%}"
@@ -763,20 +914,23 @@ def cmd_lint(args: argparse.Namespace) -> int:
             )
         )
         lines.append("")
-        lines.append(_md_action(
-            "Investigate source coverage and missing reasoning; do not pad pages mechanically to satisfy thresholds."
-        ))
+        lines.append(
+            _md_action(
+                "Investigate source coverage and missing reasoning; do not pad pages mechanically to satisfy thresholds."
+            )
+        )
         lines.append("")
 
     print("\n".join(lines))
     return 0
 
+
 def cmd_status(args: argparse.Namespace) -> int:
     """Show wiki status overview."""
     LOG.info("cmd_status")
 
-    from src.llm_wiki.config import load_config
-    from src.llm_wiki.core import WikiManager, find_wiki_root
+    from .config import load_config
+    from .core import WikiManager, find_wiki_root
 
     wiki_root = find_wiki_root(_get_project_root())
     if not wiki_root:
@@ -790,49 +944,56 @@ def cmd_status(args: argparse.Namespace) -> int:
 
     LOG.info("Status: root=%s pages=%d", wiki_root, len(pages))
 
-    lines: List[str] = []
+    lines: list[str] = []
     lines.append(_md_header("Wiki Status"))
     lines.append("")
 
     # Overview table
-    status_counts: Dict[str, int] = {}
+    status_counts: dict[str, int] = {}
     for p in pages:
         s = p.status
         status_counts[s] = status_counts.get(s, 0) + 1
 
     lines.append(_md_header("Overview", level=3))
-    lines.append(_md_table(
-        ["Metric", "Value"],
-        [
-            ["Wiki Root", str(wiki_root)],
-            ["Total Pages", str(len(pages))],
-            ["Active", str(status_counts.get("active", 0))],
-            ["Draft", str(status_counts.get("draft", 0))],
-            ["Archived", str(status_counts.get("archived", 0))],
-        ],
-    ))
+    lines.append(
+        _md_table(
+            ["Metric", "Value"],
+            [
+                ["Wiki Root", str(wiki_root)],
+                ["Total Pages", str(len(pages))],
+                ["Active", str(status_counts.get("active", 0))],
+                ["Draft", str(status_counts.get("draft", 0))],
+                ["Archived", str(status_counts.get("archived", 0))],
+            ],
+        )
+    )
     lines.append("")
 
     # Lifecycle maturity distribution (seed -> developing -> mature -> evergreen)
-    from src.llm_wiki.core import LIFECYCLE_STATES
+    from .core import LIFECYCLE_STATES
+
     lines.append(_md_header("Lifecycle", level=3))
-    lines.append(_md_table(
-        ["Stage", "Pages"],
-        [[stage, str(status_counts.get(stage, 0))] for stage in LIFECYCLE_STATES],
-    ))
+    lines.append(
+        _md_table(
+            ["Stage", "Pages"],
+            [[stage, str(status_counts.get(stage, 0))] for stage in LIFECYCLE_STATES],
+        )
+    )
     lines.append("")
 
     # Embedding status
     emb = config.get("embedding", {})
     lines.append(_md_header("Embedding", level=3))
-    lines.append(_md_table(
-        ["Setting", "Value"],
-        [
-            ["Enabled", "Yes" if emb.get("enabled") else "No"],
-            ["Provider", str(emb.get("provider", "N/A"))],
-            ["Model", str(emb.get("model", "N/A"))],
-        ],
-    ))
+    lines.append(
+        _md_table(
+            ["Setting", "Value"],
+            [
+                ["Enabled", "Yes" if emb.get("enabled") else "No"],
+                ["Provider", str(emb.get("provider", "N/A"))],
+                ["Model", str(emb.get("model", "N/A"))],
+            ],
+        )
+    )
     lines.append("")
 
     # Recent activity
@@ -855,10 +1016,10 @@ def cmd_query(args: argparse.Namespace) -> int:
     """
     LOG.info("cmd_query: query=%s semantic=%s", args.query_text, args.semantic)
 
-    from src.llm_wiki.config import load_config
-    from src.llm_wiki.core import WikiManager, find_wiki_root
-    from src.llm_wiki.embeddings import create_provider
-    from src.llm_wiki.retrieval import EmbeddingIndex
+    from .config import load_config
+    from .core import WikiManager, find_wiki_root
+    from .embeddings import create_provider
+    from .retrieval import EmbeddingIndex
 
     wiki_root = find_wiki_root(_get_project_root())
     if not wiki_root:
@@ -868,7 +1029,7 @@ def cmd_query(args: argparse.Namespace) -> int:
     config = load_config(wiki_root)
     wiki = WikiManager(wiki_root / "wiki")
 
-    lines: List[str] = []
+    lines: list[str] = []
     lines.append(_md_header(f"Query: {args.query_text}"))
     lines.append("")
 
@@ -876,12 +1037,30 @@ def cmd_query(args: argparse.Namespace) -> int:
     use_semantic = args.semantic or emb_cfg.get("enabled", False)
 
     if not use_semantic:
-        lines.append(_md_info("Semantic search is disabled. Falling back to keyword listing."))
+        lines.append(
+            _md_info("Semantic search is disabled. Falling back to keyword listing.")
+        )
         pages = wiki.list_pages()
         lines.append(f"\nTotal pages: {len(pages)}")
-        lines.append(_md_code_block("\n".join(f"- [[{p.title}]] (tags: {', '.join(p.tags)})" for p in pages[:20])))
+        lines.append(
+            _md_code_block(
+                "\n".join(
+                    f"- [[{p.title}]] (tags: {', '.join(p.tags)})" for p in pages[:20]
+                )
+            )
+        )
         lines.append("")
-        lines.append(_md_action("Agent: Read `wiki/index.md` to locate relevant topics, then read specific pages."))
+        lines.append(
+            _md_action(
+                "Agent: Read `wiki/index.md` to locate relevant topics, then read specific pages."
+            )
+        )
+        if getattr(args, "save", False):
+            lines.append(
+                _md_action(
+                    "The `--save` flag requests archival, but an Agent must review and write the synthesis in Protocol mode."
+                )
+            )
         print("\n".join(lines))
         return 0
 
@@ -897,7 +1076,11 @@ def cmd_query(args: argparse.Namespace) -> int:
         index = EmbeddingIndex(wiki, provider)
         if not index.cache or not index.cache.get("pages"):
             LOG.error("Embedding index empty")
-            print(_md_info("Error: Embedding index is empty. Run `python scripts/agent-bridge.py index` first."))
+            print(
+                _md_info(
+                    "Error: Embedding index is empty. Run `python scripts/agent-bridge.py index` first."
+                )
+            )
             return 1
 
         retrieval_cfg = config.get("retrieval", {})
@@ -922,7 +1105,17 @@ def cmd_query(args: argparse.Namespace) -> int:
             rows.append([f"[[{title}]]", f"{score:.3f}"])
         lines.append(_md_table(["Page", "Relevance"], rows))
         lines.append("")
-        lines.append(_md_action("Agent: Read the top-ranked pages and synthesize an answer with citations."))
+        lines.append(
+            _md_action(
+                "Agent: Read the top-ranked pages and synthesize an answer with citations."
+            )
+        )
+        if getattr(args, "save", False):
+            lines.append(
+                _md_action(
+                    "The `--save` flag requests archival, but an Agent must review and write the synthesis in Protocol mode."
+                )
+            )
 
         print("\n".join(lines))
         return 0
@@ -935,12 +1128,18 @@ def cmd_query(args: argparse.Namespace) -> int:
 
 def cmd_merge(args: argparse.Namespace) -> int:
     """Execute a safe merge between two wiki pages with diff preview."""
-    LOG.info("cmd_merge: source=%s target=%s strategy=%s dry_run=%s",
-             args.source, args.target, args.strategy, args.dry_run)
+    LOG.info(
+        "cmd_merge: source=%s target=%s strategy=%s dry_run=%s",
+        args.source,
+        args.target,
+        args.strategy,
+        args.dry_run,
+    )
 
-    from src.llm_wiki.config import load_config
-    from src.llm_wiki.core import WikiManager, find_wiki_root
-    from src.llm_wiki.merge import ContentMerger, MergeStrategy, SafeWriter
+    from .config import load_config
+    from .core import WikiManager, find_wiki_root
+    from .merge import ContentMerger, MergeStrategy
+    from .transaction import OP_UPDATE, FileOp, Transaction, sha256_text
 
     wiki_root = find_wiki_root(_get_project_root())
     if not wiki_root:
@@ -964,12 +1163,15 @@ def cmd_merge(args: argparse.Namespace) -> int:
     linking_cfg = config.get("linking", {})
     allowed = linking_cfg.get("deep_mode", {}).get("strategies_allowed", [])
     if args.strategy not in allowed:
-        print(_md_info(f"Error: Strategy `{args.strategy}` not allowed. Allowed: {', '.join(allowed)}"))
+        print(
+            _md_info(
+                f"Error: Strategy `{args.strategy}` not allowed. Allowed: {', '.join(allowed)}"
+            )
+        )
         return 1
 
     strategy_enum = MergeStrategy(args.strategy)
     merger = ContentMerger(wiki)
-    writer = SafeWriter(wiki)
 
     context = {
         "target": args.source,
@@ -979,13 +1181,11 @@ def cmd_merge(args: argparse.Namespace) -> int:
         context["section_title"] = "## 最新进展"
 
     LOG.info("Preparing merge: strategy=%s", args.strategy)
+    original_content = target_page.path.read_text(encoding="utf-8")
     new_content = merger.merge(target_page, "", strategy_enum, context)
-    diff = merger.generate_diff(
-        target_page.path.read_text(encoding="utf-8"),
-        new_content,
-    )
+    diff = merger.generate_diff(original_content, new_content)
 
-    lines: List[str] = []
+    lines: list[str] = []
     lines.append(_md_header(f"Merge Proposal: {args.source} → {args.target}"))
     lines.append("")
     lines.append(_md_info(f"Strategy: `{args.strategy}` | Target: [[{args.target}]]"))
@@ -999,14 +1199,22 @@ def cmd_merge(args: argparse.Namespace) -> int:
         lines.append(_md_action("This is a dry-run. Review the diff above."))
         lines.append(_md_action("To apply, run the same command without `--dry-run`."))
     else:
-        proposal = writer.prepare(target_page, new_content,
-                                  reason=f"Link {args.source} → {args.target}",
-                                  strategy=strategy_enum)
-        backup = writer.apply(proposal)
-        LOG.info("Merge applied. Backup: %s", backup)
-        lines.append(_md_info(f"Merge applied successfully."))
-        lines.append(f"- Backup: `{backup}`")
-        lines.append(_md_action("To rollback: check `wiki/.backups/` for the latest backup."))
+        relative_target = target_page.path.resolve().relative_to(wiki_root.resolve())
+        transaction = Transaction(wiki_root)
+        transaction.stage(
+            FileOp(
+                op=OP_UPDATE,
+                path=relative_target,
+                content=new_content,
+                expected_sha256=sha256_text(original_content),
+            )
+        )
+        receipt = transaction.apply()
+        LOG.info("Merge applied. Transaction: %s", receipt.tx_id)
+        lines.append(_md_info("Merge applied successfully."))
+        lines.append(f"- Transaction: `{receipt.tx_id}`")
+        lines.append(f"- Journal: `{receipt.journal_dir}`")
+        lines.append(_md_action("Rollback data is stored in the transaction journal."))
 
     print("\n".join(lines))
     return 0
@@ -1016,10 +1224,10 @@ def cmd_index(args: argparse.Namespace) -> int:
     """Build or update the embedding index."""
     LOG.info("cmd_index: force=%s", args.force)
 
-    from src.llm_wiki.config import load_config
-    from src.llm_wiki.core import WikiManager, find_wiki_root
-    from src.llm_wiki.embeddings import create_provider
-    from src.llm_wiki.retrieval import EmbeddingIndex
+    from .config import load_config
+    from .core import WikiManager, find_wiki_root
+    from .embeddings import create_provider
+    from .retrieval import EmbeddingIndex
 
     wiki_root = find_wiki_root(_get_project_root())
     if not wiki_root:
@@ -1027,15 +1235,25 @@ def cmd_index(args: argparse.Namespace) -> int:
         return 1
 
     config = load_config(wiki_root)
-    emb_cfg = config.get("embedding", {})
+    emb_cfg = dict(config.get("embedding", {}))
+    provider_override = getattr(args, "provider", None)
+    if provider_override:
+        emb_cfg["provider"] = provider_override
+        config["embedding"] = emb_cfg
     if not emb_cfg.get("enabled", False):
-        print(_md_info("Error: Embedding is disabled in config.yaml. Set `embedding.enabled: true`."))
+        print(
+            _md_info(
+                "Error: Embedding is disabled in config.yaml. Set `embedding.enabled: true`."
+            )
+        )
         return 1
 
     try:
         provider = create_provider(config)
         if not provider:
-            print(_md_info("Error: Cannot create embedding provider. Check config.yaml."))
+            print(
+                _md_info("Error: Cannot create embedding provider. Check config.yaml.")
+            )
             return 1
 
         wiki = WikiManager(wiki_root / "wiki")
@@ -1044,17 +1262,19 @@ def cmd_index(args: argparse.Namespace) -> int:
         indexed, skipped = idx.build(force=args.force)
         LOG.info("Index complete: indexed=%d skipped=%d", indexed, skipped)
 
-        lines: List[str] = []
+        lines: list[str] = []
         lines.append(_md_header("Embedding Index Update"))
         lines.append("")
-        lines.append(_md_table(
-            ["Metric", "Value"],
-            [
-                ["Provider", provider.name],
-                ["Indexed / Updated", str(indexed)],
-                ["Skipped (unchanged)", str(skipped)],
-            ],
-        ))
+        lines.append(
+            _md_table(
+                ["Metric", "Value"],
+                [
+                    ["Provider", provider.name],
+                    ["Indexed / Updated", str(indexed)],
+                    ["Skipped (unchanged)", str(skipped)],
+                ],
+            )
+        )
         lines.append("")
         print("\n".join(lines))
         return 0
@@ -1069,8 +1289,8 @@ def cmd_zotero_plan(args: argparse.Namespace) -> int:
     """Build a read-only Zotero metadata and managed-tag synchronization plan."""
     LOG.info("cmd_zotero_plan: snapshot=%s item_keys=%s", args.snapshot, args.item_keys)
 
-    from src.llm_wiki.core import WikiManager, find_wiki_root
-    from src.llm_wiki.zotero.plan import (
+    from .core import WikiManager, find_wiki_root
+    from .zotero.plan import (
         build_retired_binding_removal_plan,
         build_zotero_plan,
         collect_zotero_bindings,
@@ -1099,7 +1319,9 @@ def cmd_zotero_plan(args: argparse.Namespace) -> int:
             print(_md_info(f"Error: Snapshot not found: {snapshot_path}"))
             return 1
         try:
-            library_id, collection_name, collection_key, snapshot_items = load_snapshot(snapshot_path)
+            library_id, collection_name, collection_key, snapshot_items = load_snapshot(
+                snapshot_path
+            )
         except (OSError, ValueError, TypeError) as exc:
             LOG.error("Cannot load Zotero snapshot: %s", exc)
             print(_md_info(f"Error: Cannot load Zotero snapshot: {exc}"))
@@ -1122,61 +1344,80 @@ def cmd_zotero_plan(args: argparse.Namespace) -> int:
     add_tag_count = sum(bool(item.add_tags) for item in plan.items)
     remove_tag_count = sum(bool(item.remove_candidates) for item in plan.items)
     relation_count = sum(bool(item.relation_candidates) for item in plan.items)
-    doi_counts: Dict[str, int] = {}
+    doi_counts: dict[str, int] = {}
     for item in plan.items:
         doi_counts[item.doi_state] = doi_counts.get(item.doi_state, 0) + 1
 
-    lines: List[str] = []
+    lines: list[str] = []
     title = "Zotero Sync Plan"
     if plan.collection_name:
         title += f": {plan.collection_name}"
     lines.append(_md_header(title))
     lines.append("")
-    lines.append(_md_info(
-        "Read-only plan. This command does not connect to Zotero and does not mutate Zotero or wiki files."
-    ))
+    lines.append(
+        _md_info(
+            "Read-only plan. This command does not connect to Zotero and does not mutate Zotero or wiki files."
+        )
+    )
     lines.append("")
     lines.append(_md_header("Scope", level=3))
-    lines.append(_md_table(
-        ["Field", "Value"],
-        [
-            ["Library ID", plan.library_id or "Not provided"],
-            ["Collection", plan.collection_name or "Wiki bindings only"],
-            ["Collection Key", plan.collection_key or "Not provided"],
-            ["Items", str(len(plan.items))],
-            ["Wiki-bound Items", str(bound_count)],
-            ["Items with Tag Additions", str(add_tag_count)],
-            ["Items with Removal Candidates", str(remove_tag_count)],
-            ["Items with Relation Candidates", str(relation_count)],
-        ],
-    ))
+    lines.append(
+        _md_table(
+            ["Field", "Value"],
+            [
+                ["Library ID", plan.library_id or "Not provided"],
+                ["Collection", plan.collection_name or "Wiki bindings only"],
+                ["Collection Key", plan.collection_key or "Not provided"],
+                ["Items", str(len(plan.items))],
+                ["Wiki-bound Items", str(bound_count)],
+                ["Items with Tag Additions", str(add_tag_count)],
+                ["Items with Removal Candidates", str(remove_tag_count)],
+                ["Items with Relation Candidates", str(relation_count)],
+            ],
+        )
+    )
     lines.append("")
 
     lines.append(_md_header("DOI Audit", level=3))
-    lines.append(_md_table(
-        ["State", "Count"],
-        [[state, str(count)] for state, count in sorted(doi_counts.items())],
-    ))
+    lines.append(
+        _md_table(
+            ["State", "Count"],
+            [[state, str(count)] for state, count in sorted(doi_counts.items())],
+        )
+    )
     lines.append("")
 
     lines.append(_md_header("Items", level=3))
     rows = []
     for item in plan.items:
         title_text = item.title if len(item.title) <= 64 else f"{item.title[:61]}..."
-        rows.append([
-            item.item_key,
-            title_text,
-            ", ".join(item.wiki_pages) or "—",
-            item.doi_state,
-            ", ".join(sorted(item.add_tags)) or "—",
-            ", ".join(sorted(item.remove_candidates)) or "—",
-            ", ".join(item.relation_candidates) or "—",
-            "; ".join(item.actions) or "none",
-        ])
-    lines.append(_md_table(
-        ["Item Key", "Title", "Wiki Pages", "DOI", "Add Tags", "Review Removals", "Relation Candidates", "Actions"],
-        rows,
-    ))
+        rows.append(
+            [
+                item.item_key,
+                title_text,
+                ", ".join(item.wiki_pages) or "—",
+                item.doi_state,
+                ", ".join(sorted(item.add_tags)) or "—",
+                ", ".join(sorted(item.remove_candidates)) or "—",
+                ", ".join(item.relation_candidates) or "—",
+                "; ".join(item.actions) or "none",
+            ]
+        )
+    lines.append(
+        _md_table(
+            [
+                "Item Key",
+                "Title",
+                "Wiki Pages",
+                "DOI",
+                "Add Tags",
+                "Review Removals",
+                "Relation Candidates",
+                "Actions",
+            ],
+            rows,
+        )
+    )
     lines.append("")
 
     if plan.warnings:
@@ -1185,13 +1426,17 @@ def cmd_zotero_plan(args: argparse.Namespace) -> int:
         lines.append("")
 
     lines.append(_md_header("Actionable Items", level=3))
-    lines.append(_md_action(
-        "Agent: verify DOI candidates and publication identities through approved external metadata sources, "
-        "then use Zotero MCP incremental writes only after reviewing this plan."
-    ))
-    lines.append(_md_action(
-        "Agent: do not remove user-managed tags; collection-equivalent tags are review candidates, not automatic mutations."
-    ))
+    lines.append(
+        _md_action(
+            "Agent: verify DOI candidates and publication identities through approved external metadata sources, "
+            "then use Zotero MCP incremental writes only after reviewing this plan."
+        )
+    )
+    lines.append(
+        _md_action(
+            "Agent: do not remove user-managed tags; collection-equivalent tags are review candidates, not automatic mutations."
+        )
+    )
     lines.append("")
 
     if args.manifest_out:
@@ -1201,11 +1446,19 @@ def cmd_zotero_plan(args: argparse.Namespace) -> int:
         else:
             resolved_manifest = (wiki_root / manifest_path).resolve()
         allowed_root = (wiki_root / "temp").resolve()
-        if resolved_manifest != allowed_root and allowed_root not in resolved_manifest.parents:
-            print(_md_info("Error: --manifest-out must stay under the project temp/ directory."))
+        if (
+            resolved_manifest != allowed_root
+            and allowed_root not in resolved_manifest.parents
+        ):
+            print(
+                _md_info(
+                    "Error: --manifest-out must stay under the project temp/ directory."
+                )
+            )
             return 1
         resolved_manifest.parent.mkdir(parents=True, exist_ok=True)
         import yaml
+
         resolved_manifest.write_text(
             yaml.safe_dump(plan_to_manifest(plan), allow_unicode=True, sort_keys=False),
             encoding="utf-8",
@@ -1220,8 +1473,15 @@ def cmd_zotero_plan(args: argparse.Namespace) -> int:
         else:
             resolved_removal = (wiki_root / removal_path).resolve()
         allowed_root = (wiki_root / "temp").resolve()
-        if resolved_removal != allowed_root and allowed_root not in resolved_removal.parents:
-            print(_md_info("Error: --removal-plan-out must stay under the project temp/ directory."))
+        if (
+            resolved_removal != allowed_root
+            and allowed_root not in resolved_removal.parents
+        ):
+            print(
+                _md_info(
+                    "Error: --removal-plan-out must stay under the project temp/ directory."
+                )
+            )
             return 1
         try:
             removal_plan = build_retired_binding_removal_plan(plan, bindings)
@@ -1229,17 +1489,22 @@ def cmd_zotero_plan(args: argparse.Namespace) -> int:
             print(_md_info(f"Error: cannot build retired-binding removal plan: {exc}"))
             return 1
         import yaml
+
         resolved_removal.parent.mkdir(parents=True, exist_ok=True)
         resolved_removal.write_text(
             yaml.safe_dump(removal_plan, allow_unicode=True, sort_keys=False),
             encoding="utf-8",
         )
-        removable_count = sum(len(item["reviewed_removals"]) for item in removal_plan["items"])
-        lines.append(_md_info(
-            f"Retired-binding removal plan written to: {resolved_removal} "
-            f"({removable_count} tag(s) across {len(removal_plan['items'])} item(s)). "
-            "Review it, then apply with `zotero-writeback --action audit|apply|verify`."
-        ))
+        removable_count = sum(
+            len(item["reviewed_removals"]) for item in removal_plan["items"]
+        )
+        lines.append(
+            _md_info(
+                f"Retired-binding removal plan written to: {resolved_removal} "
+                f"({removable_count} tag(s) across {len(removal_plan['items'])} item(s)). "
+                "Review it, then apply with `zotero-writeback --action audit|apply|verify`."
+            )
+        )
         lines.append("")
 
     print("\n".join(lines))
@@ -1250,15 +1515,15 @@ def cmd_zotero_heal(args: argparse.Namespace) -> int:
     """Detect stale wiki->Zotero bindings and rebind via DOI/citation-key/title."""
     LOG.info("cmd_zotero_heal: snapshot=%s apply=%s", args.snapshot, args.apply)
 
-    from src.llm_wiki.capabilities import CapabilityError, check_write_paths
-    from src.llm_wiki.config import load_config
-    from src.llm_wiki.core import WikiManager, find_wiki_root
-    from src.llm_wiki.zotero.heal import (
+    from .capabilities import CapabilityError, check_write_paths
+    from .config import load_config
+    from .core import WikiManager, find_wiki_root
+    from .zotero.heal import (
         apply_heal_plan,
         plan_heal,
         plan_to_heal_manifest,
     )
-    from src.llm_wiki.zotero.plan import collect_zotero_bindings, load_snapshot
+    from .zotero.plan import collect_zotero_bindings, load_snapshot
 
     wiki_root = find_wiki_root(_get_project_root())
     if not wiki_root:
@@ -1275,7 +1540,9 @@ def cmd_zotero_heal(args: argparse.Namespace) -> int:
         print(_md_info(f"Error: Snapshot not found: {snapshot_path}"))
         return 1
     try:
-        _library_id, collection_name, collection_key, snapshot_items = load_snapshot(snapshot_path)
+        _library_id, collection_name, collection_key, snapshot_items = load_snapshot(
+            snapshot_path
+        )
     except (OSError, ValueError, TypeError) as exc:
         LOG.error("Cannot load Zotero snapshot: %s", exc)
         print(_md_info(f"Error: Cannot load Zotero snapshot: {exc}"))
@@ -1293,47 +1560,61 @@ def cmd_zotero_heal(args: argparse.Namespace) -> int:
         collection_key=collection_key,
     )
 
-    lines: List[str] = []
+    lines: list[str] = []
     title = "Zotero Binding Heal"
     if plan.collection_name:
         title += f": {plan.collection_name}"
     lines.append(_md_header(title))
     lines.append("")
     if not args.apply:
-        lines.append(_md_info(
-            "Read-only plan. No wiki or Zotero files are mutated; re-run with `--apply` "
-            "to rebind matched stale keys in place."
-        ))
+        lines.append(
+            _md_info(
+                "Read-only plan. No wiki or Zotero files are mutated; re-run with `--apply` "
+                "to rebind matched stale keys in place."
+            )
+        )
         lines.append("")
 
     if not plan.stale:
-        lines.append(_md_info("No stale bindings: every wiki-bound item key exists in the snapshot."))
+        lines.append(
+            _md_info(
+                "No stale bindings: every wiki-bound item key exists in the snapshot."
+            )
+        )
         lines.append("")
     else:
         matched_count = sum(1 for candidate in plan.stale if candidate.new_item_key)
         lines.append(_md_header("Stale Bindings", level=3))
-        lines.append(_md_table(
-            ["Stale Key", "Page", "Matched By", "New Key", "New Title"],
-            [
+        lines.append(
+            _md_table(
+                ["Stale Key", "Page", "Matched By", "New Key", "New Title"],
                 [
-                    candidate.item_key,
-                    candidate.page_stem,
-                    candidate.matched_by or "unmatched",
-                    candidate.new_item_key or "—",
-                    candidate.new_title or "—",
-                ]
-                for candidate in plan.stale
-            ],
-        ))
+                    [
+                        candidate.item_key,
+                        candidate.page_stem,
+                        candidate.matched_by or "unmatched",
+                        candidate.new_item_key or "—",
+                        candidate.new_title or "—",
+                    ]
+                    for candidate in plan.stale
+                ],
+            )
+        )
         lines.append("")
-        lines.append(_md_info(f"Stale: {len(plan.stale)} | Matched: {matched_count} | Unmatched: {len(plan.stale) - matched_count}"))
+        lines.append(
+            _md_info(
+                f"Stale: {len(plan.stale)} | Matched: {matched_count} | Unmatched: {len(plan.stale) - matched_count}"
+            )
+        )
         lines.append("")
 
     lines.append(_md_header("Actionable Items", level=3))
-    lines.append(_md_action(
-        "Agent: review matched rebinding candidates above; unmatched stale keys need manual "
-        "Zotero lookup (the candidate pool is limited to this snapshot's collection)."
-    ))
+    lines.append(
+        _md_action(
+            "Agent: review matched rebinding candidates above; unmatched stale keys need manual "
+            "Zotero lookup (the candidate pool is limited to this snapshot's collection)."
+        )
+    )
     lines.append("")
 
     if args.manifest_out:
@@ -1343,20 +1624,30 @@ def cmd_zotero_heal(args: argparse.Namespace) -> int:
         else:
             resolved_manifest = (wiki_root / manifest_path).resolve()
         allowed_root = (wiki_root / "temp").resolve()
-        if resolved_manifest != allowed_root and allowed_root not in resolved_manifest.parents:
-            print(_md_info("Error: --manifest-out must stay under the project temp/ directory."))
+        if (
+            resolved_manifest != allowed_root
+            and allowed_root not in resolved_manifest.parents
+        ):
+            print(
+                _md_info(
+                    "Error: --manifest-out must stay under the project temp/ directory."
+                )
+            )
             return 1
         resolved_manifest.parent.mkdir(parents=True, exist_ok=True)
         import yaml
+
         resolved_manifest.write_text(
-            yaml.safe_dump(plan_to_heal_manifest(plan), allow_unicode=True, sort_keys=False),
+            yaml.safe_dump(
+                plan_to_heal_manifest(plan), allow_unicode=True, sort_keys=False
+            ),
             encoding="utf-8",
         )
         lines.append(_md_info(f"Review manifest written to: {resolved_manifest}"))
         lines.append("")
 
     if args.apply and plan.stale:
-        write_paths: List[Path] = []
+        write_paths: list[Path] = []
         for candidate in plan.stale:
             if not candidate.new_item_key:
                 continue
@@ -1375,9 +1666,11 @@ def cmd_zotero_heal(args: argparse.Namespace) -> int:
             print(_md_info(f"Error: capability contract rejected the write set: {exc}"))
             return 1
         changed = apply_heal_plan(wiki, plan)
-        lines.append(_md_info(
-            f"Applied: rebound {len(changed)} page(s); see log.md for the heal record."
-        ))
+        lines.append(
+            _md_info(
+                f"Applied: rebound {len(changed)} page(s); see log.md for the heal record."
+            )
+        )
         lines.append("")
 
     print("\n".join(lines))
@@ -1386,9 +1679,9 @@ def cmd_zotero_heal(args: argparse.Namespace) -> int:
 
 def cmd_zotero_alias(args: argparse.Namespace) -> int:
     """Render a sanitized sources/zotero alias from a wildcard template."""
-    from src.llm_wiki.alias_template import render_alias_template
-    from src.llm_wiki.config import load_config
-    from src.llm_wiki.core import find_wiki_root
+    from .alias_template import render_alias_template
+    from .config import load_config
+    from .core import find_wiki_root
 
     wiki_root = find_wiki_root(_get_project_root())
     if not wiki_root:
@@ -1435,9 +1728,9 @@ def cmd_zotero_refresh(args: argparse.Namespace) -> int:
 
     import yaml
 
-    from src.llm_wiki.config import load_config
-    from src.llm_wiki.core import find_wiki_root
-    from src.llm_wiki.zotero.refresh import (
+    from .config import load_config
+    from .core import find_wiki_root
+    from .zotero.refresh import (
         report_to_manifest,
         run_live_refresh,
         settings_from_config,
@@ -1452,13 +1745,22 @@ def cmd_zotero_refresh(args: argparse.Namespace) -> int:
     enrichment_config = config.get("zotero_enrichment") or {}
     settings = settings_from_config(config)
 
-    cache_path = Path(str(enrichment_config.get("cache_path") or "var/zotero-enrichment.sqlite"))
+    cache_path = Path(
+        str(enrichment_config.get("cache_path") or "var/zotero-enrichment.sqlite")
+    )
     if not cache_path.is_absolute():
         cache_path = wiki_root / cache_path
     cache_path = cache_path.resolve()
     allowed_cache_root = (wiki_root / "var").resolve()
-    if cache_path != allowed_cache_root and allowed_cache_root not in cache_path.parents:
-        print(_md_info("Error: Zotero enrichment cache must stay under the project var/ directory."))
+    if (
+        cache_path != allowed_cache_root
+        and allowed_cache_root not in cache_path.parents
+    ):
+        print(
+            _md_info(
+                "Error: Zotero enrichment cache must stay under the project var/ directory."
+            )
+        )
         return 1
 
     mcp_config_path = Path(args.mcp_config or ".mcp.json")
@@ -1495,47 +1797,64 @@ def cmd_zotero_refresh(args: argparse.Namespace) -> int:
             manifest_path = wiki_root / manifest_path
         manifest_path = manifest_path.resolve()
         allowed_manifest_root = (wiki_root / "temp").resolve()
-        if manifest_path != allowed_manifest_root and allowed_manifest_root not in manifest_path.parents:
-            print(_md_info("Error: --manifest-out must stay under the project temp/ directory."))
+        if (
+            manifest_path != allowed_manifest_root
+            and allowed_manifest_root not in manifest_path.parents
+        ):
+            print(
+                _md_info(
+                    "Error: --manifest-out must stay under the project temp/ directory."
+                )
+            )
             return 1
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
         manifest_path.write_text(
-            yaml.safe_dump(report_to_manifest(report), allow_unicode=True, sort_keys=False),
+            yaml.safe_dump(
+                report_to_manifest(report), allow_unicode=True, sort_keys=False
+            ),
             encoding="utf-8",
         )
 
-    status_counts: Dict[str, int] = {}
+    status_counts: dict[str, int] = {}
     for item in report.items:
         status_counts[item.doi_status] = status_counts.get(item.doi_status, 0) + 1
     safe_count = sum(item.has_safe_changes for item in report.items)
     review_count = sum(bool(item.metadata_review) for item in report.items)
     error_count = sum(bool(item.errors) for item in report.items)
 
-    lines: List[str] = []
+    lines: list[str] = []
     lines.append(_md_header(f"Zotero Refresh: {report.collection_name}"))
     lines.append("")
-    mode = "Applied safe updates through Zotero MCP with write-back verification." if args.apply_safe else "Dry-run only. No Zotero fields or tags were modified."
+    mode = (
+        "Applied safe updates through Zotero MCP with write-back verification."
+        if args.apply_safe
+        else "Dry-run only. No Zotero fields or tags were modified."
+    )
     lines.append(_md_info(mode))
     lines.append("")
     lines.append(_md_header("Summary", level=3))
-    lines.append(_md_table(
-        ["Metric", "Value"],
-        [
-            ["Collection Key", report.collection_key],
-            ["Items", str(len(report.items))],
-            ["Items with Safe Updates", str(safe_count)],
-            ["Items Requiring Review", str(review_count)],
-            ["Items with Errors", str(error_count)],
-            ["Items Applied", str(report.applied_count)],
-            ["Cache", str(cache_path)],
-        ],
-    ))
+    lines.append(
+        _md_table(
+            ["Metric", "Value"],
+            [
+                ["Collection Key", report.collection_key],
+                ["Items", str(len(report.items))],
+                ["Items with Safe Updates", str(safe_count)],
+                ["Items Requiring Review", str(review_count)],
+                ["Items with Errors", str(error_count)],
+                ["Items Applied", str(report.applied_count)],
+                ["Cache", str(cache_path)],
+            ],
+        )
+    )
     lines.append("")
     lines.append(_md_header("DOI Status", level=3))
-    lines.append(_md_table(
-        ["Status", "Count"],
-        [[key, str(value)] for key, value in sorted(status_counts.items())],
-    ))
+    lines.append(
+        _md_table(
+            ["Status", "Count"],
+            [[key, str(value)] for key, value in sorted(status_counts.items())],
+        )
+    )
     lines.append("")
     lines.append(_md_header("Items", level=3))
     rows = []
@@ -1550,27 +1869,41 @@ def cmd_zotero_refresh(args: argparse.Namespace) -> int:
             safe_parts.append(f"-tags:{len(item.remove_tags)}")
         if item.safe_fields:
             safe_parts.append(f"fields:{len(item.safe_fields)}")
-        rows.append([
-            item.item_key,
-            title,
-            item.doi_status,
-            f"{item.citation_provider}:{item.citation_count}" if item.citation_provider else "—",
-            ", ".join(safe_parts) or "—",
-            ", ".join(item.metadata_review) or "—",
-            "; ".join(item.errors) or "—",
-        ])
-    lines.append(_md_table(
-        ["Item", "Title", "DOI", "Citations", "Safe Updates", "Review", "Errors"],
-        rows,
-    ))
+        rows.append(
+            [
+                item.item_key,
+                title,
+                item.doi_status,
+                f"{item.citation_provider}:{item.citation_count}"
+                if item.citation_provider
+                else "—",
+                ", ".join(safe_parts) or "—",
+                ", ".join(item.metadata_review) or "—",
+                "; ".join(item.errors) or "—",
+            ]
+        )
+    lines.append(
+        _md_table(
+            ["Item", "Title", "DOI", "Citations", "Safe Updates", "Review", "Errors"],
+            rows,
+        )
+    )
     lines.append("")
     if manifest_path:
         lines.append(_md_info(f"Review manifest written to: {manifest_path}"))
         lines.append("")
     if review_count:
-        lines.append(_md_action("Agent: review DOI and published-version candidates before changing bibliographic identity."))
+        lines.append(
+            _md_action(
+                "Agent: review DOI and published-version candidates before changing bibliographic identity."
+            )
+        )
     if not args.apply_safe and safe_count:
-        lines.append(_md_action("Agent: re-run with --apply-safe only after reviewing the safe update set."))
+        lines.append(
+            _md_action(
+                "Agent: re-run with --apply-safe only after reviewing the safe update set."
+            )
+        )
     lines.append("")
     print("\n".join(lines))
     apply_failed = any(
@@ -1586,10 +1919,10 @@ def cmd_zotero_writeback(args: argparse.Namespace) -> int:
 
     import yaml
 
-    from src.llm_wiki.config import load_config
-    from src.llm_wiki.core import find_wiki_root
-    from src.llm_wiki.zotero.local import LocalZoteroWriter, authorize_local, load_local_key
-    from src.llm_wiki.zotero.writeback import (
+    from .config import load_config
+    from .core import find_wiki_root
+    from .zotero.local import LocalZoteroWriter, authorize_local, load_local_key
+    from .zotero.writeback import (
         apply_write_plan,
         audit_write_plan,
         load_write_plan,
@@ -1619,12 +1952,14 @@ def cmd_zotero_writeback(args: argparse.Namespace) -> int:
         report_path = wiki_root / report_path
     report_path = report_path.resolve()
     if report_path != allowed_temp and allowed_temp not in report_path.parents:
-        print(_md_info("Error: --report-out must stay under the project temp/ directory."))
+        print(
+            _md_info("Error: --report-out must stay under the project temp/ directory.")
+        )
         return 1
 
     try:
         plan = load_write_plan(plan_path)
-    except Exception as exc:
+    except (OSError, TypeError, ValueError) as exc:
         print(_md_info(f"Error: Cannot load authorized write plan: {exc}"))
         return 1
 
@@ -1642,7 +1977,11 @@ def cmd_zotero_writeback(args: argparse.Namespace) -> int:
         api_key = ""
         if args.action == "apply":
             if args.memory_authorize:
-                auth_kwargs = {key: value for key, value in writer_kwargs.items() if key == "base_url"}
+                auth_kwargs = {
+                    key: value
+                    for key, value in writer_kwargs.items()
+                    if key == "base_url"
+                }
                 api_key = await authorize_local(args.app_name, None, **auth_kwargs)
             else:
                 api_key = load_local_key(wiki_root / "var" / "zotero-local.json")
@@ -1671,42 +2010,57 @@ def cmd_zotero_writeback(args: argparse.Namespace) -> int:
 
     lines = [_md_header(f"Zotero Write-Back: {args.action.title()}"), ""]
     if plan.policy.allow_managed_removals:
-        lines.append(_md_info(
-            "Restricted workflow: managed-tag additions, reviewed reciprocal Related pairs, and "
-            "scoped reviewed managed-tag removals only; metadata, collections, notes, unmanaged/user "
-            "tags, protected tags, and Trash remain outside this authorization."
-        ))
+        lines.append(
+            _md_info(
+                "Restricted workflow: managed-tag additions, reviewed reciprocal Related pairs, and "
+                "scoped reviewed managed-tag removals only; metadata, collections, notes, unmanaged/user "
+                "tags, protected tags, and Trash remain outside this authorization."
+            )
+        )
     else:
-        lines.append(_md_info(
-            "Restricted workflow: managed-tag additions and reviewed reciprocal Related pairs only; "
-            "metadata, collections, notes, tag removals, and Trash are outside this authorization."
-        ))
+        lines.append(
+            _md_info(
+                "Restricted workflow: managed-tag additions and reviewed reciprocal Related pairs only; "
+                "metadata, collections, notes, tag removals, and Trash are outside this authorization."
+            )
+        )
     lines.append("")
-    lines.append(_md_table(
-        ["Metric", "Value"],
-        [
-            ["Collection", report.collection_name or report.collection_key],
-            ["Items", str(len(report.items))],
-            ["Updated + Verified", str(report.updated_count)],
-            ["Skipped Current", str(report.skipped_count)],
-            ["Failed", str(report.failed_count)],
-        ],
-    ))
-    lines.append("")
-    lines.append(_md_table(
-        ["Item", "Status", "Missing Tags", "Present Removals", "Relation Gaps", "Errors"],
-        [
+    lines.append(
+        _md_table(
+            ["Metric", "Value"],
             [
-                item.item_key,
-                item.status,
-                ", ".join(item.missing_tags) or "—",
-                ", ".join(item.present_removals) or "—",
-                ", ".join(item.relation_gaps) or "—",
-                "; ".join(item.errors) or "—",
-            ]
-            for item in report.items
-        ],
-    ))
+                ["Collection", report.collection_name or report.collection_key],
+                ["Items", str(len(report.items))],
+                ["Updated + Verified", str(report.updated_count)],
+                ["Skipped Current", str(report.skipped_count)],
+                ["Failed", str(report.failed_count)],
+            ],
+        )
+    )
+    lines.append("")
+    lines.append(
+        _md_table(
+            [
+                "Item",
+                "Status",
+                "Missing Tags",
+                "Present Removals",
+                "Relation Gaps",
+                "Errors",
+            ],
+            [
+                [
+                    item.item_key,
+                    item.status,
+                    ", ".join(item.missing_tags) or "—",
+                    ", ".join(item.present_removals) or "—",
+                    ", ".join(item.relation_gaps) or "—",
+                    "; ".join(item.errors) or "—",
+                ]
+                for item in report.items
+            ],
+        )
+    )
     lines.append("")
     lines.append(_md_info(f"Machine-readable report written to: {report_path}"))
     print("\n".join(lines))
@@ -1719,16 +2073,16 @@ def cmd_zotero_relocate(args: argparse.Namespace) -> int:
 
     import yaml
 
-    from src.llm_wiki.capabilities import CapabilityError, check_write_paths
-    from src.llm_wiki.config import load_config
-    from src.llm_wiki.core import find_wiki_root
-    from src.llm_wiki.zotero.local import (
+    from .capabilities import CapabilityError, check_write_paths
+    from .config import load_config
+    from .core import find_wiki_root
+    from .zotero.local import (
         LocalWriteError,
         LocalZoteroWriter,
         authorize_local,
         load_local_key,
     )
-    from src.llm_wiki.zotero.relocate import (
+    from .zotero.relocate import (
         DEFAULT_METADATA_PATH,
         RelocationError,
         RelocationSettings,
@@ -1748,16 +2102,20 @@ def cmd_zotero_relocate(args: argparse.Namespace) -> int:
     metadata_path = resolve_input(args.metadata or str(DEFAULT_METADATA_PATH))
     expected_metadata = (wiki_root / DEFAULT_METADATA_PATH).resolve()
     if metadata_path != expected_metadata or not metadata_path.exists():
-        print(_md_info(
-            "Error: --metadata must point to the existing project "
-            "sources/zotero/metadata.yaml."
-        ))
+        print(
+            _md_info(
+                "Error: --metadata must point to the existing project "
+                "sources/zotero/metadata.yaml."
+            )
+        )
         return 1
 
     report_path = resolve_input(args.report_out or "temp/zotero-relocate.yaml")
     allowed_temp = (wiki_root / "temp").resolve()
     if report_path == allowed_temp or allowed_temp not in report_path.parents:
-        print(_md_info("Error: --report-out must stay under the project temp/ directory."))
+        print(
+            _md_info("Error: --report-out must stay under the project temp/ directory.")
+        )
         return 1
 
     try:
@@ -1781,7 +2139,13 @@ def cmd_zotero_relocate(args: argparse.Namespace) -> int:
                 "zotero_relocation.enabled must be true before apply; "
                 "dry-run remains available for an explicit root"
             )
-    except (CapabilityError, LocalWriteError, RelocationError, OSError, ValueError) as exc:
+    except (
+        CapabilityError,
+        LocalWriteError,
+        RelocationError,
+        OSError,
+        ValueError,
+    ) as exc:
         print(_md_info(f"Error: invalid relocation configuration: {exc}"))
         return 1
 
@@ -1799,7 +2163,9 @@ def cmd_zotero_relocate(args: argparse.Namespace) -> int:
         if args.apply:
             if args.memory_authorize:
                 auth_kwargs = {
-                    key: value for key, value in writer_kwargs.items() if key == "base_url"
+                    key: value
+                    for key, value in writer_kwargs.items()
+                    if key == "base_url"
                 }
                 api_key = await authorize_local(args.app_name, None, **auth_kwargs)
             else:
@@ -1824,7 +2190,9 @@ def cmd_zotero_relocate(args: argparse.Namespace) -> int:
         report = asyncio.run(run_relocation())
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(
-            yaml.safe_dump(report_to_manifest(report), allow_unicode=True, sort_keys=False),
+            yaml.safe_dump(
+                report_to_manifest(report), allow_unicode=True, sort_keys=False
+            ),
             encoding="utf-8",
         )
     except Exception as exc:
@@ -1834,39 +2202,60 @@ def cmd_zotero_relocate(args: argparse.Namespace) -> int:
 
     lines = [_md_header("Zotero Attachment Relocation"), ""]
     if args.apply:
-        lines.append(_md_info("Apply mode: every Zotero path mutation was requested through the local API and verified."))
+        lines.append(
+            _md_info(
+                "Apply mode: every Zotero path mutation was requested through the local API and verified."
+            )
+        )
     else:
-        lines.append(_md_info("Dry-run only: no files, Zotero items, metadata, or aliases were modified."))
-    lines.extend([
-        "",
-        _md_header("Summary", level=3),
-        _md_table(
-            ["Metric", "Value"],
-            [
-                ["Attachments", str(len(report.plans))],
-                ["Ready", str(sum(plan.status in {"ready", "ready_existing_content", "same_target"} for plan in report.plans))],
-                ["Blocked / errors", str(report.failed_count)],
-                ["Report", str(report_path)],
-            ],
-        ),
-        "",
-        _md_header("Items", level=3),
-        _md_table(
-            ["Item", "Attachment", "Status", "Target", "Reason"],
-            [
+        lines.append(
+            _md_info(
+                "Dry-run only: no files, Zotero items, metadata, or aliases were modified."
+            )
+        )
+    lines.extend(
+        [
+            "",
+            _md_header("Summary", level=3),
+            _md_table(
+                ["Metric", "Value"],
                 [
-                    result.get("item_key", ""),
-                    result.get("attachment_key", ""),
-                    result.get("status", ""),
-                    Path(result.get("target", "")).name or "—",
-                    result.get("reason", "") or result.get("cleanup_reason", "") or "—",
-                ]
-                for result in report.results
-            ],
-        ),
-        "",
-        _md_info(f"Machine-readable report written to: {report_path}"),
-    ])
+                    ["Attachments", str(len(report.plans))],
+                    [
+                        "Ready",
+                        str(
+                            sum(
+                                plan.status
+                                in {"ready", "ready_existing_content", "same_target"}
+                                for plan in report.plans
+                            )
+                        ),
+                    ],
+                    ["Blocked / errors", str(report.failed_count)],
+                    ["Report", str(report_path)],
+                ],
+            ),
+            "",
+            _md_header("Items", level=3),
+            _md_table(
+                ["Item", "Attachment", "Status", "Target", "Reason"],
+                [
+                    [
+                        result.get("item_key", ""),
+                        result.get("attachment_key", ""),
+                        result.get("status", ""),
+                        Path(result.get("target", "")).name or "—",
+                        result.get("reason", "")
+                        or result.get("cleanup_reason", "")
+                        or "—",
+                    ]
+                    for result in report.results
+                ],
+            ),
+            "",
+            _md_info(f"Machine-readable report written to: {report_path}"),
+        ]
+    )
     print("\n".join(lines))
     return 1 if args.apply and report.failed_count else 0
 
@@ -1875,8 +2264,8 @@ def cmd_zotero_ingest_verify(args: argparse.Namespace) -> int:
     """Verify collection snapshot allocation, provenance bindings, and page hygiene."""
     import yaml
 
-    from src.llm_wiki.core import find_wiki_root
-    from src.llm_wiki.zotero.ingest_verify import (
+    from .core import find_wiki_root
+    from .zotero.ingest_verify import (
         ingest_report_to_manifest,
         verify_collection_ingest,
     )
@@ -1893,9 +2282,14 @@ def cmd_zotero_ingest_verify(args: argparse.Namespace) -> int:
     snapshot_path = resolve_input(args.snapshot)
     allocation_path = resolve_input(args.allocation)
     allowed_temp = (wiki_root / "temp").resolve()
-    for label, path in (("Snapshot", snapshot_path), ("Allocation ledger", allocation_path)):
+    for label, path in (
+        ("Snapshot", snapshot_path),
+        ("Allocation ledger", allocation_path),
+    ):
         if path != allowed_temp and allowed_temp not in path.parents:
-            print(_md_info(f"Error: {label} must stay under the project temp/ directory."))
+            print(
+                _md_info(f"Error: {label} must stay under the project temp/ directory.")
+            )
             return 1
         if not path.exists():
             print(_md_info(f"Error: {label} not found: {path}"))
@@ -1903,7 +2297,9 @@ def cmd_zotero_ingest_verify(args: argparse.Namespace) -> int:
 
     report_path = resolve_input(args.report_out)
     if report_path != allowed_temp and allowed_temp not in report_path.parents:
-        print(_md_info("Error: --report-out must stay under the project temp/ directory."))
+        print(
+            _md_info("Error: --report-out must stay under the project temp/ directory.")
+        )
         return 1
 
     report = verify_collection_ingest(
@@ -1913,22 +2309,26 @@ def cmd_zotero_ingest_verify(args: argparse.Namespace) -> int:
     )
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(
-        yaml.safe_dump(ingest_report_to_manifest(report), allow_unicode=True, sort_keys=False),
+        yaml.safe_dump(
+            ingest_report_to_manifest(report), allow_unicode=True, sort_keys=False
+        ),
         encoding="utf-8",
     )
 
     lines = [_md_header("Zotero Collection Ingest Verification"), ""]
-    lines.append(_md_table(
-        ["Metric", "Value"],
-        [
-            ["Collection Key", report.collection_key or "Unknown"],
-            ["Snapshot Items", str(report.snapshot_count)],
-            ["Allocations", str(report.allocation_count)],
-            ["Errors", str(len(report.errors))],
-            ["Warnings", str(len(report.warnings))],
-            ["Passed", "Yes" if report.passed else "No"],
-        ],
-    ))
+    lines.append(
+        _md_table(
+            ["Metric", "Value"],
+            [
+                ["Collection Key", report.collection_key or "Unknown"],
+                ["Snapshot Items", str(report.snapshot_count)],
+                ["Allocations", str(report.allocation_count)],
+                ["Errors", str(len(report.errors))],
+                ["Warnings", str(len(report.warnings))],
+                ["Passed", "Yes" if report.passed else "No"],
+            ],
+        )
+    )
     lines.append("")
     if report.errors:
         lines.append(_md_header("Errors", level=3))
@@ -1954,9 +2354,9 @@ def cmd_zotero_local_auth(args: argparse.Namespace) -> int:
     """
     import asyncio
 
-    from src.llm_wiki.config import load_config
-    from src.llm_wiki.core import find_wiki_root
-    from src.llm_wiki.zotero.local import authorize_local
+    from .config import load_config
+    from .core import find_wiki_root
+    from .zotero.local import authorize_local
 
     wiki_root = find_wiki_root(_get_project_root())
     if not wiki_root:
@@ -1970,14 +2370,22 @@ def cmd_zotero_local_auth(args: argparse.Namespace) -> int:
     store_path = (wiki_root / "var" / "zotero-local.json").resolve()
     var_root = (wiki_root / "var").resolve()
     if store_path != var_root and var_root not in store_path.parents:
-        print(_md_info("Error: local write key store must stay under the project var/ directory."))
+        print(
+            _md_info(
+                "Error: local write key store must stay under the project var/ directory."
+            )
+        )
         return 1
 
     app_name = str(getattr(args, "app_name", "") or "llm-wiki")
 
     lines = [_md_header("Zotero Local Write Authorization"), ""]
-    lines.append(_md_info("A dialog will appear in Zotero Desktop — choose 'Always Allow' for a reusable key."))
-    kwargs: Dict[str, Any] = {}
+    lines.append(
+        _md_info(
+            "A dialog will appear in Zotero Desktop — choose 'Always Allow' for a reusable key."
+        )
+    )
+    kwargs: dict[str, Any] = {}
     if base_url:
         kwargs["base_url"] = base_url
     try:
@@ -1987,8 +2395,16 @@ def cmd_zotero_local_auth(args: argparse.Namespace) -> int:
         print(_md_info(f"Error: authorization failed: {exc}"))
         return 1
 
-    lines.append(_md_info("Reusable key stored under private `var/zotero-local.json` state (gitignored; key not shown)."))
-    lines.append(_md_action("You can now run `zotero-refresh --apply-safe --write-backend local`."))
+    lines.append(
+        _md_info(
+            "Reusable key stored under private `var/zotero-local.json` state (gitignored; key not shown)."
+        )
+    )
+    lines.append(
+        _md_action(
+            "You can now run `zotero-refresh --apply-safe --write-backend local`."
+        )
+    )
     print("\n".join(lines))
     return 0
 
@@ -1997,11 +2413,11 @@ def cmd_capabilities(args: argparse.Namespace) -> int:
     """Print the effective capability contracts (defaults + config overrides)."""
     LOG.info("cmd_capabilities")
 
-    from src.llm_wiki.capabilities import CAPABILITIES, CapabilityError, get_capability
-    from src.llm_wiki.config import load_config
-    from src.llm_wiki.core import find_wiki_root
+    from .capabilities import CAPABILITIES, CapabilityError, get_capability
+    from .config import load_config
+    from .core import find_wiki_root
 
-    config: Dict[str, Any] = {}
+    config: dict[str, Any] = {}
     wiki_root = find_wiki_root(_get_project_root())
     if wiki_root:
         try:
@@ -2010,30 +2426,36 @@ def cmd_capabilities(args: argparse.Namespace) -> int:
             print(_md_info(f"Error: {exc}"))
             return 1
 
-    rows: List[List[str]] = []
+    rows: list[list[str]] = []
     try:
         for name, declared in CAPABILITIES.items():
             cap = get_capability(name, config)
             overridden = " (config)" if cap != declared else ""
-            rows.append([
-                name,
-                "yes" if cap.enabled else "**disabled**",
-                _md_table_cell(", ".join(cap.write_scope) or "—") + overridden,
-                "yes" if cap.network else "no",
-                "yes" if cap.dry_run else "no",
-            ])
+            rows.append(
+                [
+                    name,
+                    "yes" if cap.enabled else "**disabled**",
+                    _md_table_cell(", ".join(cap.write_scope) or "—") + overridden,
+                    "yes" if cap.network else "no",
+                    "yes" if cap.dry_run else "no",
+                ]
+            )
     except CapabilityError as exc:
         print(_md_info(f"Error: {exc}"))
         return 1
 
-    lines: List[str] = [_md_header("Capability Contracts"), ""]
-    lines.append(_md_table(["Command", "Enabled", "Write Scope", "Network", "Dry-Run"], rows))
+    lines: list[str] = [_md_header("Capability Contracts"), ""]
+    lines.append(
+        _md_table(["Command", "Enabled", "Write Scope", "Network", "Dry-Run"], rows)
+    )
     lines.append("")
-    lines.append(_md_info(
-        "Defaults are declared in code. `capabilities:` in config.yaml may only "
-        "tighten a contract (disable a command, narrow its write scope); "
-        "widening attempts are rejected."
-    ))
+    lines.append(
+        _md_info(
+            "Defaults are declared in code. `capabilities:` in config.yaml may only "
+            "tighten a contract (disable a command, narrow its write scope); "
+            "widening attempts are rejected."
+        )
+    )
     print("\n".join(lines))
     return 0
 
@@ -2042,7 +2464,7 @@ def cmd_hot(args: argparse.Namespace) -> int:
     """Print wiki/hot.md - bounded recent-activity context for session resume."""
     LOG.info("cmd_hot")
 
-    from src.llm_wiki.core import find_wiki_root
+    from .core import find_wiki_root
 
     wiki_root = find_wiki_root(_get_project_root())
     if not wiki_root:
@@ -2051,8 +2473,12 @@ def cmd_hot(args: argparse.Namespace) -> int:
 
     hot_file = wiki_root / "wiki" / "hot.md"
     if not hot_file.exists():
-        print(_md_info("No recorded activity yet (wiki/hot.md does not exist). "
-                       "It is maintained automatically by apply-bundle."))
+        print(
+            _md_info(
+                "No recorded activity yet (wiki/hot.md does not exist). "
+                "It is maintained automatically by apply-bundle."
+            )
+        )
         return 0
 
     print(hot_file.read_text(encoding="utf-8").rstrip())
@@ -2063,8 +2489,8 @@ def cmd_apply_bundle(args: argparse.Namespace) -> int:
     """Apply a transaction bundle: atomic multi-file writes with dry-run preview."""
     LOG.info("cmd_apply_bundle: manifest=%s dry_run=%s", args.manifest, args.dry_run)
 
-    from src.llm_wiki.core import find_wiki_root
-    from src.llm_wiki.transaction import TransactionError, load_bundle
+    from .core import find_wiki_root
+    from .transaction import TransactionError, load_bundle
 
     wiki_root = find_wiki_root(_get_project_root())
     if not wiki_root:
@@ -2082,20 +2508,27 @@ def cmd_apply_bundle(args: argparse.Namespace) -> int:
         print(_md_info(f"Error: {exc}"))
         return 1
 
-    from src.llm_wiki.capabilities import CapabilityError, check_write_paths
-    from src.llm_wiki.config import load_config
+    from .capabilities import CapabilityError, check_write_paths
+    from .config import load_config
 
     try:
-        check_write_paths("apply-bundle", [op.path for op in tx.ops], load_config(wiki_root))
+        check_write_paths(
+            "apply-bundle", [op.path for op in tx.ops], load_config(wiki_root)
+        )
     except CapabilityError as exc:
         print(_md_info(f"Error: {exc}"))
         return 1
 
     if args.dry_run:
         checks = tx.check()
-        lines: List[str] = [_md_header("Transaction Preview"), ""]
+        lines: list[str] = [_md_header("Transaction Preview"), ""]
         rows = [
-            [c.op.op, c.op.path.as_posix(), "ok" if c.ok else "FAIL", _md_table_cell(c.detail)]
+            [
+                c.op.op,
+                c.op.path.as_posix(),
+                "ok" if c.ok else "FAIL",
+                _md_table_cell(c.detail),
+            ]
             for c in checks
         ]
         lines.append(_md_table(["Op", "Path", "Status", "Detail"], rows))
@@ -2103,10 +2536,12 @@ def cmd_apply_bundle(args: argparse.Namespace) -> int:
         lines.append(_md_header("Diff", level=3))
         lines.append(_md_code_block(tx.diff(), "diff"))
         lines.append("")
-        lines.append(_md_action(
-            "Review the diff. Fill any missing `expected_sha256` values shown above "
-            "into the manifest, then re-run without `--dry-run` to apply."
-        ))
+        lines.append(
+            _md_action(
+                "Review the diff. Fill any missing `expected_sha256` values shown above "
+                "into the manifest, then re-run without `--dry-run` to apply."
+            )
+        )
         print("\n".join(lines))
         return 0 if all(c.ok for c in checks) else 1
 
@@ -2116,7 +2551,8 @@ def cmd_apply_bundle(args: argparse.Namespace) -> int:
         print(_md_info(f"Error: {exc}"))
         return 1
 
-    from src.llm_wiki.core import WikiManager
+    from .core import WikiManager
+
     WikiManager(wiki_root / "wiki").record_activity(
         f"apply-bundle {receipt.tx_id}", receipt.changed
     )
@@ -2135,20 +2571,37 @@ def cmd_apply_bundle(args: argparse.Namespace) -> int:
 # CLI argument parser
 # ---------------------------------------------------------------------------
 
-def main(argv: Optional[List[str]] = None) -> int:
+
+def main(argv: list[str] | None = None) -> int:
+    global _PROJECT_ROOT_OVERRIDE
+
+    invoked_as = Path(sys.argv[0]).name.lower() if argv is None else "llm-wiki"
+    prog_name = "agent-bridge" if invoked_as.startswith("agent-bridge") else "llm-wiki"
     parser = argparse.ArgumentParser(
-        prog="agent-bridge",
-        description="Unified Agent entry point for llm-wiki operations.",
+        prog=prog_name,
+        description="Unified CLI for llm-wiki operations.",
+    )
+    parser.add_argument("--wiki-dir", help="Knowledge-base root directory")
+    parser.add_argument(
+        "--verbose", "-v", action="store_true", help="Enable debug logging"
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # init
-    init_parser = subparsers.add_parser("init", help="Scaffold a new knowledge-base directory")
-    init_parser.add_argument("target_dir", nargs="?", default=".", help="Directory to initialize")
-    init_parser.add_argument("--force", action="store_true", help="Overwrite existing files")
+    init_parser = subparsers.add_parser(
+        "init", help="Scaffold a new knowledge-base directory"
+    )
+    init_parser.add_argument(
+        "target_dir", nargs="?", default=".", help="Directory to initialize"
+    )
+    init_parser.add_argument(
+        "--force", action="store_true", help="Overwrite existing files"
+    )
 
     # ingest
-    ingest_parser = subparsers.add_parser("ingest", help="Ingest guidance for source files")
+    ingest_parser = subparsers.add_parser(
+        "ingest", help="Ingest guidance for source files"
+    )
     ingest_parser.add_argument("source_path", help="Path to source material")
     ingest_parser.add_argument("--dry-run", action="store_true", help="Preview only")
 
@@ -2162,48 +2615,77 @@ def main(argv: Optional[List[str]] = None) -> int:
     link_parser.add_argument("--max-related", type=int, default=5)
 
     # relink
-    relink_parser = subparsers.add_parser("relink", help="Batch global relation discovery")
+    relink_parser = subparsers.add_parser(
+        "relink", help="Batch global relation discovery"
+    )
     relink_parser.add_argument("--since", help="Date cutoff (YYYY-MM-DD)")
     relink_parser.add_argument("--mode", choices=["light", "deep"], default="deep")
     relink_parser.add_argument("--dry-run", action="store_true")
 
     # lint
-    subparsers.add_parser("lint", help="Check wiki health")
+    lint_parser = subparsers.add_parser("lint", help="Check wiki health")
+    lint_parser.add_argument(
+        "--fix",
+        action="store_true",
+        help="Compatibility flag; report issues without automatic edits",
+    )
 
     # status
     subparsers.add_parser("status", help="Show wiki overview")
 
     # query
-    query_parser = subparsers.add_parser("query", help="Semantic query (when embedding enabled)")
+    query_parser = subparsers.add_parser(
+        "query", help="Semantic query (when embedding enabled)"
+    )
     query_parser.add_argument("query_text", help="Query string")
-    query_parser.add_argument("--semantic", action="store_true", help="Force semantic search")
+    query_parser.add_argument(
+        "--semantic", action="store_true", help="Force semantic search"
+    )
+    query_parser.add_argument(
+        "--save",
+        action="store_true",
+        help="Compatibility flag; saving requires Agent judgment",
+    )
 
     # merge
-    merge_parser = subparsers.add_parser("merge", help="Safely merge content between pages")
+    merge_parser = subparsers.add_parser(
+        "merge", help="Safely merge content between pages"
+    )
     merge_parser.add_argument("--source", required=True)
     merge_parser.add_argument("--target", required=True)
-    merge_parser.add_argument("--strategy", required=True,
-                              choices=["link_only", "append_related", "append_section", "update_concept"])
+    merge_parser.add_argument(
+        "--strategy",
+        required=True,
+        choices=["link_only", "append_related", "append_section", "update_concept"],
+    )
     merge_parser.add_argument("--dry-run", action="store_true")
 
     # index
     index_parser = subparsers.add_parser("index", help="Build/update embedding index")
     index_parser.add_argument("--force", action="store_true", help="Force rebuild all")
+    index_parser.add_argument(
+        "--provider", help="Override the configured embedding provider for this run"
+    )
 
     # apply-bundle
     bundle_parser = subparsers.add_parser(
         "apply-bundle",
         help="Apply a transaction bundle (atomic multi-file writes)",
     )
-    bundle_parser.add_argument("manifest", help="Path to the transaction bundle YAML manifest")
-    bundle_parser.add_argument("--dry-run", action="store_true",
-                               help="Preview checks and diff without writing")
+    bundle_parser.add_argument(
+        "manifest", help="Path to the transaction bundle YAML manifest"
+    )
+    bundle_parser.add_argument(
+        "--dry-run", action="store_true", help="Preview checks and diff without writing"
+    )
 
     # capabilities
     subparsers.add_parser("capabilities", help="Show effective capability contracts")
 
     # hot
-    subparsers.add_parser("hot", help="Print bounded recent-activity context (wiki/hot.md)")
+    subparsers.add_parser(
+        "hot", help="Print bounded recent-activity context (wiki/hot.md)"
+    )
 
     # zotero-plan
     zotero_parser = subparsers.add_parser(
@@ -2282,15 +2764,21 @@ def main(argv: Optional[List[str]] = None) -> int:
         "zotero-refresh",
         help="Refresh DOI, citation, journal, and preprint publication state through Zotero MCP",
     )
-    refresh_parser.add_argument("--collection-key", required=True, help="Zotero collection key")
+    refresh_parser.add_argument(
+        "--collection-key", required=True, help="Zotero collection key"
+    )
     refresh_parser.add_argument(
         "--item-key",
         dest="item_keys",
         action="append",
         help="Restrict refresh to an item key (repeatable)",
     )
-    refresh_parser.add_argument("--limit", type=int, help="Limit items for a smoke test")
-    refresh_parser.add_argument("--force", action="store_true", help="Ignore freshness timestamps and cache age")
+    refresh_parser.add_argument(
+        "--limit", type=int, help="Limit items for a smoke test"
+    )
+    refresh_parser.add_argument(
+        "--force", action="store_true", help="Ignore freshness timestamps and cache age"
+    )
     refresh_parser.add_argument(
         "--apply-safe",
         action="store_true",
@@ -2327,7 +2815,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         "zotero-writeback",
         help="Audit/apply/verify an authorized managed-tag and Related-item plan",
     )
-    writeback_parser.add_argument("--plan", required=True, help="Authorized write plan YAML/JSON")
+    writeback_parser.add_argument(
+        "--plan", required=True, help="Authorized write plan YAML/JSON"
+    )
     writeback_parser.add_argument(
         "--action",
         choices=["audit", "apply", "verify"],
@@ -2415,8 +2905,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         "zotero-ingest-verify",
         help="Verify collection allocation, provenance, page invariants, and hygiene",
     )
-    ingest_verify_parser.add_argument("--snapshot", required=True, help="Verified MCP snapshot YAML/JSON")
-    ingest_verify_parser.add_argument("--allocation", required=True, help="Collection allocation ledger YAML/JSON")
+    ingest_verify_parser.add_argument(
+        "--snapshot", required=True, help="Verified MCP snapshot YAML/JSON"
+    )
+    ingest_verify_parser.add_argument(
+        "--allocation", required=True, help="Collection allocation ledger YAML/JSON"
+    )
     ingest_verify_parser.add_argument(
         "--report-out",
         required=True,
@@ -2435,6 +2929,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
 
     args = parser.parse_args(argv)
+
+    _PROJECT_ROOT_OVERRIDE = (
+        Path(args.wiki_dir).expanduser().resolve() if args.wiki_dir else None
+    )
+    if args.wiki_dir and "agent_bridge" in sys.modules:
+        sys.modules["agent_bridge"].PROJECT_ROOT = _PROJECT_ROOT_OVERRIDE
+    if args.verbose:
+        set_agent_log_level(logging.DEBUG)
 
     log_args = vars(args).copy()
     if args.command == "zotero-relocate":
@@ -2476,9 +2978,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     # If the config cannot be loaded here, the command's own setup reports it.
     if args.command not in ("capabilities", "init"):
         try:
-            from src.llm_wiki.capabilities import CapabilityError, check_enabled
-            from src.llm_wiki.config import load_config
-            from src.llm_wiki.core import find_wiki_root
+            from .capabilities import CapabilityError, check_enabled
+            from .config import load_config
+            from .core import find_wiki_root
 
             gate_root = find_wiki_root(_get_project_root())
             if gate_root:
@@ -2486,7 +2988,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         except CapabilityError as exc:
             print(_md_info(f"Error: {exc}"))
             return 1
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - fail-open diagnostic gate
             LOG.debug("capability gate skipped: %s", exc)
 
     return handler(args)

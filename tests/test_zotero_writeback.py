@@ -7,13 +7,13 @@ from dataclasses import replace
 
 import pytest
 
-from src.llm_wiki.zotero.local import (
+from llm_wiki.zotero.local import (
     LocalItem,
     LocalMutationResult,
     RelationAudit,
     RelationWriteResult,
 )
-from src.llm_wiki.zotero.writeback import (
+from llm_wiki.zotero.writeback import (
     WritePlanError,
     apply_write_plan,
     audit_write_plan,
@@ -97,7 +97,11 @@ class FakeWriter:
         if remove_tags:
             self.remove_calls.append((key, tuple(remove_tags)))
         item = self.items[key]
-        tags = [tag for tag in (item.data.get("tags") or []) if tag["tag"] not in set(remove_tags)]
+        tags = [
+            tag
+            for tag in (item.data.get("tags") or [])
+            if tag["tag"] not in set(remove_tags)
+        ]
         names = {tag["tag"] for tag in tags}
         for tag in add_tags:
             if tag not in names:
@@ -115,7 +119,6 @@ class FakeWriter:
         self.relation_calls.append((source, target))
         self.reciprocal = True
         return RelationWriteResult(source, target, (source, target))
-
 
 
 def test_load_write_plan_accepts_restricted_authorized_schema(tmp_path):
@@ -138,7 +141,9 @@ def test_load_write_plan_accepts_restricted_authorized_schema(tmp_path):
 )
 def test_load_write_plan_rejects_secrets_and_review_only_mode(tmp_path, extra, message):
     path = tmp_path / "plan.yaml"
-    write_plan(path, extra=extra, mode="review-only" if not extra else "authorized-write")
+    write_plan(
+        path, extra=extra, mode="review-only" if not extra else "authorized-write"
+    )
 
     with pytest.raises(WritePlanError, match=message):
         load_write_plan(path)
@@ -234,8 +239,14 @@ def test_apply_refuses_item_outside_expected_collection(tmp_path):
     assert all(call[0] != "ITEM0001" for call in writer.write_calls)
 
 
-def write_removal_plan(path, *, removals, policy_line="  allow_managed_removals: true\n",
-                       desired="[]", extra_item_fields=""):
+def write_removal_plan(
+    path,
+    *,
+    removals,
+    policy_line="  allow_managed_removals: true\n",
+    desired="[]",
+    extra_item_fields="",
+):
     removal_lines = "\n".join(f"      - {tag}" for tag in removals)
     path.write_text(
         f"""version: 1
@@ -362,7 +373,10 @@ class TestScopedRemovals:
 
         by_key = {entry.item_key: entry for entry in report.items}
         assert by_key["ITEM0002"].status == "failed"
-        assert any("did not persist" in e or "still present" in e for e in by_key["ITEM0002"].errors)
+        assert any(
+            "did not persist" in e or "still present" in e
+            for e in by_key["ITEM0002"].errors
+        )
 
     def test_removal_manifest_omits_credentials(self, tmp_path):
         path = tmp_path / "plan.yaml"

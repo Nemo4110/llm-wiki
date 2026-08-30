@@ -15,11 +15,11 @@
 from __future__ import annotations
 
 import re
-from typing import Mapping
+from collections.abc import Mapping
 
 from .sanitizer import sanitize_title_stem
 
-_TOKEN = re.compile(r"%(.)", re.S)
+_TOKEN = re.compile(r"%(.)", re.DOTALL)
 _DASH_RUNS = re.compile(r"-{2,}")
 
 # 简单通配符 → context 键(%t 空值回退 "untitled",其余空值渲染为空)
@@ -42,12 +42,14 @@ def render_alias_template(pattern: str, context: Mapping[str, str]) -> str:
     out: list[str] = []
     pos = 0
     for match in _TOKEN.finditer(pattern):
-        out.append(pattern[pos:match.start()])
+        out.append(pattern[pos : match.start()])
         code = match.group(1)
         if code == "%":
             out.append("%")
         elif code == "c":
-            out.append(_render_collection_path(str(context.get("collection_path") or "")))
+            out.append(
+                _render_collection_path(str(context.get("collection_path") or ""))
+            )
         elif code in _SIMPLE_WILDCARDS:
             value = str(context.get(_SIMPLE_WILDCARDS[code]) or "").strip()
             if value:

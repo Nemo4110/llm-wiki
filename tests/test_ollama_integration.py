@@ -23,7 +23,6 @@ from llm_wiki.core import WikiManager
 from llm_wiki.embeddings import OllamaEmbeddingProvider
 from llm_wiki.retrieval import EmbeddingIndex
 
-
 OLLAMA_BASE_URL = "http://localhost:11434"
 OLLAMA_MODEL = "nomic-embed-text"
 
@@ -33,7 +32,7 @@ def _ollama_available():
     try:
         resp = httpx.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=5.0)
         return resp.status_code == 200
-    except Exception:
+    except httpx.HTTPError:
         return False
 
 
@@ -81,7 +80,9 @@ def temp_wiki_dir():
     shutil.rmtree(tmp_dir)
 
 
-@pytest.mark.skipif(ollama_not_available, reason="Ollama not available at localhost:11434")
+@pytest.mark.skipif(
+    ollama_not_available, reason="Ollama not available at localhost:11434"
+)
 class TestOllamaEmbeddingIndex:
     def test_ollama_build_index(self, temp_wiki_dir):
         tmp_dir, wiki = temp_wiki_dir
@@ -97,7 +98,7 @@ class TestOllamaEmbeddingIndex:
         assert cache_path.exists()
 
     def test_ollama_semantic_search(self, temp_wiki_dir):
-        tmp_dir, wiki = temp_wiki_dir
+        _tmp_dir, wiki = temp_wiki_dir
         provider = OllamaEmbeddingProvider(model=OLLAMA_MODEL, base_url=OLLAMA_BASE_URL)
 
         index = EmbeddingIndex(wiki, provider)
@@ -116,7 +117,7 @@ class TestOllamaEmbeddingIndex:
         assert "Docker" in titles2, f"Expected Docker in results, got {titles2}"
 
     def test_ollama_incremental_update(self, temp_wiki_dir):
-        tmp_dir, wiki = temp_wiki_dir
+        _tmp_dir, wiki = temp_wiki_dir
         provider = OllamaEmbeddingProvider(model=OLLAMA_MODEL, base_url=OLLAMA_BASE_URL)
 
         index = EmbeddingIndex(wiki, provider)

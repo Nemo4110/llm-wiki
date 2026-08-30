@@ -11,10 +11,11 @@ Wiki frontmatter 的 ``sources_meta[].zotero_item_key`` 可能因 Zotero 条目�
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import Any
 
 from ..core import WikiManager
 from .plan import (
@@ -43,17 +44,17 @@ class HealPlan:
 
     collection_name: str
     collection_key: str
-    stale: Tuple[HealCandidate, ...]
+    stale: tuple[HealCandidate, ...]
 
 
-def _unique_match(matches: List[SnapshotItem]) -> Optional[SnapshotItem]:
+def _unique_match(matches: list[SnapshotItem]) -> SnapshotItem | None:
     return matches[0] if len(matches) == 1 else None
 
 
 def match_stale_binding(
     binding: ZoteroBinding,
     items: Sequence[SnapshotItem],
-) -> Tuple[str, str, str]:
+) -> tuple[str, str, str]:
     """按 DOI → citation_key → 标准化标题二次寻址;唯一命中才采纳。"""
     doi = normalize_doi(binding.doi)
     if doi:
@@ -94,7 +95,7 @@ def plan_heal(
 ) -> HealPlan:
     """找出不在快照中的绑定(悬空 key),并逐条二次寻址。"""
     live_keys = {item.item_key for item in snapshot_items}
-    stale: List[HealCandidate] = []
+    stale: list[HealCandidate] = []
     for binding in bindings:
         if binding.item_key in live_keys:
             continue
@@ -116,7 +117,7 @@ def plan_heal(
     )
 
 
-def plan_to_heal_manifest(plan: HealPlan) -> Dict[str, Any]:
+def plan_to_heal_manifest(plan: HealPlan) -> dict[str, Any]:
     """序列化为 review-only 清单(供 temp/ 落盘与人工审查)。"""
     return {
         "version": 1,
@@ -136,10 +137,10 @@ def plan_to_heal_manifest(plan: HealPlan) -> Dict[str, Any]:
     }
 
 
-def apply_heal_plan(wiki: WikiManager, plan: HealPlan) -> List[Path]:
+def apply_heal_plan(wiki: WikiManager, plan: HealPlan) -> list[Path]:
     """把命中的重绑定写回受影响页面的 frontmatter(原地,文件名不变)。"""
-    changed: List[Path] = []
-    details: List[str] = []
+    changed: list[Path] = []
+    details: list[str] = []
     for candidate in plan.stale:
         if not candidate.new_item_key:
             continue
@@ -152,14 +153,17 @@ def apply_heal_plan(wiki: WikiManager, plan: HealPlan) -> List[Path]:
         ]
         touched = False
         for entry in sources_meta:
-            if isinstance(entry, dict) and str(entry.get("zotero_item_key") or "") == candidate.item_key:
+            if (
+                isinstance(entry, dict)
+                and str(entry.get("zotero_item_key") or "") == candidate.item_key
+            ):
                 entry["zotero_item_key"] = candidate.new_item_key
                 touched = True
         if not touched:
             continue
         frontmatter = dict(page.frontmatter)
         frontmatter["sources_meta"] = sources_meta
-        frontmatter["updated"] = datetime.now().strftime("%Y-%m-%d")
+        frontmatter["updated"] = datetime.now(UTC).strftime("%Y-%m-%d")
         wiki.create_page(page.title, page.content, frontmatter, path=page.path)
         changed.append(page.path)
         details.append(

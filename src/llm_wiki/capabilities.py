@@ -11,7 +11,7 @@
 
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 from .agent_logger import get_logger
 
@@ -27,63 +27,82 @@ class Capability:
     """单条命令的能力声明。write_scope 为仓库根相对的前缀列表。"""
 
     command: str
-    write_scope: Tuple[str, ...] = ()
+    write_scope: tuple[str, ...] = ()
     network: bool = False
     dry_run: bool = False
     enabled: bool = True
     description: str = ""
 
 
-CAPABILITIES: Dict[str, Capability] = {
+CAPABILITIES: dict[str, Capability] = {
     "check": Capability("check", description="Environment self-check"),
     "status": Capability("status", description="Wiki overview"),
     "lint": Capability("lint", description="Wiki health check"),
     "link": Capability("link", description="Relation discovery"),
     "query": Capability("query", description="Semantic query"),
     "relink": Capability(
-        "relink", write_scope=("wiki/",), dry_run=True,
+        "relink",
+        write_scope=("wiki/",),
+        dry_run=True,
         description="Batch relation discovery and page backlink updates",
     ),
     "merge": Capability(
-        "merge", write_scope=("wiki/",), dry_run=True,
+        "merge",
+        write_scope=("wiki/",),
+        dry_run=True,
         description="Safe single-page content merge",
     ),
     "index": Capability(
-        "index", write_scope=("wiki/.cache/",),
+        "index",
+        write_scope=("wiki/.cache/",),
         description="Build/update embedding index cache",
     ),
     "hot": Capability("hot", description="Bounded recent-activity context"),
     "apply-bundle": Capability(
-        "apply-bundle", write_scope=("wiki/", "log.md"), dry_run=True,
+        "apply-bundle",
+        write_scope=("wiki/", "log.md"),
+        dry_run=True,
         description="Atomic multi-file transaction bundle",
     ),
     "zotero-plan": Capability(
-        "zotero-plan", write_scope=("temp/",),
+        "zotero-plan",
+        write_scope=("temp/",),
         description="Read-only Zotero sync planner; manifest only under temp/",
     ),
     "zotero-local-auth": Capability(
-        "zotero-local-auth", write_scope=("var/",), network=True,
+        "zotero-local-auth",
+        write_scope=("var/",),
+        network=True,
         description="Authorize direct Zotero 10 local API writes",
     ),
     "zotero-refresh": Capability(
-        "zotero-refresh", write_scope=("var/", "temp/"), network=True,
+        "zotero-refresh",
+        write_scope=("var/", "temp/"),
+        network=True,
         description="Zotero metadata enrichment via MCP and external providers",
     ),
     "zotero-writeback": Capability(
-        "zotero-writeback", write_scope=("temp/",), network=True,
+        "zotero-writeback",
+        write_scope=("temp/",),
+        network=True,
         description="Restricted local Zotero managed-tag and reviewed-relation write-back",
     ),
     "zotero-relocate": Capability(
-        "zotero-relocate", write_scope=("temp/", "sources/zotero/"),
-        network=True, dry_run=True,
+        "zotero-relocate",
+        write_scope=("temp/", "sources/zotero/"),
+        network=True,
+        dry_run=True,
         description="Controlled Zotero attachment relocation with verified local metadata updates",
     ),
     "zotero-ingest-verify": Capability(
-        "zotero-ingest-verify", write_scope=("temp/",),
+        "zotero-ingest-verify",
+        write_scope=("temp/",),
         description="Collection ingest allocation, provenance, and page verification",
     ),
     "zotero-heal": Capability(
-        "zotero-heal", write_scope=("temp/", "wiki/", "log.md"), dry_run=True,
+        "zotero-heal",
+        write_scope=("temp/", "wiki/", "log.md"),
+        dry_run=True,
         description="Stale Zotero binding detection and in-place frontmatter rebinding",
     ),
     "zotero-alias": Capability(
@@ -101,7 +120,7 @@ CAPABILITIES: Dict[str, Capability] = {
 }
 
 
-def get_capability(command: str, config: Optional[Dict[str, Any]] = None) -> Capability:
+def get_capability(command: str, config: dict[str, Any] | None = None) -> Capability:
     """解析命令的有效契约:默认声明 + config 收紧覆盖。"""
     overrides = (config or {}).get("capabilities", {})
     for name in overrides:
@@ -132,18 +151,16 @@ def get_capability(command: str, config: Optional[Dict[str, Any]] = None) -> Cap
     return cap
 
 
-def check_enabled(command: str, config: Optional[Dict[str, Any]] = None) -> None:
+def check_enabled(command: str, config: dict[str, Any] | None = None) -> None:
     cap = get_capability(command, config)
     if not cap.enabled:
-        raise CapabilityError(
-            f"Command `{command}` is disabled by capabilities config"
-        )
+        raise CapabilityError(f"Command `{command}` is disabled by capabilities config")
 
 
 def check_write_paths(
     command: str,
     paths,
-    config: Optional[Dict[str, Any]] = None,
+    config: dict[str, Any] | None = None,
 ) -> None:
     """要求所有写入路径都落在命令的 write_scope 内,否则 fail closed。"""
     cap = get_capability(command, config)
@@ -156,10 +173,12 @@ def check_write_paths(
                 f"{cap.write_scope or '(read-only command)'}"
             )
     if paths:
-        LOG.debug("write paths within scope for %s: %s", command, [str(p) for p in paths])
+        LOG.debug(
+            "write paths within scope for %s: %s", command, [str(p) for p in paths]
+        )
 
 
-def _covered_by(path: str, prefixes: Tuple[str, ...]) -> bool:
+def _covered_by(path: str, prefixes: tuple[str, ...]) -> bool:
     """path 是否等于某个前缀文件,或位于某个前缀目录下。"""
     for prefix in prefixes:
         prefix = prefix.rstrip("/")

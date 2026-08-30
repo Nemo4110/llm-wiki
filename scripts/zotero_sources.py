@@ -22,7 +22,6 @@ from typing import NamedTuple
 
 import yaml
 
-
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_METADATA = Path("sources") / "zotero" / "metadata.yaml"
 ALLOWED_ALIAS_ROOT = Path("sources") / "zotero"
@@ -80,7 +79,9 @@ def _resolve_alias(project_root: Path, source_alias: Path) -> Path:
 
     normalized = Path(os.path.normpath(source_alias.as_posix()))
     allowed = ALLOWED_ALIAS_ROOT.as_posix()
-    if normalized.as_posix() == allowed or not normalized.as_posix().startswith(f"{allowed}/"):
+    if normalized.as_posix() == allowed or not normalized.as_posix().startswith(
+        f"{allowed}/"
+    ):
         raise ValueError("source_alias must stay under sources/zotero")
 
     target = (project_root / normalized).absolute()
@@ -134,7 +135,9 @@ def materialize(
             f"on_symlink_error must be one of {FALLBACK_MODES}, got {on_symlink_error!r}"
         )
     project_root = project_root.resolve()
-    metadata_path = metadata_path if metadata_path.is_absolute() else project_root / metadata_path
+    metadata_path = (
+        metadata_path if metadata_path.is_absolute() else project_root / metadata_path
+    )
     created = 0
     skipped = 0
     degraded: list[str] = []
@@ -170,7 +173,9 @@ def materialize(
                 link_path.symlink_to(source_path)
             except OSError as exc:
                 try:
-                    degraded.append(_apply_fallback(link_path, source_path, on_symlink_error, exc))
+                    degraded.append(
+                        _apply_fallback(link_path, source_path, on_symlink_error, exc)
+                    )
                 except OSError as fallback_exc:
                     errors.append(
                         f"symlink failed ({exc}); {on_symlink_error} fallback failed "
@@ -179,7 +184,9 @@ def materialize(
                 continue
         created += 1
 
-    return MaterializeResult(created=created, skipped=skipped, degraded=degraded, errors=errors)
+    return MaterializeResult(
+        created=created, skipped=skipped, degraded=degraded, errors=errors
+    )
 
 
 def cmd_materialize(args: argparse.Namespace) -> int:
@@ -217,7 +224,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=str(PROJECT_ROOT),
         help="Project root used to resolve source_alias paths",
     )
-    parser.add_argument("--dry-run", action="store_true", help="Report actions without creating links")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Report actions without creating links"
+    )
     parser.add_argument(
         "--force",
         action="store_true",

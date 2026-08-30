@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.llm_wiki.zotero.ingest_verify import (
+from llm_wiki.zotero.ingest_verify import (
     ingest_report_to_manifest,
     verify_collection_ingest,
 )
@@ -129,7 +129,9 @@ def test_allocation_ledger_rejects_unknown_fields(tmp_path):
     write_snapshot(snapshot, keys=("ITEM0001",))
     write_ledger(
         ledger,
-        ["  - item_index: 1\n    item_key: ITEM0001\n    status: omitted\n    omission_reason: duplicate\n    metadata: forbidden"],
+        [
+            "  - item_index: 1\n    item_key: ITEM0001\n    status: omitted\n    omission_reason: duplicate\n    metadata: forbidden"
+        ],
     )
 
     report = verify_collection_ingest(wiki, snapshot, ledger)
@@ -159,7 +161,9 @@ def test_non_omitted_page_requires_matching_sources_meta_binding(tmp_path):
     write_snapshot(snapshot, keys=("ITEM0001",))
     write_ledger(
         ledger,
-        ["  - item_index: 1\n    item_key: ITEM0001\n    status: ingested\n    pages: [Wrong-Binding]"],
+        [
+            "  - item_index: 1\n    item_key: ITEM0001\n    status: ingested\n    pages: [Wrong-Binding]"
+        ],
     )
     write_page(wiki, "Wrong-Binding", "OTHER001")
 
@@ -175,7 +179,9 @@ def test_page_hygiene_detects_private_paths_control_chars_and_trailing_space(tmp
     write_snapshot(snapshot, keys=("ITEM0001",))
     write_ledger(
         ledger,
-        ["  - item_index: 1\n    item_key: ITEM0001\n    status: ingested\n    pages: [Unsafe-Page]"],
+        [
+            "  - item_index: 1\n    item_key: ITEM0001\n    status: ingested\n    pages: [Unsafe-Page]"
+        ],
     )
     write_page(
         wiki,

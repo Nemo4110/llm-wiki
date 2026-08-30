@@ -2,7 +2,7 @@
 
 import pytest
 
-from src.llm_wiki.sanitizer import sanitize_title_stem
+from llm_wiki.sanitizer import sanitize_title_stem
 
 
 class TestIllegalCharacters:
@@ -11,7 +11,7 @@ class TestIllegalCharacters:
         [
             ("LoRA: Low-Rank Adaptation", "LoRA-Low-Rank-Adaptation"),
             ("A/B testing", "A-B-testing"),
-            ('what? why! ok.', "what-why!-ok"),
+            ("what? why! ok.", "what-why!-ok"),
             ('quote "inside" star* pipe| lt< gt>', "quote-inside-star-pipe-lt-gt"),
             ("back\\slash", "backslash"),
         ],
@@ -40,7 +40,9 @@ class TestDiacritics:
 
 
 class TestReservedNames:
-    @pytest.mark.parametrize("name", ["CON", "con", "PRN", "AUX", "NUL", "COM1", "com7", "LPT3"])
+    @pytest.mark.parametrize(
+        "name", ["CON", "con", "PRN", "AUX", "NUL", "COM1", "com7", "LPT3"]
+    )
     def test_windows_reserved_names_escaped(self, name):
         result = sanitize_title_stem(name)
         assert result != name

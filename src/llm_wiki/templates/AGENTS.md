@@ -533,8 +533,9 @@ doc.close()
 
 # Extract identifiers
 import re
-doi = re.search(r'10\.\d{4,}/[^\s]+', text)
-arXiv = re.search(r'arXiv:\d{4}\.\d{4,}', text, re.I)
+
+doi = re.search(r"10\.\d{4,}/[^\s]+", text)
+arXiv = re.search(r"arXiv:\d{4}\.\d{4,}", text, re.I)
 # Title is usually the largest text block on page 1
 ```
 

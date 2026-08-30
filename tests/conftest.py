@@ -8,7 +8,7 @@ Supports both full-suite runs (`pytest tests/`) and per-module runs
 import shutil
 import sys
 import tempfile
-from datetime import datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -26,12 +26,15 @@ if str(PROJECT_ROOT / "src") not in sys.path:
 @pytest.fixture
 def WikiManager():
     from llm_wiki.core import WikiManager as WM
+
     return WM
 
 
-def _make_page_content(title, body, tags=None, status="active", created=None, updated=None):
-    today = (created or datetime.now()).strftime("%Y-%m-%d")
-    up = (updated or datetime.now()).strftime("%Y-%m-%d")
+def _make_page_content(
+    title, body, tags=None, status="active", created=None, updated=None
+):
+    today = (created or datetime.now(UTC)).strftime("%Y-%m-%d")
+    up = (updated or datetime.now(UTC)).strftime("%Y-%m-%d")
     tags_yaml = "\n".join(f'  - "{t}"' for t in (tags or []))
     return f"""---
 created: "{today}"
@@ -76,8 +79,16 @@ def temp_wiki_root():
 
     # Sample pages — strong cross-links so relation discovery finds matches
     pages = [
-        ("Transformer", "Self-attention mechanism for NLP. Related to [[LoRA]] fine-tuning method.", ["AI/ML", "NLP"]),
-        ("LoRA", "Low-rank adaptation for fine-tuning. Uses [[Transformer]] architecture.", ["AI/ML", "NLP"]),
+        (
+            "Transformer",
+            "Self-attention mechanism for NLP. Related to [[LoRA]] fine-tuning method.",
+            ["AI/ML", "NLP"],
+        ),
+        (
+            "LoRA",
+            "Low-rank adaptation for fine-tuning. Uses [[Transformer]] architecture.",
+            ["AI/ML", "NLP"],
+        ),
         ("Docker", "Containerization technology.", ["DevOps", "Container"]),
     ]
     for title, body, tags in pages:

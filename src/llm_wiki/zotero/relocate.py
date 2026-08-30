@@ -43,8 +43,7 @@ class RelocationError(RuntimeError):
 
 
 class AttachmentAdapter(Protocol):
-    async def get_item(self, item_key: str) -> LocalItem:
-        ...
+    async def get_item(self, item_key: str) -> LocalItem: ...
 
     async def repoint_attachment(
         self,
@@ -52,8 +51,7 @@ class AttachmentAdapter(Protocol):
         target_path: str,
         *,
         expected_parent_item: str | None = None,
-    ) -> AttachmentRepointResult:
-        ...
+    ) -> AttachmentRepointResult: ...
 
 
 @dataclass(frozen=True)
@@ -114,7 +112,9 @@ class RelocationSettings:
         )
         raw_allowed = section.get("allowed_source_roots") or []
         if not isinstance(raw_allowed, (list, tuple)):
-            raise RelocationError("zotero_relocation.allowed_source_roots must be a list")
+            raise RelocationError(
+                "zotero_relocation.allowed_source_roots must be a list"
+            )
         allowed = tuple(
             _require_absolute_root(value, "zotero_relocation.allowed_source_roots")
             for value in raw_allowed
@@ -136,7 +136,11 @@ class RelocationSettings:
             raise RelocationError(
                 f"on_symlink_error must be one of {sorted(_ALLOWED_SYMLINK_MODES)}"
             )
-        pattern = str(pattern_override if pattern_override is not None else section.get("path_template") or "").strip()
+        pattern = str(
+            pattern_override
+            if pattern_override is not None
+            else section.get("path_template") or ""
+        ).strip()
         if not pattern:
             raise RelocationError("zotero_relocation.path_template must not be empty")
 
@@ -148,7 +152,8 @@ class RelocationSettings:
             max_component_bytes=max_bytes,
             collision_policy=collision,
             max_collision_attempts=max_attempts,
-            delete_source=bool(section.get("delete_source", False)) or delete_source_override,
+            delete_source=bool(section.get("delete_source", False))
+            or delete_source_override,
             allowed_source_roots=allowed,
             update_metadata=bool(section.get("update_metadata", True)),
             materialize_aliases=bool(section.get("materialize_aliases", True)),
@@ -196,19 +201,37 @@ class MetadataStore:
     def _index_locations(self) -> None:
         for collection_index, collection in enumerate(self.data.get("collections", [])):
             if not isinstance(collection, dict):
-                raise RelocationError("metadata.yaml collection entries must be mappings")
+                raise RelocationError(
+                    "metadata.yaml collection entries must be mappings"
+                )
             for item_index, item in enumerate(collection.get("items", [])):
                 if not isinstance(item, dict):
                     raise RelocationError("metadata.yaml item entries must be mappings")
-                for attachment_index, attachment in enumerate(item.get("attachments", [])):
+                for attachment_index, attachment in enumerate(
+                    item.get("attachments", [])
+                ):
                     if not isinstance(attachment, dict):
-                        raise RelocationError("metadata.yaml attachment entries must be mappings")
-                    key = str(attachment.get("zotero_attachment_key") or "").strip().upper()
+                        raise RelocationError(
+                            "metadata.yaml attachment entries must be mappings"
+                        )
+                    key = (
+                        str(attachment.get("zotero_attachment_key") or "")
+                        .strip()
+                        .upper()
+                    )
                     if not key:
-                        raise RelocationError("metadata.yaml attachment is missing zotero_attachment_key")
+                        raise RelocationError(
+                            "metadata.yaml attachment is missing zotero_attachment_key"
+                        )
                     if key in self._locations:
-                        raise RelocationError(f"duplicate attachment key in metadata.yaml: {key}")
-                    self._locations[key] = (collection_index, item_index, attachment_index)
+                        raise RelocationError(
+                            f"duplicate attachment key in metadata.yaml: {key}"
+                        )
+                    self._locations[key] = (
+                        collection_index,
+                        item_index,
+                        attachment_index,
+                    )
 
     def bindings(
         self,
@@ -225,8 +248,14 @@ class MetadataStore:
                 if item_keys and item_key not in item_keys:
                     continue
                 item_title = str(item.get("title") or "")
-                for attachment_index, attachment in enumerate(item.get("attachments", [])):
-                    attachment_key = str(attachment.get("zotero_attachment_key") or "").strip().upper()
+                for attachment_index, attachment in enumerate(
+                    item.get("attachments", [])
+                ):
+                    attachment_key = (
+                        str(attachment.get("zotero_attachment_key") or "")
+                        .strip()
+                        .upper()
+                    )
                     if attachment_keys and attachment_key not in attachment_keys:
                         continue
                     selected.append(
@@ -252,7 +281,9 @@ class MetadataStore:
         if location is None:
             raise RelocationError(f"attachment key not found in metadata.yaml: {key}")
         collection_index, item_index, attachment_index = location
-        attachment = self.data["collections"][collection_index]["items"][item_index]["attachments"][attachment_index]
+        attachment = self.data["collections"][collection_index]["items"][item_index][
+            "attachments"
+        ][attachment_index]
         attachment["local_path"] = str(target)
 
     def references_path(self, source: Path, *, excluding: str) -> bool:
@@ -261,13 +292,18 @@ class MetadataStore:
         for binding in self.bindings():
             if binding.attachment_key == excluded:
                 continue
-            if binding.local_path and _absolute_candidate(binding.local_path) == candidate:
+            if (
+                binding.local_path
+                and _absolute_candidate(binding.local_path) == candidate
+            ):
                 return True
         return False
 
     def write_atomic(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        fd, raw_tmp = tempfile.mkstemp(prefix=f".{self.path.name}.", suffix=".tmp", dir=self.path.parent)
+        fd, raw_tmp = tempfile.mkstemp(
+            prefix=f".{self.path.name}.", suffix=".tmp", dir=self.path.parent
+        )
         tmp = Path(raw_tmp)
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
@@ -278,7 +314,9 @@ class MetadataStore:
                 os.chmod(tmp, self.path.stat().st_mode & 0o777)
             os.replace(tmp, self.path)
         except (OSError, yaml.YAMLError) as exc:
-            raise RelocationError(f"cannot atomically update Zotero metadata: {self.path}") from exc
+            raise RelocationError(
+                f"cannot atomically update Zotero metadata: {self.path}"
+            ) from exc
         finally:
             if tmp.exists():
                 tmp.unlink()
@@ -322,7 +360,13 @@ class RelocationReport:
 
     @property
     def failed_count(self) -> int:
-        return sum(1 for result in self.results if result.get("status", "").startswith(("error", "blocked", "missing", "collision")))
+        return sum(
+            1
+            for result in self.results
+            if result.get("status", "").startswith(
+                ("error", "blocked", "missing", "collision")
+            )
+        )
 
     def manifest(self) -> dict[str, Any]:
         return {
@@ -368,7 +412,9 @@ def _validate_metadata_path(path: Path, project_root: Path) -> Path:
     resolved = resolved.resolve()
     allowed = (root / "sources" / "zotero").resolve()
     if resolved != allowed / "metadata.yaml" or not resolved.exists():
-        raise RelocationError("metadata path must be the existing project sources/zotero/metadata.yaml")
+        raise RelocationError(
+            "metadata path must be the existing project sources/zotero/metadata.yaml"
+        )
     return resolved
 
 
@@ -386,8 +432,12 @@ def _validate_alias_path(project_root: Path, alias: Path) -> Path:
 
 
 def _check_target_path(root: Path, relative: Path) -> Path:
-    if relative.is_absolute() or any(part in {"", ".", ".."} for part in relative.parts):
-        raise RelocationError("generated attachment target must be a safe relative path")
+    if relative.is_absolute() or any(
+        part in {"", ".", ".."} for part in relative.parts
+    ):
+        raise RelocationError(
+            "generated attachment target must be a safe relative path"
+        )
     target = root / relative
     resolved_root = root.resolve()
     resolved_target = target.resolve(strict=False)
@@ -397,7 +447,9 @@ def _check_target_path(root: Path, relative: Path) -> Path:
     for part in relative.parts[:-1]:
         current = current / part
         if current.exists() and current.is_symlink():
-            raise RelocationError("generated attachment target crosses an existing symlink")
+            raise RelocationError(
+                "generated attachment target crosses an existing symlink"
+            )
     if target.exists() and target.is_symlink():
         raise RelocationError("refusing to use a symlink as an attachment target")
     return target
@@ -420,7 +472,10 @@ def _first_author(data: Mapping[str, Any]) -> str:
     if not isinstance(creators, list):
         return ""
     for creator in creators:
-        if not isinstance(creator, Mapping) or creator.get("creatorType", "author") != "author":
+        if (
+            not isinstance(creator, Mapping)
+            or creator.get("creatorType", "author") != "author"
+        ):
             continue
         if creator.get("name"):
             return str(creator["name"])
@@ -447,12 +502,16 @@ def _citekey(data: Mapping[str, Any]) -> str:
     return ""
 
 
-def _resolve_source(binding: MetadataBinding, item: LocalItem, settings: RelocationSettings) -> tuple[Path, str]:
+def _resolve_source(
+    binding: MetadataBinding, item: LocalItem, settings: RelocationSettings
+) -> tuple[Path, str]:
     data = item.data
     link_mode = str(data.get("linkMode") or "").strip()
     raw_path = str(data.get("path") or "").strip()
     if link_mode not in _SUPPORTED_LINK_MODES:
-        raise RelocationError(f"unsupported Zotero attachment linkMode: {link_mode or 'missing'}")
+        raise RelocationError(
+            f"unsupported Zotero attachment linkMode: {link_mode or 'missing'}"
+        )
     if not raw_path:
         if link_mode == "imported_file":
             # The Zotero 10 local API omits `path` for imported files; the
@@ -470,14 +529,16 @@ def _resolve_source(binding: MetadataBinding, item: LocalItem, settings: Relocat
         raise RelocationError("Zotero attachment returned no path")
     if link_mode == "linked_file":
         if raw_path.startswith(ATTACHMENTS_PREFIX):
-            relative = raw_path[len(ATTACHMENTS_PREFIX):].strip()
+            relative = raw_path[len(ATTACHMENTS_PREFIX) :].strip()
             rel_path = PurePosixPath(relative)
             if (
                 not relative
                 or rel_path.is_absolute()
                 or any(part in {"", ".", ".."} for part in rel_path.parts)
             ):
-                raise RelocationError("base-directory-relative attachment path is unsafe")
+                raise RelocationError(
+                    "base-directory-relative attachment path is unsafe"
+                )
             return settings.root / Path(*rel_path.parts), "zotero-base-relative-path"
         path = Path(raw_path).expanduser()
         if not path.is_absolute():
@@ -493,10 +554,15 @@ def _resolve_source(binding: MetadataBinding, item: LocalItem, settings: Relocat
         filename = raw_path.split(":", 1)[1]
         if not filename or Path(filename).name != filename:
             raise RelocationError("imported-file storage path has an unsafe filename")
-        return settings.storage_root / binding.attachment_key / filename, "zotero-storage-path"
+        return (
+            settings.storage_root / binding.attachment_key / filename,
+            "zotero-storage-path",
+        )
     path = Path(raw_path).expanduser()
     if not path.is_absolute():
-        raise RelocationError("imported-file attachment path must be storage: or absolute")
+        raise RelocationError(
+            "imported-file attachment path must be storage: or absolute"
+        )
     return path, "zotero-imported-absolute-path"
 
 
@@ -525,14 +591,20 @@ def _target_for(
         if component
     ]
     if not components:
-        components = [sanitize_title_stem(context["title"], settings.max_component_bytes)]
+        components = [
+            sanitize_title_stem(context["title"], settings.max_component_bytes)
+        ]
     name = components[-1]
     suffix = source.suffix or Path(binding.filename).suffix
     if suffix and not name.lower().endswith(suffix.lower()):
         name = f"{name}{suffix}"
-    components[-1] = sanitize_title_stem(
-        Path(name).stem, settings.max_component_bytes - len(Path(name).suffix.encode("utf-8"))
-    ) + Path(name).suffix
+    components[-1] = (
+        sanitize_title_stem(
+            Path(name).stem,
+            settings.max_component_bytes - len(Path(name).suffix.encode("utf-8")),
+        )
+        + Path(name).suffix
+    )
     relative = Path(*components)
     return _check_target_path(settings.root, relative)
 
@@ -597,7 +669,7 @@ async def _template_context_data(
         return attachment_item.data
     try:
         parent = await adapter.get_item(binding.item_key)
-    except Exception as exc:
+    except (KeyError, LocalWriteError, OSError, TypeError, ValueError) as exc:
         LOG.warning(
             "parent item %s unavailable for naming %s: %s",
             binding.item_key,
@@ -627,13 +699,19 @@ async def build_plans(
                 raise RelocationError("metadata binding is missing parent item key")
             item = await adapter.get_item(binding.attachment_key)
             if str(item.data.get("itemType") or "") != "attachment":
-                raise RelocationError("metadata attachment key does not identify an attachment")
+                raise RelocationError(
+                    "metadata attachment key does not identify an attachment"
+                )
             parent_item = str(item.data.get("parentItem") or "").strip().upper()
             if binding.item_key and parent_item and parent_item != binding.item_key:
-                raise RelocationError("metadata parent item does not match Zotero attachment")
+                raise RelocationError(
+                    "metadata parent item does not match Zotero attachment"
+                )
             source, resolution = _resolve_source(binding, item, settings)
             if not source.exists() or not source.is_file():
-                raise RelocationError(f"local attachment source is missing or not a file: {source}")
+                raise RelocationError(
+                    f"local attachment source is missing or not a file: {source}"
+                )
             fingerprint = _file_fingerprint(source)
             context_data = await _template_context_data(adapter, binding, item)
             candidate = _target_for(binding, item, source, settings, context_data)
@@ -686,7 +764,9 @@ def _copy_verified(source: Path, target: Path, expected: FileFingerprint) -> boo
             return False
         raise RelocationError(f"target appeared or changed during apply: {target}")
     target.parent.mkdir(parents=True, exist_ok=True)
-    fd, raw_tmp = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=target.parent)
+    fd, raw_tmp = tempfile.mkstemp(
+        prefix=f".{target.name}.", suffix=".tmp", dir=target.parent
+    )
     tmp = Path(raw_tmp)
     try:
         with source.open("rb") as input_handle, os.fdopen(fd, "wb") as output_handle:
@@ -724,10 +804,16 @@ def _materialize_alias(
             return "skipped"
         if alias_path.is_symlink() and force:
             alias_path.unlink()
-        elif alias_path.is_file() and not alias_path.is_symlink() and _file_fingerprint(alias_path) == _file_fingerprint(target):
+        elif (
+            alias_path.is_file()
+            and not alias_path.is_symlink()
+            and _file_fingerprint(alias_path) == _file_fingerprint(target)
+        ):
             return "existing-copy"
         else:
-            raise RelocationError(f"refusing to replace existing non-managed alias: {alias_path}")
+            raise RelocationError(
+                f"refusing to replace existing non-managed alias: {alias_path}"
+            )
     alias_path.parent.mkdir(parents=True, exist_ok=True)
     try:
         alias_path.symlink_to(target)
@@ -741,7 +827,9 @@ def _materialize_alias(
             else:
                 os.link(target, alias_path)
         except OSError as fallback_exc:
-            raise RelocationError("alias symlink and configured fallback both failed") from fallback_exc
+            raise RelocationError(
+                "alias symlink and configured fallback both failed"
+            ) from fallback_exc
         return on_error
 
 
@@ -753,13 +841,17 @@ def _cleanup_source(
     if not settings.delete_source:
         return "disabled"
     assert plan.source is not None
-    if plan.target is not None and _absolute_candidate(plan.source) == _absolute_candidate(plan.target):
+    if plan.target is not None and _absolute_candidate(
+        plan.source
+    ) == _absolute_candidate(plan.target):
         return "same-target"
     source = plan.source
     if source.is_symlink() or not source.is_file():
         raise RelocationError("refusing to delete a non-regular attachment source")
     source_resolved = source.resolve()
-    if not any(_is_within(source_resolved, root) for root in settings.allowed_source_roots):
+    if not any(
+        _is_within(source_resolved, root) for root in settings.allowed_source_roots
+    ):
         raise RelocationError("source is outside allowed_source_roots")
     if store.references_path(source, excluding=plan.binding.attachment_key):
         raise RelocationError("source is referenced by another metadata attachment")
@@ -814,17 +906,25 @@ async def relocate(
             result["status"] = plan.status
             report.results.append(result)
             continue
-        assert plan.source is not None and plan.target is not None and plan.source_fingerprint is not None
+        assert (
+            plan.source is not None
+            and plan.target is not None
+            and plan.source_fingerprint is not None
+        )
         created_target = False
         zotero_repointed = False
         try:
             if plan.status == "same_target":
                 result["copy"] = "skipped"
             else:
-                created_target = _copy_verified(plan.source, plan.target, plan.source_fingerprint)
+                created_target = _copy_verified(
+                    plan.source, plan.target, plan.source_fingerprint
+                )
                 result["copy"] = "created" if created_target else "existing-content"
 
-            expected_parent = str(plan.item.data.get("parentItem") or "") if plan.item else None
+            expected_parent = (
+                str(plan.item.data.get("parentItem") or "") if plan.item else None
+            )
             repoint = await adapter.repoint_attachment(
                 plan.binding.attachment_key,
                 plan.stored_path,
@@ -859,7 +959,12 @@ async def relocate(
         except (RelocationError, LocalWriteError, OSError, ValueError) as exc:
             result["status"] = "error-after-zotero" if zotero_repointed else "error"
             result["reason"] = str(exc)
-            if created_target and not zotero_repointed and plan.target.exists() and not plan.target.is_symlink():
+            if (
+                created_target
+                and not zotero_repointed
+                and plan.target.exists()
+                and not plan.target.is_symlink()
+            ):
                 try:
                     plan.target.unlink()
                     result["rollback"] = "target-removed"

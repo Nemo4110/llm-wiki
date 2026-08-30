@@ -43,7 +43,9 @@ collections:
     assert attachments[0].collection_name == "技术沉思录"
     assert attachments[0].item_key == "9HQB5NEF"
     assert attachments[0].attachment_key == "RTMTYN5Q"
-    assert attachments[0].source_alias == Path("sources/zotero/技术沉思录/9HQB5NEF/RTMTYN5Q.pdf")
+    assert attachments[0].source_alias == Path(
+        "sources/zotero/技术沉思录/9HQB5NEF/RTMTYN5Q.pdf"
+    )
 
 
 def test_materialize_creates_symlink_inside_sources_zotero(tmp_path):
@@ -165,13 +167,17 @@ collections:
         encoding="utf-8",
     )
 
-    args = argparse.Namespace(metadata=str(metadata), project_root=str(tmp_path), dry_run=True, force=False)
+    args = argparse.Namespace(
+        metadata=str(metadata), project_root=str(tmp_path), dry_run=True, force=False
+    )
     rc = mod.cmd_materialize(args)
     out = capsys.readouterr().out
 
     assert rc == 0
     assert "DRY-RUN" in out
-    assert not (tmp_path / "sources" / "zotero" / "技术沉思录" / "9HQB5NEF" / "RTMTYN5Q.pdf").exists()
+    assert not (
+        tmp_path / "sources" / "zotero" / "技术沉思录" / "9HQB5NEF" / "RTMTYN5Q.pdf"
+    ).exists()
 
 
 def _write_two_item_metadata(tmp_path, src_a, src_b):
@@ -228,7 +234,7 @@ def test_symlink_oserror_defaults_to_metadata_fallback(tmp_path, monkeypatch):
     result = mod.materialize(metadata, tmp_path)
 
     alias_a = tmp_path / "sources" / "zotero" / "coll" / "ITEMA001" / "a.pdf"
-    assert result.created == 1            # b 仍成功
+    assert result.created == 1  # b 仍成功
     assert not alias_a.exists() and not alias_a.is_symlink()
     assert result.errors == []
     assert len(result.degraded) == 1
@@ -268,6 +274,7 @@ def test_symlink_fallback_hardlink_shares_inode(tmp_path, monkeypatch):
 
     alias_a = tmp_path / "sources" / "zotero" / "coll" / "ITEMA001" / "a.pdf"
     import os
+
     assert os.path.samefile(alias_a, src)
     assert any("hardlink" in entry for entry in result.degraded)
 

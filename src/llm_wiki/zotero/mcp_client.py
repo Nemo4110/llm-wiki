@@ -6,16 +6,20 @@ import asyncio
 import json
 import os
 import re
+from collections.abc import Iterable, Mapping, Sequence
 from contextlib import AsyncExitStack
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Self
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-
-_ITEM_KEY_PATTERN = re.compile("^- " + chr(96) + "([A-Z0-9]{8})" + chr(96), re.MULTILINE)
-_COLLECTION_NAME_PATTERN = re.compile(r"^# Items in Collection: (.+?) \(\d+ items\)$", re.MULTILINE)
+_ITEM_KEY_PATTERN = re.compile(
+    "^- " + chr(96) + "([A-Z0-9]{8})" + chr(96), re.MULTILINE
+)
+_COLLECTION_NAME_PATTERN = re.compile(
+    r"^# Items in Collection: (.+?) \(\d+ items\)$", re.MULTILINE
+)
 
 
 class ZoteroMCPError(RuntimeError):
@@ -35,11 +39,12 @@ class ZoteroMCPClient:
         self.config_path = Path(config_path)
         self.server_name = server_name
         self.quiet = quiet
-        self._stack: Optional[AsyncExitStack] = None
-        self._session: Optional[ClientSession] = None
+        self._stack: AsyncExitStack | None = None
+        self._session: ClientSession | None = None
 
-    async def __aenter__(self) -> "ZoteroMCPClient":
-        raw = json.loads(self.config_path.read_text(encoding="utf-8"))
+    async def __aenter__(self) -> Self:
+        raw_text = await asyncio.to_thread(self.config_path.read_text, encoding="utf-8")
+        raw = json.loads(raw_text)
         servers = raw.get("mcpServers", raw)
         server = servers.get(self.server_name)
         if not isinstance(server, Mapping):
@@ -51,7 +56,9 @@ class ZoteroMCPClient:
             raise ZoteroMCPError(f"MCP server {self.server_name!r} has no command")
 
         env = {**os.environ}
-        env.update({str(key): str(value) for key, value in (server.get("env") or {}).items()})
+        env.update(
+            {str(key): str(value) for key, value in (server.get("env") or {}).items()}
+        )
         params = StdioServerParameters(
             command=command,
             args=[str(value) for value in (server.get("args") or [])],
@@ -62,7 +69,9 @@ class ZoteroMCPClient:
         await self._stack.__aenter__()
         errlog = None
         if self.quiet:
-            errlog = self._stack.enter_context(open(os.devnull, "w", encoding="utf-8"))
+            errlog = self._stack.enter_context(
+                Path(os.devnull).open("w", encoding="utf-8")  # noqa: ASYNC230, SIM115 - managed by AsyncExitStack
+            )
         streams = await self._stack.enter_async_context(
             stdio_client(params, errlog=errlog) if errlog else stdio_client(params)
         )
@@ -90,7 +99,7 @@ class ZoteroMCPClient:
 
     @staticmethod
     def _result_text(payload: Mapping[str, Any]) -> str:
-        parts: List[str] = []
+        parts: list[str] = []
         for content in payload.get("content") or []:
             if isinstance(content, Mapping) and content.get("type") == "text":
                 parts.append(str(content.get("text") or ""))
@@ -101,7 +110,7 @@ class ZoteroMCPClient:
         collection_key: str,
         *,
         limit: int = 500,
-    ) -> Tuple[str, List[str]]:
+    ) -> tuple[str, list[str]]:
         text = str(
             await self._call(
                 "zotero_get_collection_items",
@@ -117,7 +126,7 @@ class ZoteroMCPClient:
         keys = _ITEM_KEY_PATTERN.findall(text)
         return collection_name, keys
 
-    async def get_item_metadata(self, item_key: str) -> Dict[str, Any]:
+    async def get_item_metadata(self, item_key: str) -> dict[str, Any]:
         text = await self._call(
             "zotero_get_item_metadata",
             {
@@ -140,8 +149,10 @@ class ZoteroMCPClient:
         item_keys: Sequence[str],
         *,
         concurrency: int = 4,
-    ) -> List[Dict[str, Any]]:
-        items, failures = await self.get_items_tolerant(item_keys, concurrency=concurrency)
+    ) -> list[dict[str, Any]]:
+        items, failures = await self.get_items_tolerant(
+            item_keys, concurrency=concurrency
+        )
         if failures:
             key, message = failures[0]
             raise ZoteroMCPError(f"metadata load failed for {key}: {message}")
@@ -152,7 +163,7 @@ class ZoteroMCPClient:
         item_keys: Sequence[str],
         *,
         concurrency: int = 4,
-    ) -> Tuple[List[Dict[str, Any]], List[Tuple[str, str]]]:
+    ) -> tuple[list[dict[str, Any]], list[tuple[str, str]]]:
         """逐条容错加载:成功项保持输入顺序,失败项降级为 (key, error) 记录。
 
         单个失效 key(如 Zotero 条目合并/删除后悬空的旧 key)不再导致
@@ -160,15 +171,15 @@ class ZoteroMCPClient:
         """
         semaphore = asyncio.Semaphore(max(1, concurrency))
 
-        async def load(item_key: str) -> Dict[str, Any]:
+        async def load(item_key: str) -> dict[str, Any]:
             async with semaphore:
                 return await self.get_item_metadata(item_key)
 
         results = await asyncio.gather(
             *(load(key) for key in item_keys), return_exceptions=True
         )
-        items: List[Dict[str, Any]] = []
-        failures: List[Tuple[str, str]] = []
+        items: list[dict[str, Any]] = []
+        failures: list[tuple[str, str]] = []
         for key, result in zip(item_keys, results):
             if isinstance(result, BaseException):
                 failures.append((key, str(result)))
@@ -180,10 +191,10 @@ class ZoteroMCPClient:
         self,
         item_key: str,
         *,
-        set_keys: Optional[Mapping[str, Any]] = None,
+        set_keys: Mapping[str, Any] | None = None,
         add_tags: Iterable[str] = (),
         remove_tags: Iterable[str] = (),
-        fields: Optional[Mapping[str, Any]] = None,
+        fields: Mapping[str, Any] | None = None,
     ) -> None:
         normalized_keys = {
             str(key): str(value)
@@ -193,7 +204,7 @@ class ZoteroMCPClient:
         add_list = sorted({str(tag) for tag in add_tags if str(tag).strip()})
         remove_list = sorted({str(tag) for tag in remove_tags if str(tag).strip()})
         if normalized_keys or add_list or remove_list:
-            arguments: Dict[str, Any] = {"item_keys": [item_key]}
+            arguments: dict[str, Any] = {"item_keys": [item_key]}
             if normalized_keys:
                 arguments["set_keys"] = normalized_keys
             if add_list:
@@ -207,4 +218,3 @@ class ZoteroMCPClient:
                 "zotero_update_item",
                 {"item_key": item_key, "fields": dict(fields)},
             )
-        return None

@@ -1,19 +1,20 @@
 """Tests for the P1 stale-item-key healing pipeline (zotero-heal)."""
 
-from pathlib import Path
-
-import yaml
-
-from src.llm_wiki.zotero.heal import (
+from llm_wiki.zotero.heal import (
     apply_heal_plan,
     plan_heal,
     plan_to_heal_manifest,
 )
-from src.llm_wiki.zotero.plan import SnapshotItem, ZoteroBinding
+from llm_wiki.zotero.plan import SnapshotItem, ZoteroBinding
 
 
-def _binding(item_key="DEAD0001", doi="", citation_key="", source_title="Deep Learning Paper",
-             page_stem="Deep-Learning-Paper"):
+def _binding(
+    item_key="DEAD0001",
+    doi="",
+    citation_key="",
+    source_title="Deep Learning Paper",
+    page_stem="Deep-Learning-Paper",
+):
     return ZoteroBinding(
         item_key=item_key,
         page_stem=page_stem,
@@ -75,7 +76,10 @@ class TestPlanHeal:
 
     def test_ambiguous_doi_stays_unmatched(self):
         binding = _binding(doi="10.1000/xyz")
-        items = [_item("NEW0000C", doi="10.1000/xyz"), _item("NEW0000D", doi="10.1000/xyz")]
+        items = [
+            _item("NEW0000C", doi="10.1000/xyz"),
+            _item("NEW0000D", doi="10.1000/xyz"),
+        ]
         plan = plan_heal([binding], items)
         assert plan.stale[0].matched_by == ""
         assert plan.stale[0].new_item_key == ""
@@ -114,7 +118,8 @@ class TestApplyHealPlan:
     def test_apply_rebinds_frontmatter_in_place(self, wiki_manager):
         path = self._make_bound_page(wiki_manager)
         plan = plan_heal(
-            [_binding()], [_item("NEW00001")],  # title match fallback
+            [_binding()],
+            [_item("NEW00001")],  # title match fallback
         )
         changed = apply_heal_plan(wiki_manager, plan)
 

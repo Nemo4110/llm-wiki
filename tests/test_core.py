@@ -5,12 +5,12 @@ Run individually:
     pytest tests/test_core.py -v
 """
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
-from llm_wiki.core import WikiManager, WikiPage, find_wiki_root, IngestResult
+from llm_wiki.core import IngestResult, WikiManager, WikiPage, find_wiki_root
 
 
 class TestWikiPage:
@@ -72,7 +72,7 @@ class TestWikiManagerGetPage:
     def test_get_page_variations(self, temp_wiki_root, wiki_manager):
         # Create a page with spaces in title
         (temp_wiki_root / "wiki" / "My Page.md").write_text(
-            "---\ncreated: \"2026-04-01\"\n---\n\n# My Page\n\ncontent",
+            '---\ncreated: "2026-04-01"\n---\n\n# My Page\n\ncontent',
             encoding="utf-8",
         )
         assert wiki_manager.get_page("My Page") is not None
@@ -107,11 +107,13 @@ class TestWikiManagerUpdatePage:
             "# Updatable\n\nold content",
             {"created": "2026-04-01", "status": "active"},
         )
-        wiki_manager.update_page("Updatable", "# Updatable\n\nnew content", merge_strategy="replace")
+        wiki_manager.update_page(
+            "Updatable", "# Updatable\n\nnew content", merge_strategy="replace"
+        )
         page = wiki_manager.get_page("Updatable")
         assert "new content" in page.content
         assert "old content" not in page.content
-        assert page.frontmatter["updated"] == datetime.now().strftime("%Y-%m-%d")
+        assert page.frontmatter["updated"] == datetime.now(UTC).strftime("%Y-%m-%d")
 
     def test_update_page_append(self, wiki_manager):
         wiki_manager.create_page(
@@ -151,7 +153,7 @@ class TestWikiManagerLint:
         assert "NonExistent" in issues["dead_links"]
 
     def test_lint_finds_stale_pages(self, temp_wiki_root, wiki_manager):
-        stale_date = (datetime.now() - timedelta(days=100)).strftime("%Y-%m-%d")
+        stale_date = (datetime.now(UTC) - timedelta(days=100)).strftime("%Y-%m-%d")
         wiki_manager.create_page(
             "StalePage",
             "# StalePage\n\nOld info.",
@@ -241,6 +243,7 @@ class TestFindWikiRoot:
 
     def test_returns_none_when_missing(self):
         import tempfile
+
         with tempfile.TemporaryDirectory() as td:
             assert find_wiki_root(Path(td)) is None
 
@@ -257,7 +260,9 @@ class TestWikiManagerNaming:
     """P0: create_page/get_page 接入 sanitize_title_stem,前向兼容。"""
 
     def test_create_page_sanitizes_illegal_chars(self, wiki_manager):
-        path = wiki_manager.create_page("LoRA: Low-Rank Adaptation", "# LoRA: Low-Rank Adaptation\n", {})
+        path = wiki_manager.create_page(
+            "LoRA: Low-Rank Adaptation", "# LoRA: Low-Rank Adaptation\n", {}
+        )
         assert path.name == "LoRA-Low-Rank-Adaptation.md"
 
     def test_create_page_truncates_long_cjk_title(self, wiki_manager):
@@ -272,7 +277,9 @@ class TestWikiManagerNaming:
 
     def test_get_page_still_finds_legacy_names(self, wiki_manager):
         legacy = wiki_manager.wiki_dir / "Legacy: Name.md"
-        legacy.write_text("---\nstatus: active\n---\n\n# Legacy: Name\n\nbody\n", encoding="utf-8")
+        legacy.write_text(
+            "---\nstatus: active\n---\n\n# Legacy: Name\n\nbody\n", encoding="utf-8"
+        )
         page = wiki_manager.get_page("Legacy: Name")
         assert page is not None
         assert page.path.name == "Legacy: Name.md"
@@ -292,7 +299,9 @@ class TestWikiManagerNaming:
 
     def test_update_page_does_not_rename_legacy_file(self, wiki_manager):
         legacy = wiki_manager.wiki_dir / "Legacy: Name.md"
-        legacy.write_text("---\nstatus: active\n---\n\n# Legacy: Name\n\nold body\n", encoding="utf-8")
+        legacy.write_text(
+            "---\nstatus: active\n---\n\n# Legacy: Name\n\nold body\n", encoding="utf-8"
+        )
         wiki_manager.update_page("Legacy: Name", "new section body")
         assert legacy.exists()
         assert "new section body" in legacy.read_text(encoding="utf-8")

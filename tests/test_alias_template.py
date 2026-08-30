@@ -2,7 +2,7 @@
 
 import pytest
 
-from src.llm_wiki.alias_template import render_alias_template
+from llm_wiki.alias_template import render_alias_template
 
 
 class TestWildcards:
@@ -30,7 +30,9 @@ class TestWildcards:
         assert alias == "papers/2024-hu-LoRA"
 
     def test_citekey_and_item_type(self):
-        alias = render_alias_template("%b-%T", {"citekey": "hu2021lora", "item_type": "journalArticle"})
+        alias = render_alias_template(
+            "%b-%T", {"citekey": "hu2021lora", "item_type": "journalArticle"}
+        )
         assert alias == "hu2021lora-journalArticle"
 
     def test_cjk_title_preserved(self):
@@ -52,7 +54,9 @@ class TestRobustness:
         assert alias == "Only-Title"
 
     def test_empty_collection_segment_dropped(self):
-        alias = render_alias_template("%c/%t", {"collection_path": "", "title": "Paper"})
+        alias = render_alias_template(
+            "%c/%t", {"collection_path": "", "title": "Paper"}
+        )
         assert alias == "Paper"
 
     def test_result_is_relative_and_safe(self):

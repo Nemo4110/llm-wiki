@@ -9,8 +9,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import pytest
 
-from llm_wiki.merge import ContentMerger, MergeStrategy, SafeWriter, ChangeProposal
-from llm_wiki.core import WikiManager, WikiPage
+from llm_wiki.core import WikiManager
+from llm_wiki.merge import ChangeProposal, ContentMerger, MergeStrategy, SafeWriter
 
 
 class TestContentMerger:
@@ -49,10 +49,15 @@ Transformer 使用 encoder-decoder 结构。
 
 - 2026-04-10: 初始创建
 """
-        path = temp_wiki.create_page(
+        temp_wiki.create_page(
             "Transformer",
             content,
-            {"created": "2026-04-10", "updated": "2026-04-10", "tags": ["AI/ML"], "status": "active"},
+            {
+                "created": "2026-04-10",
+                "updated": "2026-04-10",
+                "tags": ["AI/ML"],
+                "status": "active",
+            },
         )
         return temp_wiki.get_page("Transformer")
 
@@ -103,7 +108,9 @@ Transformer 使用 encoder-decoder 结构。
 
     def test_add_related_link_new_section(self, temp_wiki):
         merger = ContentMerger(temp_wiki)
-        content = "# Simple Page\n\n一句话定义。\n\n## 来源\n\n- [资料](../sources/x.pdf)\n"
+        content = (
+            "# Simple Page\n\n一句话定义。\n\n## 来源\n\n- [资料](../sources/x.pdf)\n"
+        )
         result = merger.add_related_link(content, "Other", "其他页面")
         assert "## 相关页面" in result
         assert "- [[Other]] — 其他页面" in result
@@ -183,6 +190,7 @@ Transformer 使用 encoder-decoder 结构。
         assert "updated:" in result
         # frontmatter 必须是可解析的合法 YAML
         import yaml
+
         parsed = yaml.safe_load(result.split("---", 2)[1])
         assert "updated" in parsed
 

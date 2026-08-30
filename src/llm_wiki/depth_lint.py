@@ -3,11 +3,19 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any
 
-BOILERPLATE_H2 = {"相关页面", "Related Pages", "来源", "Sources", "变更日志", "Changelog"}
+BOILERPLATE_H2 = {
+    "相关页面",
+    "Related Pages",
+    "来源",
+    "Sources",
+    "变更日志",
+    "Changelog",
+}
 TEXT_SOURCE_SUFFIXES = {".md", ".txt", ".json"}
 
 
@@ -25,7 +33,7 @@ class DepthLintConfig:
     skip_tags: tuple[str, ...] = ("QRF",)
 
     @classmethod
-    def from_mapping(cls, value: Optional[Mapping[str, Any]]) -> "DepthLintConfig":
+    def from_mapping(cls, value: Mapping[str, Any] | None) -> DepthLintConfig:
         if not value:
             return cls()
         data = dict(value)
@@ -40,7 +48,7 @@ class DepthMetrics:
     substantive_sections: int
     source_count: int
     local_source_chars: int
-    compression_ratio: Optional[float]
+    compression_ratio: float | None
 
 
 @dataclass(frozen=True)
@@ -151,7 +159,10 @@ def _local_source_chars(sources: Sequence[Any], project_root: Path) -> int:
             candidate.relative_to(root)
         except ValueError:
             continue
-        if not candidate.exists() or candidate.suffix.lower() not in TEXT_SOURCE_SUFFIXES:
+        if (
+            not candidate.exists()
+            or candidate.suffix.lower() not in TEXT_SOURCE_SUFFIXES
+        ):
             continue
         total += _read_source_file_chars(str(candidate))
     return total
@@ -165,7 +176,7 @@ def analyze_depth(
     frontmatter: Mapping[str, Any],
     project_root: Path,
     config: DepthLintConfig,
-) -> Optional[DepthIssue]:
+) -> DepthIssue | None:
     # draft/seed 是未成熟状态,archived 已退役,均不做深度要求;
     # developing 起即给出 advisory 提示(active 为 legacy 写法)。
     _DEPTH_ANALYZED = ("active", "developing", "mature", "evergreen")

@@ -7,12 +7,11 @@ LLM-Wiki 配置加载器
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 import yaml
 
-
-DEFAULT_CONFIG: Dict[str, Any] = {
+DEFAULT_CONFIG: dict[str, Any] = {
     "embedding": {
         "enabled": False,
         "provider": "ollama",
@@ -146,7 +145,7 @@ def _interpolate_env(value: Any) -> Any:
     return value
 
 
-def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     """深合并两个字典，override 优先级更高"""
     result = dict(base)
     for key, value in override.items():
@@ -157,7 +156,7 @@ def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any
     return result
 
 
-def load_config(wiki_root: Path) -> Dict[str, Any]:
+def load_config(wiki_root: Path) -> dict[str, Any]:
     """加载 wiki 根目录下的 config.yaml，与默认值合并"""
     config = dict(DEFAULT_CONFIG)
     config_path = wiki_root / "config.yaml"
@@ -166,6 +165,8 @@ def load_config(wiki_root: Path) -> Dict[str, Any]:
             raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
             raw = _interpolate_env(raw)
             config = _deep_merge(config, raw)
-        except Exception as e:
-            raise ValueError(f"Failed to load config from {config_path}: {e}")
+        except (OSError, TypeError, ValueError, yaml.YAMLError) as exc:
+            raise ValueError(
+                f"Failed to load config from {config_path}: {exc}"
+            ) from exc
     return config

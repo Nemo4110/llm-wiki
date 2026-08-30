@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import re
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
+from typing import (
+    Any,
+)
 from urllib.parse import urlparse
 
 import httpx
@@ -18,7 +21,6 @@ from .local import LocalZoteroWriter
 from .mcp_client import ZoteroMCPClient
 from .plan import ACADEMIC_ITEM_TYPES, extract_doi_from_text, normalize_doi
 from .providers import CrossrefProvider, OpenAlexProvider, ProviderError
-
 
 MANAGED_PREFIX = "llm-wiki:"
 DOI_MISSING_TAG = "llm-wiki:doi-missing"
@@ -60,7 +62,7 @@ class RefreshItem:
     extra: str
 
     @classmethod
-    def from_zotero(cls, data: Mapping[str, Any]) -> "RefreshItem":
+    def from_zotero(cls, data: Mapping[str, Any]) -> RefreshItem:
         tags = frozenset(
             str(raw.get("tag") if isinstance(raw, Mapping) else raw).strip()
             for raw in data.get("tags") or []
@@ -69,7 +71,8 @@ class RefreshItem:
         creators = tuple(
             str(raw.get("lastName") or raw.get("name") or "").strip()
             for raw in data.get("creators") or []
-            if isinstance(raw, Mapping) and str(raw.get("lastName") or raw.get("name") or "").strip()
+            if isinstance(raw, Mapping)
+            and str(raw.get("lastName") or raw.get("name") or "").strip()
         )
         extra = str(data.get("extra") or "")
         url = str(data.get("url") or "").strip()
@@ -95,25 +98,27 @@ class RefreshMutation:
     title: str
     doi_status: str = "unknown"
     citation_provider: str = ""
-    citation_count: Optional[int] = None
-    safe_set_keys: Dict[str, str] = field(default_factory=dict)
-    add_tags: Set[str] = field(default_factory=set)
-    remove_tags: Set[str] = field(default_factory=set)
-    safe_fields: Dict[str, str] = field(default_factory=dict)
-    metadata_review: Dict[str, Any] = field(default_factory=dict)
-    errors: List[str] = field(default_factory=list)
+    citation_count: int | None = None
+    safe_set_keys: dict[str, str] = field(default_factory=dict)
+    add_tags: set[str] = field(default_factory=set)
+    remove_tags: set[str] = field(default_factory=set)
+    safe_fields: dict[str, str] = field(default_factory=dict)
+    metadata_review: dict[str, Any] = field(default_factory=dict)
+    errors: list[str] = field(default_factory=list)
     applied: bool = False
 
     @property
     def has_safe_changes(self) -> bool:
-        return bool(self.safe_set_keys or self.add_tags or self.remove_tags or self.safe_fields)
+        return bool(
+            self.safe_set_keys or self.add_tags or self.remove_tags or self.safe_fields
+        )
 
 
 @dataclass
 class RefreshReport:
     collection_key: str
     collection_name: str
-    items: List[RefreshMutation]
+    items: list[RefreshMutation]
     applied_count: int = 0
 
 
@@ -142,8 +147,8 @@ def settings_from_config(config: Mapping[str, Any]) -> RefreshSettings:
     )
 
 
-def parse_extra_keys(extra: str) -> Dict[str, str]:
-    values: Dict[str, str] = {}
+def parse_extra_keys(extra: str) -> dict[str, str]:
+    values: dict[str, str] = {}
     for line in str(extra or "").splitlines():
         if ":" not in line:
             continue
@@ -156,7 +161,11 @@ def parse_extra_keys(extra: str) -> Dict[str, str]:
 
 def _extract_arxiv(extra: str, url: str) -> str:
     text = f"{extra}\n{url}"
-    match = re.search(r"(?:arXiv:\s*|arxiv\.org/(?:abs|pdf)/)(\d{4}\.\d{4,5})(?:v\d+)?", text, re.I)
+    match = re.search(
+        r"(?:arXiv:\s*|arxiv\.org/(?:abs|pdf)/)(\d{4}\.\d{4,5})(?:v\d+)?",
+        text,
+        re.IGNORECASE,
+    )
     return match.group(1) if match else ""
 
 
@@ -176,18 +185,29 @@ def title_similarity(left: str, right: str) -> float:
     return ratio
 
 
-def _year(value: Any) -> Optional[int]:
+def _year(value: Any) -> int | None:
     match = re.search(r"(?:19|20)\d{2}", str(value or ""))
     return int(match.group(0)) if match else None
 
 
-def _crossref_year(work: Mapping[str, Any]) -> Optional[int]:
-    for key in ("published-print", "published-online", "published", "issued", "created"):
+def _crossref_year(work: Mapping[str, Any]) -> int | None:
+    for key in (
+        "published-print",
+        "published-online",
+        "published",
+        "issued",
+        "created",
+    ):
         value = work.get(key)
         if not isinstance(value, Mapping):
             continue
         parts = value.get("date-parts")
-        if isinstance(parts, list) and parts and isinstance(parts[0], list) and parts[0]:
+        if (
+            isinstance(parts, list)
+            and parts
+            and isinstance(parts[0], list)
+            and parts[0]
+        ):
             try:
                 return int(parts[0][0])
             except (TypeError, ValueError):
@@ -221,12 +241,14 @@ def _openalex_source_id(work: Mapping[str, Any]) -> str:
     return str(source.get("id") or "") if isinstance(source, Mapping) else ""
 
 
-def _identity_score(item: RefreshItem, work: Mapping[str, Any]) -> Tuple[float, Dict[str, Any]]:
+def _identity_score(
+    item: RefreshItem, work: Mapping[str, Any]
+) -> tuple[float, dict[str, Any]]:
     candidate_title = _crossref_title(work)
     title_score = title_similarity(item.title, candidate_title)
-    scores: List[Tuple[float, float]] = [(0.70, title_score)]
+    scores: list[tuple[float, float]] = [(0.70, title_score)]
 
-    author_match: Optional[bool] = None
+    author_match: bool | None = None
     candidate_author = _crossref_author(work)
     if item.creators and candidate_author:
         author_match = item.creators[0].casefold() == candidate_author.casefold()
@@ -234,10 +256,18 @@ def _identity_score(item: RefreshItem, work: Mapping[str, Any]) -> Tuple[float, 
 
     item_year = _year(item.date)
     candidate_year = _crossref_year(work)
-    year_delta: Optional[int] = None
+    year_delta: int | None = None
     if item_year and candidate_year:
         year_delta = abs(item_year - candidate_year)
-        year_score = 1.0 if year_delta == 0 else 0.7 if year_delta == 1 else 0.3 if year_delta == 2 else 0.0
+        year_score = (
+            1.0
+            if year_delta == 0
+            else 0.7
+            if year_delta == 1
+            else 0.3
+            if year_delta == 2
+            else 0.0
+        )
         scores.append((0.10, year_score))
 
     weight = sum(part[0] for part in scores)
@@ -255,8 +285,8 @@ def _select_crossref_candidate(
     item: RefreshItem,
     works: Sequence[Mapping[str, Any]],
     settings: RefreshSettings,
-) -> Optional[Dict[str, Any]]:
-    ranked: List[Tuple[float, Mapping[str, Any], Dict[str, Any]]] = []
+) -> dict[str, Any] | None:
+    ranked: list[tuple[float, Mapping[str, Any], dict[str, Any]]] = []
     for work in works:
         doi = _crossref_doi(work)
         if not doi:
@@ -281,21 +311,25 @@ def _select_crossref_candidate(
     }
 
 
-def _parse_checked_date(value: str) -> Optional[date]:
+def _parse_checked_date(value: str) -> date | None:
     try:
         return date.fromisoformat(value[:10])
     except (TypeError, ValueError):
         return None
 
 
-def _is_due(extra: Mapping[str, str], key: str, days: int, today: date, force: bool) -> bool:
+def _is_due(
+    extra: Mapping[str, str], key: str, days: int, today: date, force: bool
+) -> bool:
     if force:
         return True
     checked = _parse_checked_date(extra.get(key, ""))
     return checked is None or today - checked >= timedelta(days=days)
 
 
-def _changed_keys(current: Mapping[str, str], desired: Mapping[str, Any]) -> Dict[str, str]:
+def _changed_keys(
+    current: Mapping[str, str], desired: Mapping[str, Any]
+) -> dict[str, str]:
     return {
         str(key): str(value)
         for key, value in desired.items()
@@ -311,14 +345,14 @@ class RefreshWorker:
         cache: EnrichmentCache,
         settings: RefreshSettings,
         *,
-        today: Optional[date] = None,
+        today: date | None = None,
         force: bool = False,
     ) -> None:
         self.crossref = crossref
         self.openalex = openalex
         self.cache = cache
         self.settings = settings
-        self.today = today or datetime.now(timezone.utc).date()
+        self.today = today or datetime.now(UTC).date()
         self.force = force
 
     async def _cached(
@@ -328,7 +362,7 @@ class RefreshWorker:
         operation: str,
         max_age_days: int,
         fetch: Callable[[], Awaitable[Any]],
-    ) -> Tuple[Optional[Any], Optional[str]]:
+    ) -> tuple[Any | None, str | None]:
         if not self.force:
             cached = self.cache.get_json(
                 item_key,
@@ -346,7 +380,9 @@ class RefreshWorker:
         self.cache.put_json(item_key, provider, operation, value)
         return value, None
 
-    async def _crossref_work(self, item: RefreshItem, doi: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    async def _crossref_work(
+        self, item: RefreshItem, doi: str
+    ) -> tuple[dict[str, Any] | None, str | None]:
         value, error = await self._cached(
             item.item_key,
             "crossref",
@@ -356,7 +392,9 @@ class RefreshWorker:
         )
         return (dict(value) if isinstance(value, Mapping) else None), error
 
-    async def _crossref_search(self, item: RefreshItem) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+    async def _crossref_search(
+        self, item: RefreshItem
+    ) -> tuple[list[dict[str, Any]], str | None]:
         signature = _normalize_title(item.title)[:80]
         value, error = await self._cached(
             item.item_key,
@@ -370,7 +408,9 @@ class RefreshWorker:
         )
         return ([dict(raw) for raw in value] if isinstance(value, list) else []), error
 
-    async def _openalex_work(self, item: RefreshItem, doi: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    async def _openalex_work(
+        self, item: RefreshItem, doi: str
+    ) -> tuple[dict[str, Any] | None, str | None]:
         value, error = await self._cached(
             item.item_key,
             "openalex",
@@ -380,7 +420,9 @@ class RefreshWorker:
         )
         return (dict(value) if isinstance(value, Mapping) else None), error
 
-    async def _openalex_source(self, item: RefreshItem, source_id: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    async def _openalex_source(
+        self, item: RefreshItem, source_id: str
+    ) -> tuple[dict[str, Any] | None, str | None]:
         value, error = await self._cached(
             item.item_key,
             "openalex",
@@ -393,18 +435,26 @@ class RefreshWorker:
     async def refresh_item(self, item: RefreshItem) -> RefreshMutation:
         mutation = RefreshMutation(item_key=item.item_key, title=item.title)
         if item.item_type not in ACADEMIC_ITEM_TYPES:
-            mutation.errors.append(f"unsupported item type: {item.item_type or 'unknown'}")
+            mutation.errors.append(
+                f"unsupported item type: {item.item_type or 'unknown'}"
+            )
             return mutation
 
         extra = parse_extra_keys(item.extra)
         today_text = self.today.isoformat()
         current_doi = item.doi
-        crossref_work: Optional[Dict[str, Any]] = None
-        doi_candidate: Optional[Dict[str, Any]] = None
-        desired_keys: Dict[str, Any] = {}
+        crossref_work: dict[str, Any] | None = None
+        doi_candidate: dict[str, Any] | None = None
+        desired_keys: dict[str, Any] = {}
 
-        doi_days = self.settings.doi_verified_days if current_doi else self.settings.doi_missing_days
-        doi_due = _is_due(extra, "LLM-Wiki DOI Checked", doi_days, self.today, self.force)
+        doi_days = (
+            self.settings.doi_verified_days
+            if current_doi
+            else self.settings.doi_missing_days
+        )
+        doi_due = _is_due(
+            extra, "LLM-Wiki DOI Checked", doi_days, self.today, self.force
+        )
         publication_due = item.item_type == "preprint" and _is_due(
             extra,
             "LLM-Wiki Publication Checked",
@@ -480,7 +530,9 @@ class RefreshWorker:
                 }
                 if item.item_type == "preprint":
                     mutation.metadata_review["published_version_candidate"] = {
-                        key: value for key, value in doi_candidate.items() if key != "work"
+                        key: value
+                        for key, value in doi_candidate.items()
+                        if key != "work"
                     }
             elif not error:
                 mutation.doi_status = "missing"
@@ -516,7 +568,10 @@ class RefreshWorker:
                         "LLM-Wiki Publication Checked": today_text,
                     }
                 )
-            elif not any(message.startswith("Crossref title search") for message in mutation.errors):
+            elif not any(
+                message.startswith("Crossref title search")
+                for message in mutation.errors
+            ):
                 desired_keys.update(
                     {
                         "LLM-Wiki Publication Status": "preprint",
@@ -558,9 +613,13 @@ class RefreshWorker:
                 if journal_due:
                     source_id = _openalex_source_id(openalex_work)
                     if source_id:
-                        source, source_error = await self._openalex_source(item, source_id)
+                        source, source_error = await self._openalex_source(
+                            item, source_id
+                        )
                         if source_error:
-                            mutation.errors.append(f"OpenAlex source lookup: {source_error}")
+                            mutation.errors.append(
+                                f"OpenAlex source lookup: {source_error}"
+                            )
                         if source:
                             summary = source.get("summary_stats")
                             if isinstance(summary, Mapping):
@@ -569,11 +628,16 @@ class RefreshWorker:
                                         "LLM-Wiki Journal Metric Provider": "OpenAlex",
                                         "LLM-Wiki Journal Metric Checked": today_text,
                                         "LLM-Wiki Journal 2yr Citedness": (
-                                            round(float(summary["2yr_mean_citedness"]), 4)
-                                            if summary.get("2yr_mean_citedness") is not None
+                                            round(
+                                                float(summary["2yr_mean_citedness"]), 4
+                                            )
+                                            if summary.get("2yr_mean_citedness")
+                                            is not None
                                             else None
                                         ),
-                                        "LLM-Wiki Journal H-Index": summary.get("h_index"),
+                                        "LLM-Wiki Journal H-Index": summary.get(
+                                            "h_index"
+                                        ),
                                     }
                                 )
             elif citation_due and crossref_work:
@@ -601,11 +665,18 @@ class RefreshWorker:
         mutation.add_tags.difference_update(item.tags)
         mutation.remove_tags.intersection_update(item.tags)
 
-        if self.settings.normalize_doi_url and current_doi and mutation.doi_status == "verified":
+        if (
+            self.settings.normalize_doi_url
+            and current_doi
+            and mutation.doi_status == "verified"
+        ):
             canonical_url = f"https://doi.org/{current_doi}"
             parsed = urlparse(item.url)
             is_doi_url = parsed.hostname in {"doi.org", "dx.doi.org"}
-            if not item.url or (is_doi_url and extract_doi_from_text(item.url).casefold() != current_doi.casefold()):
+            if not item.url or (
+                is_doi_url
+                and extract_doi_from_text(item.url).casefold() != current_doi.casefold()
+            ):
                 mutation.safe_fields["url"] = canonical_url
 
         mutation.safe_set_keys = _changed_keys(extra, desired_keys)
@@ -634,7 +705,7 @@ async def build_refresh_report(
     )
 
 
-def failed_item_mutations(failures: Sequence[Tuple[str, str]]) -> List[RefreshMutation]:
+def failed_item_mutations(failures: Sequence[tuple[str, str]]) -> list[RefreshMutation]:
     """把元数据加载失败的条目降级为待修复记录(不产生任何安全写入)。"""
     return [
         RefreshMutation(
@@ -646,24 +717,33 @@ def failed_item_mutations(failures: Sequence[Tuple[str, str]]) -> List[RefreshMu
     ]
 
 
-def report_to_manifest(report: RefreshReport) -> Dict[str, Any]:
-    items: List[Dict[str, Any]] = []
+def report_to_manifest(report: RefreshReport) -> dict[str, Any]:
+    items: list[dict[str, Any]] = []
     for mutation in report.items:
-        entry: Dict[str, Any] = {
+        entry: dict[str, Any] = {
             "item_key": mutation.item_key,
             "title": mutation.title,
             "doi_status": mutation.doi_status,
         }
-        if mutation.safe_set_keys or mutation.add_tags or mutation.remove_tags or mutation.safe_fields:
+        if (
+            mutation.safe_set_keys
+            or mutation.add_tags
+            or mutation.remove_tags
+            or mutation.safe_fields
+        ):
             entry["safe_updates"] = {}
             if mutation.safe_set_keys:
-                entry["safe_updates"]["set_keys"] = dict(sorted(mutation.safe_set_keys.items()))
+                entry["safe_updates"]["set_keys"] = dict(
+                    sorted(mutation.safe_set_keys.items())
+                )
             if mutation.add_tags:
                 entry["safe_updates"]["add_tags"] = sorted(mutation.add_tags)
             if mutation.remove_tags:
                 entry["safe_updates"]["remove_tags"] = sorted(mutation.remove_tags)
             if mutation.safe_fields:
-                entry["safe_updates"]["fields"] = dict(sorted(mutation.safe_fields.items()))
+                entry["safe_updates"]["fields"] = dict(
+                    sorted(mutation.safe_fields.items())
+                )
         if mutation.metadata_review:
             entry["metadata_review"] = mutation.metadata_review
         if mutation.errors:
@@ -677,23 +757,33 @@ def report_to_manifest(report: RefreshReport) -> Dict[str, Any]:
     }
 
 
-def _verify_applied_mutation(mutation: RefreshMutation, metadata: Mapping[str, Any]) -> None:
+def _verify_applied_mutation(
+    mutation: RefreshMutation, metadata: Mapping[str, Any]
+) -> None:
     extra = parse_extra_keys(str(metadata.get("extra") or ""))
     for key, value in mutation.safe_set_keys.items():
         if extra.get(key) != str(value):
-            raise RuntimeError(f"Write verification failed for {mutation.item_key}: Extra key {key}")
+            raise RuntimeError(
+                f"Write verification failed for {mutation.item_key}: Extra key {key}"
+            )
     tags = {
         str(raw.get("tag") if isinstance(raw, Mapping) else raw).strip()
         for raw in metadata.get("tags") or []
     }
     if not mutation.add_tags.issubset(tags):
-        raise RuntimeError(f"Write verification failed for {mutation.item_key}: added tags")
+        raise RuntimeError(
+            f"Write verification failed for {mutation.item_key}: added tags"
+        )
     if mutation.remove_tags.intersection(tags):
-        raise RuntimeError(f"Write verification failed for {mutation.item_key}: removed tags")
+        raise RuntimeError(
+            f"Write verification failed for {mutation.item_key}: removed tags"
+        )
     for key, value in mutation.safe_fields.items():
         raw_key = "DOI" if key == "doi" else key
         if str(metadata.get(raw_key) or "") != str(value):
-            raise RuntimeError(f"Write verification failed for {mutation.item_key}: field {key}")
+            raise RuntimeError(
+                f"Write verification failed for {mutation.item_key}: field {key}"
+            )
 
 
 async def run_live_refresh(
@@ -704,13 +794,13 @@ async def run_live_refresh(
     cache_path: Path,
     mcp_config_path: Path,
     mcp_server_name: str = "zotero",
-    item_keys: Optional[Set[str]] = None,
-    limit: Optional[int] = None,
+    item_keys: set[str] | None = None,
+    limit: int | None = None,
     force: bool = False,
     apply_safe: bool = False,
     write_backend: str = "web",
-    local_store_path: Optional[Path] = None,
-    local_base_url: Optional[str] = None,
+    local_store_path: Path | None = None,
+    local_base_url: str | None = None,
 ) -> RefreshReport:
     async with ZoteroMCPClient(mcp_config_path, server_name=mcp_server_name) as zotero:
         collection_name, keys = await zotero.get_collection_item_keys(collection_key)
@@ -726,7 +816,9 @@ async def run_live_refresh(
         timeout = httpx.Timeout(settings.request_timeout_seconds)
         limits = httpx.Limits(max_connections=max(4, settings.max_concurrency * 2))
         with EnrichmentCache(cache_path) as cache:
-            async with httpx.AsyncClient(timeout=timeout, limits=limits, follow_redirects=True) as http:
+            async with httpx.AsyncClient(
+                timeout=timeout, limits=limits, follow_redirects=True
+            ) as http:
                 worker = RefreshWorker(
                     CrossrefProvider(http, mailto=settings.crossref_mailto),
                     OpenAlexProvider(
@@ -750,16 +842,18 @@ async def run_live_refresh(
 
         if apply_safe:
             writer: Any = zotero
-            local_writer: Optional[LocalZoteroWriter] = None
+            local_writer: LocalZoteroWriter | None = None
             if write_backend == "local":
                 if local_store_path is None:
                     raise ValueError("write_backend='local' requires local_store_path")
-                _writer_kwargs: Dict[str, Any] = {}
+                _writer_kwargs: dict[str, Any] = {}
                 if local_base_url:
                     _writer_kwargs["base_url"] = local_base_url
-                local_writer = LocalZoteroWriter.from_store(local_store_path, **_writer_kwargs)
+                local_writer = LocalZoteroWriter.from_store(
+                    local_store_path, **_writer_kwargs
+                )
                 writer = local_writer
-            pending: Dict[str, RefreshMutation] = {}
+            pending: dict[str, RefreshMutation] = {}
             try:
                 for mutation in report.items:
                     if not mutation.has_safe_changes:
@@ -772,7 +866,7 @@ async def run_live_refresh(
                             remove_tags=mutation.remove_tags,
                             fields=mutation.safe_fields,
                         )
-                    except Exception as exc:
+                    except (OSError, RuntimeError, TypeError, ValueError) as exc:
                         mutation.errors.append(f"safe apply failed: {exc}")
                         continue
                     pending[mutation.item_key] = mutation
@@ -783,14 +877,19 @@ async def run_live_refresh(
                     if delay:
                         await asyncio.sleep(delay)
                     try:
-                        metadata_batch, _verify_load_failures = await zotero.get_items_tolerant(
+                        (
+                            metadata_batch,
+                            _verify_load_failures,
+                        ) = await zotero.get_items_tolerant(
                             list(pending),
                             concurrency=settings.max_concurrency,
                         )
-                    except Exception as exc:
+                    except (OSError, RuntimeError, TypeError, ValueError) as exc:
                         if attempt == 3:
                             for mutation in pending.values():
-                                mutation.errors.append(f"safe apply verification failed: {exc}")
+                                mutation.errors.append(
+                                    f"safe apply verification failed: {exc}"
+                                )
                             pending.clear()
                         continue
 
@@ -798,7 +897,7 @@ async def run_live_refresh(
                         str(metadata.get("key") or ""): metadata
                         for metadata in metadata_batch
                     }
-                    failed: Dict[str, RefreshMutation] = {}
+                    failed: dict[str, RefreshMutation] = {}
                     for item_key, mutation in pending.items():
                         metadata = metadata_by_key.get(item_key)
                         if metadata is None:
@@ -817,5 +916,7 @@ async def run_live_refresh(
                     await local_writer.aclose()
 
             for mutation in pending.values():
-                mutation.errors.append("safe apply verification failed after bounded retries")
+                mutation.errors.append(
+                    "safe apply verification failed after bounded retries"
+                )
         return report

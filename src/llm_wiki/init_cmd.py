@@ -9,7 +9,6 @@ templates shipped inside the wheel (llm_wiki/templates/).
 
 from __future__ import annotations
 
-import shutil
 from importlib import resources
 from pathlib import Path
 
@@ -54,9 +53,7 @@ truth for this wiki.
 
 def _template_text(name: str) -> str:
     return (
-        resources.files("llm_wiki.templates")
-        .joinpath(name)
-        .read_text(encoding="utf-8")
+        resources.files("llm_wiki.templates").joinpath(name).read_text(encoding="utf-8")
     )
 
 
@@ -116,7 +113,7 @@ def _ensure_gitignore(path: Path) -> str:
 
 def scaffold(target_dir: Path, force: bool = False) -> list[str]:
     """Create the wiki skeleton under target_dir. Returns human actions taken."""
-    from datetime import date
+    from datetime import UTC, datetime
 
     target_dir = target_dir.expanduser().resolve()
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -142,7 +139,7 @@ def scaffold(target_dir: Path, force: bool = False) -> list[str]:
     mark(
         _write(
             target_dir / "wiki" / "index.md",
-            WIKI_INDEX.format(today=date.today().isoformat()),
+            WIKI_INDEX.format(today=datetime.now(UTC).date().isoformat()),
             force,
         ),
         "wiki/index.md",

@@ -31,7 +31,7 @@ def read_pdf(pdf_path: str, pages: str | None = None) -> None:
     """
     try:
         import fitz  # PyMuPDF
-    except ImportError as e:
+    except ImportError:
         print("错误：PyMuPDF 未安装。请运行：pip install pymupdf")
         sys.exit(1)
 
@@ -41,9 +41,9 @@ def read_pdf(pdf_path: str, pages: str | None = None) -> None:
         for i in parse_pages(doc, pages):
             page = doc.load_page(i)
             text = page.get_text()
-            print(f"\n{'='*60}")
+            print(f"\n{'=' * 60}")
             print(f"Page {i + 1}")
-            print(f"{'='*60}")
+            print(f"{'=' * 60}")
             print(text)
 
 

@@ -9,8 +9,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from src.llm_wiki.zotero.local import AttachmentRepointResult, LocalItem
-from src.llm_wiki.zotero.relocate import (
+from llm_wiki.zotero.local import AttachmentRepointResult, LocalItem
+from llm_wiki.zotero.relocate import (
     MetadataStore,
     RelocationError,
     RelocationSettings,
@@ -64,7 +64,9 @@ class FakeAttachmentAdapter:
         )
 
 
-def _write_metadata(project_root: Path, source: Path, *, alias="sources/zotero/paper.pdf") -> Path:
+def _write_metadata(
+    project_root: Path, source: Path, *, alias="sources/zotero/paper.pdf"
+) -> Path:
     metadata_path = project_root / "sources" / "zotero" / "metadata.yaml"
     metadata_path.parent.mkdir(parents=True)
     metadata_path.write_text(
@@ -122,7 +124,9 @@ def _linked_item(source: Path) -> LocalItem:
     )
 
 
-def _settings(project_root: Path, managed_root: Path, **overrides) -> RelocationSettings:
+def _settings(
+    project_root: Path, managed_root: Path, **overrides
+) -> RelocationSettings:
     values = {
         "enabled": True,
         "root": str(managed_root),
@@ -149,13 +153,15 @@ def test_apply_relocates_file_and_keeps_local_layers_consistent(tmp_path):
     managed_root = tmp_path / "managed"
     adapter = FakeAttachmentAdapter(_linked_item(source))
 
-    report = run(relocate(
-        metadata_path,
-        project_root,
-        _settings(project_root, managed_root),
-        adapter,
-        apply=True,
-    ))
+    report = run(
+        relocate(
+            metadata_path,
+            project_root,
+            _settings(project_root, managed_root),
+            adapter,
+            apply=True,
+        )
+    )
 
     assert report.failed_count == 0
     assert report.results[0]["status"] == "complete"
@@ -180,13 +186,15 @@ def test_dry_run_does_not_change_files_metadata_or_zotero(tmp_path):
     managed_root = tmp_path / "managed"
     adapter = FakeAttachmentAdapter(_linked_item(source))
 
-    report = run(relocate(
-        metadata_path,
-        project_root,
-        _settings(project_root, managed_root),
-        adapter,
-        apply=False,
-    ))
+    report = run(
+        relocate(
+            metadata_path,
+            project_root,
+            _settings(project_root, managed_root),
+            adapter,
+            apply=False,
+        )
+    )
 
     assert report.results[0]["status"] == "ready"
     assert not managed_root.exists()
@@ -207,13 +215,15 @@ def test_collision_uses_bounded_non_overwriting_suffix(tmp_path):
     collision.write_bytes(b"existing bytes")
     adapter = FakeAttachmentAdapter(_linked_item(source))
 
-    report = run(relocate(
-        metadata_path,
-        project_root,
-        _settings(project_root, managed_root),
-        adapter,
-        apply=True,
-    ))
+    report = run(
+        relocate(
+            metadata_path,
+            project_root,
+            _settings(project_root, managed_root),
+            adapter,
+            apply=True,
+        )
+    )
 
     assert report.results[0]["status"] == "complete"
     target = managed_root / "Papers" / "2024-Alice-Smith-A-Paper 2.pdf"
@@ -233,22 +243,30 @@ def test_imported_attachment_requires_explicit_storage_root(tmp_path):
     item.data["path"] = "storage:paper.pdf"
     adapter = FakeAttachmentAdapter(item)
 
-    without_root = run(relocate(
-        metadata_path,
-        project_root,
-        _settings(project_root, tmp_path / "managed"),
-        adapter,
-        apply=False,
-    ))
+    without_root = run(
+        relocate(
+            metadata_path,
+            project_root,
+            _settings(project_root, tmp_path / "managed"),
+            adapter,
+            apply=False,
+        )
+    )
     assert without_root.plans[0].status == "missing-storage-root"
 
-    with_root = run(relocate(
-        metadata_path,
-        project_root,
-        _settings(project_root, tmp_path / "managed", storage_root=str(tmp_path / "storage")),
-        adapter,
-        apply=True,
-    ))
+    with_root = run(
+        relocate(
+            metadata_path,
+            project_root,
+            _settings(
+                project_root,
+                tmp_path / "managed",
+                storage_root=str(tmp_path / "storage"),
+            ),
+            adapter,
+            apply=True,
+        )
+    )
     assert with_root.results[0]["status"] == "complete"
 
 
@@ -264,13 +282,19 @@ def test_imported_attachment_without_path_uses_filename_under_storage(tmp_path):
     item.data["path"] = ""
     adapter = FakeAttachmentAdapter(item)
 
-    report = run(relocate(
-        metadata_path,
-        project_root,
-        _settings(project_root, tmp_path / "managed", storage_root=str(tmp_path / "storage")),
-        adapter,
-        apply=True,
-    ))
+    report = run(
+        relocate(
+            metadata_path,
+            project_root,
+            _settings(
+                project_root,
+                tmp_path / "managed",
+                storage_root=str(tmp_path / "storage"),
+            ),
+            adapter,
+            apply=True,
+        )
+    )
 
     assert report.results[0]["status"] == "complete"
     assert report.plans[0].source_resolution == "zotero-storage-filename"
@@ -285,18 +309,20 @@ def test_source_cleanup_is_scoped_and_removes_only_verified_source(tmp_path):
     managed_root = tmp_path / "managed"
     adapter = FakeAttachmentAdapter(_linked_item(source))
 
-    report = run(relocate(
-        metadata_path,
-        project_root,
-        _settings(
+    report = run(
+        relocate(
+            metadata_path,
             project_root,
-            managed_root,
-            delete_source=True,
-            allowed_source_roots=[str(source.parent)],
-        ),
-        adapter,
-        apply=True,
-    ))
+            _settings(
+                project_root,
+                managed_root,
+                delete_source=True,
+                allowed_source_roots=[str(source.parent)],
+            ),
+            adapter,
+            apply=True,
+        )
+    )
 
     assert report.results[0]["status"] == "complete"
     assert report.results[0]["cleanup"] == "removed"
@@ -328,18 +354,20 @@ def test_same_target_is_never_deleted_during_cleanup(tmp_path):
     metadata_path = _write_metadata(project_root, source)
     adapter = FakeAttachmentAdapter(_linked_item(source))
 
-    report = run(relocate(
-        metadata_path,
-        project_root,
-        _settings(
+    report = run(
+        relocate(
+            metadata_path,
             project_root,
-            tmp_path / "managed",
-            delete_source=True,
-            allowed_source_roots=[str(source.parent)],
-        ),
-        adapter,
-        apply=True,
-    ))
+            _settings(
+                project_root,
+                tmp_path / "managed",
+                delete_source=True,
+                allowed_source_roots=[str(source.parent)],
+            ),
+            adapter,
+            apply=True,
+        )
+    )
 
     assert report.results[0]["status"] == "complete"
     assert report.results[0]["cleanup"] == "same-target"
@@ -355,13 +383,15 @@ def test_base_relative_apply_writes_portable_zotero_path(tmp_path):
     managed_root = tmp_path / "managed"
     adapter = FakeAttachmentAdapter(_linked_item(source))
 
-    report = run(relocate(
-        metadata_path,
-        project_root,
-        _settings(project_root, managed_root, base_dir_relative=True),
-        adapter,
-        apply=True,
-    ))
+    report = run(
+        relocate(
+            metadata_path,
+            project_root,
+            _settings(project_root, managed_root, base_dir_relative=True),
+            adapter,
+            apply=True,
+        )
+    )
 
     assert report.failed_count == 0
     target = managed_root / "Papers" / "2024-Alice-Smith-A-Paper.pdf"
@@ -387,18 +417,22 @@ def test_base_relative_source_resolves_against_root_for_idempotent_rerun(tmp_pat
     item.data["path"] = "attachments:Papers/2024-Alice-Smith-A-Paper.pdf"
     adapter = FakeAttachmentAdapter(item)
 
-    report = run(relocate(
-        metadata_path,
-        project_root,
-        _settings(project_root, managed_root, base_dir_relative=True),
-        adapter,
-        apply=False,
-    ))
+    report = run(
+        relocate(
+            metadata_path,
+            project_root,
+            _settings(project_root, managed_root, base_dir_relative=True),
+            adapter,
+            apply=False,
+        )
+    )
 
     assert report.failed_count == 0
     assert report.plans[0].status == "same_target"
     assert report.plans[0].source_resolution == "zotero-base-relative-path"
-    assert report.plans[0].stored_path == "attachments:Papers/2024-Alice-Smith-A-Paper.pdf"
+    assert (
+        report.plans[0].stored_path == "attachments:Papers/2024-Alice-Smith-A-Paper.pdf"
+    )
 
 
 def test_base_relative_source_rejects_unsafe_paths(tmp_path):
@@ -412,16 +446,22 @@ def test_base_relative_source_rejects_unsafe_paths(tmp_path):
     item.data["path"] = "attachments:../outside.pdf"
     adapter = FakeAttachmentAdapter(item)
 
-    report = run(relocate(
-        metadata_path,
-        project_root,
-        _settings(project_root, managed_root, base_dir_relative=True),
-        adapter,
-        apply=False,
-    ))
+    report = run(
+        relocate(
+            metadata_path,
+            project_root,
+            _settings(project_root, managed_root, base_dir_relative=True),
+            adapter,
+            apply=False,
+        )
+    )
 
     assert report.failed_count == 1
-    assert report.plans[0].status not in {"ready", "ready_existing_content", "same_target"}
+    assert report.plans[0].status not in {
+        "ready",
+        "ready_existing_content",
+        "same_target",
+    }
     assert adapter.repoint_calls == []
 
 
@@ -446,19 +486,26 @@ def test_target_naming_prefers_parent_item_metadata(tmp_path):
             "itemType": "journalArticle",
             "title": "Real Paper Title",
             "date": "2023-05-01",
-            "creators": [{"creatorType": "author", "firstName": "Bob", "lastName": "Jones"}],
+            "creators": [
+                {"creatorType": "author", "firstName": "Bob", "lastName": "Jones"}
+            ],
         },
     )
     adapter = FakeAttachmentAdapter(attachment)
     adapter.items["ITEM0001"] = parent
 
-    report = run(relocate(
-        metadata_path,
-        project_root,
-        _settings(project_root, managed_root),
-        adapter,
-        apply=False,
-    ))
+    report = run(
+        relocate(
+            metadata_path,
+            project_root,
+            _settings(project_root, managed_root),
+            adapter,
+            apply=False,
+        )
+    )
 
     assert report.failed_count == 0
-    assert report.plans[0].target == managed_root / "Papers" / "2023-Bob-Jones-Real-Paper-Title.pdf"
+    assert (
+        report.plans[0].target
+        == managed_root / "Papers" / "2023-Bob-Jones-Real-Paper-Title.pdf"
+    )

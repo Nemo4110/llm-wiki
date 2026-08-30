@@ -31,21 +31,46 @@ class TestTransactionApply:
 
     def test_apply_writes_all_ops(self, root):
         tx = Transaction(root)
-        tx.stage(FileOp(op="create", path=Path("wiki/NewPage.md"),
-                        content="---\n---\n\n# NewPage\n"))
-        tx.stage(FileOp(op="update", path=Path("wiki/index.md"),
-                        content="# Index\n\n- [[Old]]\n- [[NewPage]]\n",
-                        expected_sha256=_sha("# Index\n\n- [[Old]]\n")))
-        tx.stage(FileOp(op="update", path=Path("log.md"),
-                        content="# Log\n\n## [2026-08-24] ingest | NewPage\n",
-                        expected_sha256=_sha("# Log\n")))
+        tx.stage(
+            FileOp(
+                op="create",
+                path=Path("wiki/NewPage.md"),
+                content="---\n---\n\n# NewPage\n",
+            )
+        )
+        tx.stage(
+            FileOp(
+                op="update",
+                path=Path("wiki/index.md"),
+                content="# Index\n\n- [[Old]]\n- [[NewPage]]\n",
+                expected_sha256=_sha("# Index\n\n- [[Old]]\n"),
+            )
+        )
+        tx.stage(
+            FileOp(
+                op="update",
+                path=Path("log.md"),
+                content="# Log\n\n## [2026-08-24] ingest | NewPage\n",
+                expected_sha256=_sha("# Log\n"),
+            )
+        )
 
         receipt = tx.apply()
 
-        assert (root / "wiki" / "NewPage.md").read_text(encoding="utf-8") == "---\n---\n\n# NewPage\n"
-        assert (root / "wiki" / "index.md").read_text(encoding="utf-8") == "# Index\n\n- [[Old]]\n- [[NewPage]]\n"
-        assert (root / "log.md").read_text(encoding="utf-8") == "# Log\n\n## [2026-08-24] ingest | NewPage\n"
-        assert receipt.changed == [Path("wiki/NewPage.md"), Path("wiki/index.md"), Path("log.md")]
+        assert (root / "wiki" / "NewPage.md").read_text(
+            encoding="utf-8"
+        ) == "---\n---\n\n# NewPage\n"
+        assert (root / "wiki" / "index.md").read_text(
+            encoding="utf-8"
+        ) == "# Index\n\n- [[Old]]\n- [[NewPage]]\n"
+        assert (root / "log.md").read_text(
+            encoding="utf-8"
+        ) == "# Log\n\n## [2026-08-24] ingest | NewPage\n"
+        assert receipt.changed == [
+            Path("wiki/NewPage.md"),
+            Path("wiki/index.md"),
+            Path("log.md"),
+        ]
 
 
 class TestTransactionFailClosed:
@@ -71,8 +96,14 @@ class TestTransactionFailClosed:
 
     def test_hash_mismatch_writes_nothing(self, root):
         tx = Transaction(root)
-        tx.stage(FileOp(op="update", path=Path("wiki/index.md"),
-                        content="changed", expected_sha256=_sha("stale draft base")))
+        tx.stage(
+            FileOp(
+                op="update",
+                path=Path("wiki/index.md"),
+                content="changed",
+                expected_sha256=_sha("stale draft base"),
+            )
+        )
         tx.stage(FileOp(op="create", path=Path("wiki/New.md"), content="new"))
 
         with pytest.raises(TransactionError, match="Hash mismatch"):
@@ -92,8 +123,14 @@ class TestTransactionFailClosed:
 
     def test_update_on_missing_file_fails(self, root):
         tx = Transaction(root)
-        tx.stage(FileOp(op="update", path=Path("wiki/Ghost.md"),
-                        content="x", expected_sha256=_sha("x")))
+        tx.stage(
+            FileOp(
+                op="update",
+                path=Path("wiki/Ghost.md"),
+                content="x",
+                expected_sha256=_sha("x"),
+            )
+        )
 
         with pytest.raises(TransactionError, match="does not exist"):
             tx.apply()
@@ -119,7 +156,9 @@ class TestTransactionFailClosed:
 
     def test_unknown_op_rejected_at_stage(self, root):
         with pytest.raises(TransactionError, match="Unknown op"):
-            Transaction(root).stage(FileOp(op="delete", path=Path("wiki/index.md"), content=""))
+            Transaction(root).stage(
+                FileOp(op="delete", path=Path("wiki/index.md"), content="")
+            )
 
 
 class TestTransactionRollback:
@@ -134,10 +173,22 @@ class TestTransactionRollback:
 
         tx = Transaction(root)
         tx.stage(FileOp(op="create", path=Path("wiki/New.md"), content="new"))
-        tx.stage(FileOp(op="update", path=Path("wiki/index.md"),
-                        content="changed", expected_sha256=_sha("# Index\n")))
-        tx.stage(FileOp(op="update", path=Path("log.md"),
-                        content="changed", expected_sha256=_sha("# Log\n")))
+        tx.stage(
+            FileOp(
+                op="update",
+                path=Path("wiki/index.md"),
+                content="changed",
+                expected_sha256=_sha("# Index\n"),
+            )
+        )
+        tx.stage(
+            FileOp(
+                op="update",
+                path=Path("log.md"),
+                content="changed",
+                expected_sha256=_sha("# Log\n"),
+            )
+        )
 
         original_write = Transaction._write
         calls = {"n": 0}
@@ -169,10 +220,17 @@ class TestTransactionDiff:
         (wiki / "index.md").write_text("# Index\n", encoding="utf-8")
 
         tx = Transaction(root)
-        tx.stage(FileOp(op="create", path=Path("wiki/New.md"), content="# New\n\nbody\n"))
-        tx.stage(FileOp(op="update", path=Path("wiki/index.md"),
-                        content="# Index\n\n- [[New]]\n",
-                        expected_sha256=_sha("# Index\n")))
+        tx.stage(
+            FileOp(op="create", path=Path("wiki/New.md"), content="# New\n\nbody\n")
+        )
+        tx.stage(
+            FileOp(
+                op="update",
+                path=Path("wiki/index.md"),
+                content="# Index\n\n- [[New]]\n",
+                expected_sha256=_sha("# Index\n"),
+            )
+        )
 
         diff = tx.diff()
 
@@ -199,30 +257,39 @@ class TestLoadBundle:
         (root / "wiki").mkdir()
         (root / "wiki" / "index.md").write_text("# Index\n", encoding="utf-8")
         (root / "temp").mkdir()
-        (root / "temp" / "draft-index.md").write_text("# Index\n\n- [[New]]\n", encoding="utf-8")
+        (root / "temp" / "draft-index.md").write_text(
+            "# Index\n\n- [[New]]\n", encoding="utf-8"
+        )
         (root / "temp" / "draft-new.md").write_text("# New\n", encoding="utf-8")
 
-        manifest = self._write_manifest(tmp_path, f"""
+        manifest = self._write_manifest(
+            tmp_path,
+            f"""
 ops:
   - op: create
     path: wiki/New.md
-    content_path: {root / 'temp' / 'draft-new.md'}
+    content_path: {root / "temp" / "draft-new.md"}
   - op: update
     path: wiki/index.md
-    content_path: {root / 'temp' / 'draft-index.md'}
+    content_path: {root / "temp" / "draft-index.md"}
     expected_sha256: "{_sha("# Index\n")}"
-""")
+""",
+        )
 
         from llm_wiki.transaction import load_bundle
+
         tx = load_bundle(manifest, root)
 
         receipt = tx.apply()
         assert len(receipt.changed) == 2
         assert (root / "wiki" / "New.md").read_text(encoding="utf-8") == "# New\n"
-        assert (root / "wiki" / "index.md").read_text(encoding="utf-8") == "# Index\n\n- [[New]]\n"
+        assert (root / "wiki" / "index.md").read_text(
+            encoding="utf-8"
+        ) == "# Index\n\n- [[New]]\n"
 
     def test_missing_ops_key_rejected(self, tmp_path):
         from llm_wiki.transaction import load_bundle
+
         manifest = self._write_manifest(tmp_path, "foo: bar\n")
 
         with pytest.raises(TransactionError, match="ops"):
@@ -230,26 +297,34 @@ ops:
 
     def test_missing_content_file_rejected(self, tmp_path):
         from llm_wiki.transaction import load_bundle
-        manifest = self._write_manifest(tmp_path, """
+
+        manifest = self._write_manifest(
+            tmp_path,
+            """
 ops:
   - op: create
     path: wiki/New.md
     content_path: /nonexistent/draft.md
-""")
+""",
+        )
 
         with pytest.raises(TransactionError, match="content"):
             load_bundle(manifest, tmp_path)
 
     def test_unknown_op_in_manifest_rejected(self, tmp_path):
         from llm_wiki.transaction import load_bundle
+
         draft = tmp_path / "draft.md"
         draft.write_text("x", encoding="utf-8")
-        manifest = self._write_manifest(tmp_path, f"""
+        manifest = self._write_manifest(
+            tmp_path,
+            f"""
 ops:
   - op: delete
     path: wiki/index.md
     content_path: {draft}
-""")
+""",
+        )
 
         with pytest.raises(TransactionError, match="Unknown op"):
             load_bundle(manifest, tmp_path)
@@ -267,10 +342,17 @@ class TestTransactionCheck:
         tx = Transaction(root)
         tx.stage(FileOp(op="create", path=Path("wiki/New.md"), content="new"))
         tx.stage(FileOp(op="create", path=Path("wiki/index.md"), content="dup"))
-        tx.stage(FileOp(op="update", path=Path("wiki/index.md"),
-                        content="changed"))  # 未提供 expected_sha256
-        tx.stage(FileOp(op="update", path=Path("wiki/Ghost.md"),
-                        content="x", expected_sha256=_sha("x")))
+        tx.stage(
+            FileOp(op="update", path=Path("wiki/index.md"), content="changed")
+        )  # 未提供 expected_sha256
+        tx.stage(
+            FileOp(
+                op="update",
+                path=Path("wiki/Ghost.md"),
+                content="x",
+                expected_sha256=_sha("x"),
+            )
+        )
 
         checks = tx.check()
 
@@ -288,18 +370,22 @@ class TestManifestHashQuoting:
 
     def test_unquoted_numeric_hash_rejected(self, tmp_path):
         from llm_wiki.transaction import load_bundle
+
         draft = tmp_path / "draft.md"
         draft.write_text("x", encoding="utf-8")
         (tmp_path / "wiki").mkdir()
         (tmp_path / "wiki" / "index.md").write_text("# Index\n", encoding="utf-8")
         manifest = tmp_path / "bundle.yaml"
-        manifest.write_text(f"""
+        manifest.write_text(
+            f"""
 ops:
   - op: update
     path: wiki/index.md
     content_path: {draft}
     expected_sha256: {"0" * 64}
-""", encoding="utf-8")
+""",
+            encoding="utf-8",
+        )
 
         with pytest.raises(TransactionError, match="quoted string"):
             load_bundle(manifest, tmp_path)

@@ -2,8 +2,9 @@ from pathlib import Path
 
 import pytest
 
-from src.llm_wiki.core import WikiManager
-from src.llm_wiki.zotero.plan import (
+from llm_wiki.core import WikiManager
+from llm_wiki.zotero.plan import (
+    SnapshotItem,
     build_retired_binding_removal_plan,
     build_zotero_plan,
     collect_zotero_bindings,
@@ -11,7 +12,6 @@ from src.llm_wiki.zotero.plan import (
     load_snapshot,
     normalize_doi,
     plan_to_manifest,
-    SnapshotItem,
 )
 
 
@@ -42,7 +42,7 @@ coverage_verified: {str(coverage_verified).lower()}
 status: "{status}"
 ---
 
-# {stem.replace('-', ' ')}
+# {stem.replace("-", " ")}
 
 Knowledge body.
 ''',
@@ -75,7 +75,7 @@ def test_build_plan_combines_wiki_tags_and_collection_cleanup(tmp_path):
 
     snapshot = tmp_path / "gnn.yaml"
     snapshot.write_text(
-        '''version: 1
+        """version: 1
 library_id: "0"
 collection:
   name: GNN
@@ -88,7 +88,7 @@ items:
     tags:
       - GNN
       - llm-wiki:Old-Topic
-''',
+""",
         encoding="utf-8",
     )
 
@@ -104,9 +104,7 @@ items:
 
     item = plan.items[0]
     # 主题标签来自 wiki 页面 tags(默认 ["AI/ML"]);页面 stem 绑定标签已退役
-    assert item.desired_tags == frozenset(
-        {"llm-wiki:AI/ML", "llm-wiki:ingested"}
-    )
+    assert item.desired_tags == frozenset({"llm-wiki:AI/ML", "llm-wiki:ingested"})
     assert item.add_tags == item.desired_tags
     assert item.remove_candidates == frozenset({"GNN", "llm-wiki:Old-Topic"})
     assert item.doi_state == "arxiv-doi"
@@ -119,7 +117,7 @@ def test_topic_tags_projected_from_page_tags(tmp_path):
 
     snapshot = tmp_path / "snap.yaml"
     snapshot.write_text(
-        '''version: 1
+        """version: 1
 library_id: "0"
 collection:
   name: QRF
@@ -130,7 +128,7 @@ items:
     item_type: journalArticle
     doi: ""
     tags: []
-''',
+""",
         encoding="utf-8",
     )
 
@@ -141,7 +139,7 @@ items:
     )
 
     item = plan.items[0]
-    assert "llm-wiki:AI/ML" in item.desired_tags       # 页面主题标签投影
+    assert "llm-wiki:AI/ML" in item.desired_tags  # 页面主题标签投影
     assert "llm-wiki:Restic-Backup" not in item.desired_tags  # 绑定标签退役
 
 
@@ -149,7 +147,7 @@ def test_collection_equivalent_topic_tag_excluded(tmp_path):
     wiki_dir = tmp_path / "wiki"
     wiki_dir.mkdir(parents=True)
     (wiki_dir / "Some-Page.md").write_text(
-        '''---
+        """---
 created: 2026-08-23
 updated: 2026-08-23
 sources_meta:
@@ -163,12 +161,12 @@ status: "active"
 # Some Page
 
 Body.
-''',
+""",
         encoding="utf-8",
     )
     snapshot = tmp_path / "snap.yaml"
     snapshot.write_text(
-        '''version: 1
+        """version: 1
 library_id: "0"
 collection:
   name: QRF
@@ -179,7 +177,7 @@ items:
     item_type: journalArticle
     doi: ""
     tags: []
-''',
+""",
         encoding="utf-8",
     )
 
@@ -200,7 +198,7 @@ def test_stale_page_stem_tag_flagged_for_removal(tmp_path):
 
     snapshot = tmp_path / "snap.yaml"
     snapshot.write_text(
-        '''version: 1
+        """version: 1
 library_id: "0"
 collection:
   name: GNN
@@ -212,7 +210,7 @@ items:
     doi: ""
     tags:
       - llm-wiki:New-Topic
-''',
+""",
         encoding="utf-8",
     )
 
@@ -233,7 +231,7 @@ def test_unbound_snapshot_item_is_not_marked_ingested(tmp_path):
     (tmp_path / "wiki").mkdir()
     snapshot = tmp_path / "gnn.yaml"
     snapshot.write_text(
-        '''version: 1
+        """version: 1
 library_id: "0"
 collection:
   name: GNN
@@ -243,7 +241,7 @@ items:
     title: Unbound Graph Paper
     item_type: conferencePaper
     tags: [GNN, important]
-''',
+""",
         encoding="utf-8",
     )
 
@@ -266,7 +264,7 @@ items:
 def test_missing_doi_is_distinct_from_unobserved_doi(tmp_path):
     snapshot = tmp_path / "items.yaml"
     snapshot.write_text(
-        '''version: 1
+        """version: 1
 collection:
   name: GNN
   key: A9VNJUPI
@@ -278,7 +276,7 @@ items:
   - item_key: UNKNOWN1
     title: Unknown DOI
     item_type: journalArticle
-''',
+""",
         encoding="utf-8",
     )
     _, collection_name, collection_key, items = load_snapshot(snapshot)
@@ -297,12 +295,12 @@ items:
 def test_load_snapshot_rejects_duplicate_keys(tmp_path):
     snapshot = tmp_path / "duplicate.yaml"
     snapshot.write_text(
-        '''version: 1
+        """version: 1
 collection: {name: GNN, key: A9VNJUPI}
 items:
   - {item_key: DUPLICATE, title: One}
   - {item_key: DUPLICATE, title: Two}
-''',
+""",
         encoding="utf-8",
     )
 
@@ -428,7 +426,9 @@ items:
     by_key = {item.item_key: item for item in plan.items}
     assert by_key["PREPRINT1"].relation_candidates == ("PUBLISHED1",)
     assert by_key["PUBLISHED1"].relation_candidates == ("PREPRINT1",)
-    assert "review same-title preprint/published relation" in by_key["PREPRINT1"].actions
+    assert (
+        "review same-title preprint/published relation" in by_key["PREPRINT1"].actions
+    )
 
 
 def test_existing_relation_is_not_proposed_again(tmp_path):
@@ -510,7 +510,9 @@ def test_build_plan_warns_about_stale_bindings(tmp_path):
     assert any("DEAD0001" in warning for warning in plan.warnings)
 
 
-def _write_page_with_tags(wiki_dir: Path, stem: str, *, item_key: str, title: str, tags):
+def _write_page_with_tags(
+    wiki_dir: Path, stem: str, *, item_key: str, title: str, tags
+):
     tag_lines = "\n".join(f'  - "{tag}"' for tag in tags)
     wiki_dir.mkdir(parents=True, exist_ok=True)
     (wiki_dir / f"{stem}.md").write_text(
@@ -525,7 +527,7 @@ coverage_verified: true
 status: "active"
 ---
 
-# {stem.replace('-', ' ')}
+# {stem.replace("-", " ")}
 
 Knowledge body.
 ''',
@@ -537,7 +539,11 @@ def test_build_retired_removal_plan_whitelists_only_page_stem_tags(tmp_path):
     wiki_dir = tmp_path / "wiki"
     _write_page(wiki_dir, "Restic-Backup", item_key="ITEM0001", title="Restic Paper")
     _write_page_with_tags(
-        wiki_dir, "Linux-Notes", item_key="ITEM0002", title="Linux Notes", tags=["Linux"]
+        wiki_dir,
+        "Linux-Notes",
+        item_key="ITEM0002",
+        title="Linux Notes",
+        tags=["Linux"],
     )
     wiki = WikiManager(wiki_dir)
     bindings = collect_zotero_bindings(wiki)
@@ -581,7 +587,9 @@ def test_build_retired_removal_plan_excludes_live_topic_collision(tmp_path):
     # collision must never be removed.
     wiki_dir = tmp_path / "wiki"
     _write_page(wiki_dir, "Restic-Backup", item_key="ITEM0001", title="Restic Paper")
-    _write_page_with_tags(wiki_dir, "Linux", item_key="ITEM0002", title="Linux", tags=["Linux"])
+    _write_page_with_tags(
+        wiki_dir, "Linux", item_key="ITEM0002", title="Linux", tags=["Linux"]
+    )
     wiki = WikiManager(wiki_dir)
     bindings = collect_zotero_bindings(wiki)
     snapshot_items = [
