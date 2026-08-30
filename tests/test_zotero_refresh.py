@@ -6,9 +6,9 @@ import pytest
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-from src.llm_wiki.zotero_cache import EnrichmentCache
-from src.llm_wiki.zotero_mcp_client import ZoteroMCPClient
-from src.llm_wiki.zotero_refresh import (
+from src.llm_wiki.zotero.cache import EnrichmentCache
+from src.llm_wiki.zotero.mcp_client import ZoteroMCPClient
+from src.llm_wiki.zotero.refresh import (
     DOI_MISSING_TAG,
     PUBLICATION_REVIEW_TAG,
     RefreshItem,
@@ -290,7 +290,7 @@ def test_report_manifest_keeps_safe_and_review_sections(tmp_path: Path):
 
 
 def test_get_items_tolerant_keeps_successes_and_reports_failures():
-    from src.llm_wiki.zotero_mcp_client import ZoteroMCPError
+    from src.llm_wiki.zotero.mcp_client import ZoteroMCPError
 
     client = ZoteroMCPClient(Path("ignored"))
 
@@ -308,7 +308,7 @@ def test_get_items_tolerant_keeps_successes_and_reports_failures():
 
 
 def test_get_items_remains_strict_for_atomic_callers():
-    from src.llm_wiki.zotero_mcp_client import ZoteroMCPError
+    from src.llm_wiki.zotero.mcp_client import ZoteroMCPError
 
     client = ZoteroMCPClient(Path("ignored"))
 
@@ -321,7 +321,7 @@ def test_get_items_remains_strict_for_atomic_callers():
 
 
 def test_failed_item_mutations_marks_pending_heal():
-    from src.llm_wiki.zotero_refresh import failed_item_mutations
+    from src.llm_wiki.zotero.refresh import failed_item_mutations
 
     mutations = failed_item_mutations([("DEAD0001", "not found")])
     assert len(mutations) == 1

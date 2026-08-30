@@ -524,8 +524,8 @@ class TestCmdZoteroRefresh:
     def test_refresh_dry_run_writes_review_manifest_under_temp(
         self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys
     ):
-        from src.llm_wiki.zotero_refresh import RefreshMutation, RefreshReport
-        import src.llm_wiki.zotero_refresh as refresh_module
+        from src.llm_wiki.zotero.refresh import RefreshMutation, RefreshReport
+        import src.llm_wiki.zotero.refresh as refresh_module
 
         (temp_wiki_root / ".mcp.json").write_text(
             '{"mcpServers":{"zotero":{"command":"ignored"}}}',
@@ -589,8 +589,8 @@ class TestCmdZoteroRefresh:
     def test_refresh_rejects_manifest_outside_temp(
         self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys
     ):
-        from src.llm_wiki.zotero_refresh import RefreshReport
-        import src.llm_wiki.zotero_refresh as refresh_module
+        from src.llm_wiki.zotero.refresh import RefreshReport
+        import src.llm_wiki.zotero.refresh as refresh_module
 
         (temp_wiki_root / ".mcp.json").write_text(
             '{"mcpServers":{"zotero":{"command":"ignored"}}}',
@@ -623,7 +623,7 @@ class TestCmdZoteroLocalAuth:
     def test_local_auth_stores_key_under_var(
         self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys
     ):
-        import src.llm_wiki.zotero_local as zl
+        import src.llm_wiki.zotero.local as zl
 
         captured = {}
 
@@ -1145,7 +1145,7 @@ class TestCmdZoteroAlias:
 class TestCmdZoteroRelocate:
     def test_dry_run_reports_without_writing(self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys):
         import yaml
-        from src.llm_wiki.zotero_local import LocalItem
+        from src.llm_wiki.zotero.local import LocalItem
 
         source = temp_wiki_root.parent / "relocate-source.pdf"
         source.write_bytes(b"pdf bytes")
@@ -1204,7 +1204,7 @@ class TestCmdZoteroRelocate:
                 return None
 
         monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
-        monkeypatch.setattr("src.llm_wiki.zotero_local.LocalZoteroWriter", FakeWriter)
+        monkeypatch.setattr("src.llm_wiki.zotero.local.LocalZoteroWriter", FakeWriter)
         args = _args(
             metadata="sources/zotero/metadata.yaml",
             root=None,

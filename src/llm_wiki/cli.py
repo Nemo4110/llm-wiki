@@ -1070,7 +1070,7 @@ def cmd_zotero_plan(args: argparse.Namespace) -> int:
     LOG.info("cmd_zotero_plan: snapshot=%s item_keys=%s", args.snapshot, args.item_keys)
 
     from src.llm_wiki.core import WikiManager, find_wiki_root
-    from src.llm_wiki.zotero_plan import (
+    from src.llm_wiki.zotero.plan import (
         build_retired_binding_removal_plan,
         build_zotero_plan,
         collect_zotero_bindings,
@@ -1253,12 +1253,12 @@ def cmd_zotero_heal(args: argparse.Namespace) -> int:
     from src.llm_wiki.capabilities import CapabilityError, check_write_paths
     from src.llm_wiki.config import load_config
     from src.llm_wiki.core import WikiManager, find_wiki_root
-    from src.llm_wiki.zotero_heal import (
+    from src.llm_wiki.zotero.heal import (
         apply_heal_plan,
         plan_heal,
         plan_to_heal_manifest,
     )
-    from src.llm_wiki.zotero_plan import collect_zotero_bindings, load_snapshot
+    from src.llm_wiki.zotero.plan import collect_zotero_bindings, load_snapshot
 
     wiki_root = find_wiki_root(_get_project_root())
     if not wiki_root:
@@ -1437,7 +1437,7 @@ def cmd_zotero_refresh(args: argparse.Namespace) -> int:
 
     from src.llm_wiki.config import load_config
     from src.llm_wiki.core import find_wiki_root
-    from src.llm_wiki.zotero_refresh import (
+    from src.llm_wiki.zotero.refresh import (
         report_to_manifest,
         run_live_refresh,
         settings_from_config,
@@ -1588,8 +1588,8 @@ def cmd_zotero_writeback(args: argparse.Namespace) -> int:
 
     from src.llm_wiki.config import load_config
     from src.llm_wiki.core import find_wiki_root
-    from src.llm_wiki.zotero_local import LocalZoteroWriter, authorize_local, load_local_key
-    from src.llm_wiki.zotero_writeback import (
+    from src.llm_wiki.zotero.local import LocalZoteroWriter, authorize_local, load_local_key
+    from src.llm_wiki.zotero.writeback import (
         apply_write_plan,
         audit_write_plan,
         load_write_plan,
@@ -1722,13 +1722,13 @@ def cmd_zotero_relocate(args: argparse.Namespace) -> int:
     from src.llm_wiki.capabilities import CapabilityError, check_write_paths
     from src.llm_wiki.config import load_config
     from src.llm_wiki.core import find_wiki_root
-    from src.llm_wiki.zotero_local import (
+    from src.llm_wiki.zotero.local import (
         LocalWriteError,
         LocalZoteroWriter,
         authorize_local,
         load_local_key,
     )
-    from src.llm_wiki.zotero_relocate import (
+    from src.llm_wiki.zotero.relocate import (
         DEFAULT_METADATA_PATH,
         RelocationError,
         RelocationSettings,
@@ -1876,7 +1876,7 @@ def cmd_zotero_ingest_verify(args: argparse.Namespace) -> int:
     import yaml
 
     from src.llm_wiki.core import find_wiki_root
-    from src.llm_wiki.zotero_ingest_verify import (
+    from src.llm_wiki.zotero.ingest_verify import (
         ingest_report_to_manifest,
         verify_collection_ingest,
     )
@@ -1956,7 +1956,7 @@ def cmd_zotero_local_auth(args: argparse.Namespace) -> int:
 
     from src.llm_wiki.config import load_config
     from src.llm_wiki.core import find_wiki_root
-    from src.llm_wiki.zotero_local import authorize_local
+    from src.llm_wiki.zotero.local import authorize_local
 
     wiki_root = find_wiki_root(_get_project_root())
     if not wiki_root:

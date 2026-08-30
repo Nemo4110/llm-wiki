@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from src.llm_wiki.core import WikiManager
-from src.llm_wiki.zotero_plan import (
+from src.llm_wiki.zotero.plan import (
     build_retired_binding_removal_plan,
     build_zotero_plan,
     collect_zotero_bindings,

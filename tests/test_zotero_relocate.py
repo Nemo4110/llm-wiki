@@ -9,8 +9,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from src.llm_wiki.zotero_local import AttachmentRepointResult, LocalItem
-from src.llm_wiki.zotero_relocate import (
+from src.llm_wiki.zotero.local import AttachmentRepointResult, LocalItem
+from src.llm_wiki.zotero.relocate import (
     MetadataStore,
     RelocationError,
     RelocationSettings,

@@ -4,12 +4,12 @@ from pathlib import Path
 
 import yaml
 
-from src.llm_wiki.zotero_heal import (
+from src.llm_wiki.zotero.heal import (
     apply_heal_plan,
     plan_heal,
     plan_to_heal_manifest,
 )
-from src.llm_wiki.zotero_plan import SnapshotItem, ZoteroBinding
+from src.llm_wiki.zotero.plan import SnapshotItem, ZoteroBinding
 
 
 def _binding(item_key="DEAD0001", doi="", citation_key="", source_title="Deep Learning Paper",

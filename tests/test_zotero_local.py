@@ -13,8 +13,8 @@ import json
 import httpx
 import pytest
 
-from src.llm_wiki.zotero_local import LocalWriteError, LocalZoteroWriter, authorize_local
-from src.llm_wiki.zotero_refresh import parse_extra_keys
+from src.llm_wiki.zotero.local import LocalWriteError, LocalZoteroWriter, authorize_local
+from src.llm_wiki.zotero.refresh import parse_extra_keys
 
 ITEM_KEY = "TESTKEY1"
 SERVER_ID = "SID123"
@@ -369,14 +369,14 @@ def test_writer_rejects_non_loopback_base_url():
 
 
 def test_load_local_key_missing_file_raises_clear_error(tmp_path):
-    from src.llm_wiki.zotero_local import load_local_key
+    from src.llm_wiki.zotero.local import load_local_key
 
     with pytest.raises(LocalWriteError, match="zotero-local-auth"):
         load_local_key(tmp_path / "nonexistent.json")
 
 
 def test_upsert_extra_lines_drops_duplicate_keys():
-    from src.llm_wiki.zotero_local import _upsert_extra_lines
+    from src.llm_wiki.zotero.local import _upsert_extra_lines
 
     extra = "LLM-Wiki DOI Status: missing\nLLM-Wiki DOI Status: stale"
     out = _upsert_extra_lines(extra, {"LLM-Wiki DOI Status": "verified"})
@@ -417,7 +417,7 @@ def test_run_live_refresh_local_backend_writes_via_local_writer(tmp_path, monkey
     A shared dict models the hybrid reality: the local write lands in the same
     local database the MCP read path serves, so the existing verify loop sees it.
     """
-    from src.llm_wiki import zotero_refresh as zr
+    from src.llm_wiki.zotero import refresh as zr
 
     key = "ITEM0001"
     db = {

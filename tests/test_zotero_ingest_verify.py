@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.llm_wiki.zotero_ingest_verify import (
+from src.llm_wiki.zotero.ingest_verify import (
     ingest_report_to_manifest,
     verify_collection_ingest,
 )

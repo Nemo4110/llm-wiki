@@ -7,13 +7,13 @@ from dataclasses import replace
 
 import pytest
 
-from src.llm_wiki.zotero_local import (
+from src.llm_wiki.zotero.local import (
     LocalItem,
     LocalMutationResult,
     RelationAudit,
     RelationWriteResult,
 )
-from src.llm_wiki.zotero_writeback import (
+from src.llm_wiki.zotero.writeback import (
     WritePlanError,
     apply_write_plan,
     audit_write_plan,
