@@ -90,6 +90,14 @@ CAPABILITIES: Dict[str, Capability] = {
         "zotero-alias",
         description="Render a sanitized sources/zotero alias from a wildcard template",
     ),
+    "init": Capability(
+        "init",
+        description="Scaffold a new knowledge-base directory",
+    ),
+    "ingest": Capability(
+        "ingest",
+        description="Guidance for source material ingestion",
+    ),
 }
 
 

@@ -23,7 +23,6 @@ classifiers = [
 ]
 # Runtime dependencies mirror src/requirements.txt, minus pytest (dev-only).
 dependencies = [
-    "click>=8.0.0",
     "pyyaml>=6.0",
     "pymupdf>=1.25.0",
     "numpy>=1.24.0",
@@ -52,7 +51,7 @@ Issues = "https://github.com/Nemo4110/llm-wiki/issues"
 # Console entry point installed by `uv tool install` / pipx.
 # Import path is llm_wiki (package), provided by src/llm_wiki on disk.
 [project.scripts]
-llm-wiki = "llm_wiki.commands:cli"
+llm-wiki = "llm_wiki.cli:main"
 
 [tool.hatch.version]
 path = "src/llm_wiki/__init__.py"
