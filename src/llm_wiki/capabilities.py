@@ -73,9 +73,22 @@ CAPABILITIES: Dict[str, Capability] = {
         "zotero-writeback", write_scope=("temp/",), network=True,
         description="Restricted local Zotero managed-tag and reviewed-relation write-back",
     ),
+    "zotero-relocate": Capability(
+        "zotero-relocate", write_scope=("temp/", "sources/zotero/"),
+        network=True, dry_run=True,
+        description="Controlled Zotero attachment relocation with verified local metadata updates",
+    ),
     "zotero-ingest-verify": Capability(
         "zotero-ingest-verify", write_scope=("temp/",),
         description="Collection ingest allocation, provenance, and page verification",
+    ),
+    "zotero-heal": Capability(
+        "zotero-heal", write_scope=("temp/", "wiki/", "log.md"), dry_run=True,
+        description="Stale Zotero binding detection and in-place frontmatter rebinding",
+    ),
+    "zotero-alias": Capability(
+        "zotero-alias",
+        description="Render a sanitized sources/zotero alias from a wildcard template",
     ),
 }
 

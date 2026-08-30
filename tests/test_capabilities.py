@@ -23,7 +23,7 @@ class TestDefaultContracts:
     def test_every_command_has_a_declaration(self):
         for command in ("check", "status", "lint", "link", "relink", "query",
                         "merge", "index", "apply-bundle", "zotero-plan", "zotero-refresh",
-                        "zotero-writeback", "zotero-ingest-verify"):
+                        "zotero-writeback", "zotero-relocate", "zotero-ingest-verify"):
             cap = get_capability(command)
             assert cap.command == command
 
@@ -39,6 +39,8 @@ class TestDefaultContracts:
     def test_zotero_network_commands_are_explicit(self):
         assert get_capability("zotero-refresh").network is True
         assert get_capability("zotero-writeback").network is True
+        assert get_capability("zotero-relocate").network is True
+        assert get_capability("zotero-relocate").dry_run is True
         assert get_capability("zotero-ingest-verify").network is False
         for command in ("check", "status", "lint", "link", "merge", "apply-bundle"):
             assert get_capability(command).network is False

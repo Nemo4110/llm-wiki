@@ -39,10 +39,30 @@ class ZoteroBinding:
     arxiv: str = ""
     citation_key: str = ""
     library_id: str = ""
+    page_tags: tuple[str, ...] = ()
 
     @property
     def page_tag(self) -> str:
+        """退役的页面级绑定标签(2026-08-28 起不再写入,仅用于识别历史残留)。"""
         return f"{MANAGED_TAG_PREFIX}{self.page_stem}"
+
+
+def managed_topic_tags(tags: Iterable[str], collection_name: str = "") -> frozenset[str]:
+    """把 wiki 页面主题标签投影为共享托管标签。
+
+    - 逐值加 ``llm-wiki:`` 前缀,使同主题条目在 Zotero 标签选择器中聚合;
+    - 跳过与目标集合同名的标签(集合成员关系已表达该范围);
+    - 空值忽略。
+    """
+    projected = set()
+    for tag in tags:
+        name = str(tag).strip()
+        if not name:
+            continue
+        if collection_name and name.casefold() == collection_name.casefold():
+            continue
+        projected.add(f"{MANAGED_TAG_PREFIX}{name}")
+    return frozenset(projected)
 
 
 @dataclass(frozen=True)
@@ -57,6 +77,7 @@ class SnapshotItem:
     doi_observed: bool = False
     arxiv: str = ""
     url: str = ""
+    citation_key: str = ""
     tags: frozenset[str] = frozenset()
     tags_observed: bool = False
     collections: tuple[str, ...] = ()
@@ -146,6 +167,7 @@ def collect_zotero_bindings(wiki: WikiManager) -> List[ZoteroBinding]:
                     arxiv=str(source.get("arxiv") or "").strip(),
                     citation_key=str(source.get("citation_key") or "").strip(),
                     library_id=str(source.get("library_id") or "").strip(),
+                    page_tags=tuple(str(tag) for tag in page.tags),
                 )
             )
     return bindings
@@ -204,6 +226,7 @@ def load_snapshot(path: Path) -> tuple[str, str, str, List[SnapshotItem]]:
                 doi_observed="doi" in raw,
                 arxiv=str(raw.get("arxiv") or "").strip(),
                 url=str(raw.get("url") or "").strip(),
+                citation_key=str(raw.get("citation_key") or "").strip(),
                 tags=_normalize_tags(raw.get("tags")),
                 tags_observed="tags" in raw,
                 collections=collections,
@@ -271,7 +294,10 @@ def build_zotero_plan(
             continue
         binding_map.setdefault(binding.item_key, []).append(binding)
 
-    known_page_tags = {binding.page_tag for binding in all_bindings}
+    # 托管标签全集 = 主题投影 ∪ 退役的页面绑定标签(后者仅用于识别历史残留)
+    known_managed_tags = {binding.page_tag for binding in all_bindings}
+    for binding in all_bindings:
+        known_managed_tags.update(managed_topic_tags(binding.page_tags, collection_name))
     if snapshot_items is None:
         snapshot_items = [
             SnapshotItem(
@@ -317,7 +343,9 @@ def build_zotero_plan(
     plans: List[ZoteroPlanItem] = []
     for item in selected_items:
         item_bindings = binding_map.get(item.item_key, [])
-        desired_tags = {binding.page_tag for binding in item_bindings}
+        desired_tags: Set[str] = set()
+        for binding in item_bindings:
+            desired_tags.update(managed_topic_tags(binding.page_tags, collection_name))
         if any(binding.ingest_complete for binding in item_bindings):
             desired_tags.add("llm-wiki:ingested")
 
@@ -328,7 +356,7 @@ def build_zotero_plan(
         if item.tags_observed:
             if item_bindings:
                 remove_candidates.update(
-                    tag for tag in current_tags if tag in known_page_tags and tag not in desired_tags
+                    tag for tag in current_tags if tag in known_managed_tags and tag not in desired_tags
                 )
             if collection_name:
                 collection_equivalents = {
@@ -391,6 +419,18 @@ def build_zotero_plan(
             )
         )
 
+    if snapshot_items is not None:
+        snapshot_keys = {item.item_key for item in selected_items}
+        stale_keys = sorted(
+            {binding.item_key for binding in all_bindings} - snapshot_keys
+        )
+        if stale_keys:
+            warnings.append(
+                f"{len(stale_keys)} wiki binding(s) reference item keys absent from "
+                f"the snapshot ({', '.join(stale_keys)}); run `zotero-heal --snapshot` "
+                "to diagnose and rebind stale keys."
+            )
+
     return ZoteroPlan(
         library_id=library_id,
         collection_name=collection_name,
@@ -431,4 +471,68 @@ def plan_to_manifest(plan: ZoteroPlan) -> Dict[str, Any]:
             "key": plan.collection_key,
         },
         "mutations": mutations,
+    }
+
+
+def build_retired_binding_removal_plan(
+    plan: ZoteroPlan,
+    bindings: Iterable[ZoteroBinding],
+) -> Dict[str, Any]:
+    """Build an authorized-write plan removing ONLY retired page-stem binding tags.
+
+    A tag is whitelisted for removal only when it is some binding's retired
+    ``page_tag`` (``llm-wiki:<page_stem>``) and is not also a live topic
+    projection of any binding. Topic tags, ``llm-wiki:ingested``, preserved
+    tags, and unmanaged user tags are never proposed. The result still requires
+    human review and a separate ``zotero-writeback`` apply; the write-back
+    loader re-checks every removal against its own managed-tag guardrails.
+
+    Requires ``plan.collection_key`` (a snapshot-backed plan) so each item can
+    declare ``expected_collections``; raises ``ValueError`` otherwise.
+    """
+    if not plan.collection_key:
+        raise ValueError(
+            "retired-binding removal plan requires a snapshot-backed collection key"
+        )
+
+    all_bindings = list(bindings)
+    retired = {binding.page_tag for binding in all_bindings}
+    live_topics: Set[str] = set()
+    for binding in all_bindings:
+        live_topics |= managed_topic_tags(binding.page_tags, plan.collection_name)
+    whitelist = retired - live_topics - PRESERVED_MANAGED_TAGS - {f"{MANAGED_TAG_PREFIX}ingested"}
+
+    items: List[Dict[str, Any]] = []
+    for item in plan.items:
+        removable = sorted(item.remove_candidates & whitelist)
+        if not removable:
+            continue
+        items.append(
+            {
+                "item_key": item.item_key,
+                "expected_collections": [plan.collection_key],
+                "desired_managed_tags": [],
+                "reviewed_removals": removable,
+                "reviewed_relations": [],
+            }
+        )
+
+    return {
+        "version": 1,
+        "mode": "authorized-write",
+        "library_id": plan.library_id,
+        "collection": {
+            "key": plan.collection_key,
+            "name": plan.collection_name,
+        },
+        "policy": {
+            "preserve_existing_tags": True,
+            "replace_tags": False,
+            "write_notes": False,
+            "change_collections": False,
+            "change_metadata": False,
+            "relation_policy": "reviewed-only",
+            "allow_managed_removals": True,
+        },
+        "items": items,
     }

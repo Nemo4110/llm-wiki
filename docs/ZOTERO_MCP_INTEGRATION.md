@@ -67,6 +67,23 @@ This runs the Zotero 10 local-write handshake: read `Zotero-Server-ID` from `GET
 - The local API requires Zotero Desktop running with "Allow other applications on this computer to communicate with Zotero" enabled.
 - If the key is missing or expired, `zotero-refresh --write-backend local` fails closed and tells you to re-run `zotero-local-auth`.
 
+## Controlled Attachment Relocation
+
+`zotero-relocate` is a separate, opt-in exception for the narrow case in which llm-wiki must move a local attachment and update its Zotero linked-file path. It is not a general Zotero client and does not replace the MCP discovery/read boundary.
+
+Before enabling apply against a user library:
+
+- Run the Phase 0 isolated-library spike described in `docs/ZOTERO_ATTACHMENT_RELOCATION.md` and confirm that Zotero can update the existing attachment item in place while preserving its item key, parent, child items, and annotations.
+- Use only the command's `zotero-relocate` capability contract. Its filesystem writes are limited to the configured managed attachment root, the private `sources/zotero/` binding/alias layer, and explicitly allowed source roots for cleanup.
+- Use the current Zotero attachment key as the stable identity. Do not clone/delete items or rewrite notes when the backend cannot prove equivalent preservation.
+- Re-read the attachment after every accepted PATCH and update `metadata.yaml` only after the Zotero path is verified. A Web API success response or a stale metadata path is not sufficient.
+- Keep `zotero_relocation.enabled` false until the user has reviewed the dry-run report. `--delete-source` is opt-in and remains bounded by `allowed_source_roots` and reference checks.
+- Configure the managed attachment root once in `config.yaml` under `zotero_relocation.root`; `config.yaml` is gitignored, so each machine keeps its own value, and the `--root` flag is only a one-off override. For cross-device sync, point `root` at a cloud-synced folder and use environment-variable interpolation to keep the path portable (for example `root: "${OneDrive}/zotero-attachments"`). When devices run different operating systems (for example Windows and Linux), no absolute path can work everywhere: set `zotero_relocation.base_dir_relative: true` so the written-back path is the portable `attachments:<relative>` form, and point Zotero's Linked Attachment Base Directory at the synced root on each device.
+- Treat stored-to-linked conversion as a sync-impacting operation: Zotero File Sync may no longer manage the file bytes, and other machines may not have access to the configured external root. When the root is a cloud-synced folder, confirm every device can reach that same synced root before applying.
+- **Empirical Phase 0 result (2026-08-29):** the Zotero 10 local API rejects imported→linked conversion — PATCHing `{linkMode: "linked_file", path: ...}` returns HTTP 500 but partially applies, leaving items in an inconsistent state (`linked_file` with a stale `storage:` pseudo-path, cleared `filename`, zeroed `version`). Reverting `linkMode`/`filename` via PATCH is verified to work, and linked→linked path-only updates (including the portable `attachments:` form) are verified to work. Perform imported→linked conversion with Zotero's native *Convert Stored Files to Linked Files* (or ZotMoov) instead; `zotero-relocate` writes are only for attachments that are already linked files.
+
+The workflow is implemented by `scripts/agent-bridge.py zotero-relocate`; its design, state machine, failure recovery, and unresolved API questions are documented in `docs/ZOTERO_ATTACHMENT_RELOCATION.md`.
+
 ## Required Tool Boundary
 
 All Zotero discovery, reads, source access, metadata identity work, semantic-index maintenance, and normal writes performed by this skill **MUST go through the MCP tools exposed by [`54yyyu/zotero-mcp`](https://github.com/54yyyu/zotero-mcp)**. Direct local writes are permitted only by the narrowly defined temporary exception below.
@@ -81,7 +98,7 @@ Agents must not substitute:
 
 The `zotero-mcp` CLI may be used for installation, upgrades, setup, and diagnostics. Zotero library reads, writes, and semantic-index maintenance should use the connected MCP tool surface. Use a CLI maintenance command only when the required MCP maintenance tool is unavailable and the user has approved that fallback. Installing, updating, or reconfiguring `zotero-mcp` requires user confirmation under the normal dependency and external-service rules.
 
-**Temporary exception:** direct writes to the Zotero 10 *local* API are permitted only through the reviewed `zotero-refresh --write-backend local` path or the restricted `zotero-writeback` authorized-plan path described in this document. All discovery, source access, collection reads, and bibliographic identity work still go through zotero-mcp.
+**Temporary exception:** direct writes to the Zotero 10 *local* API are permitted only through the reviewed `zotero-refresh --write-backend local` path, the restricted `zotero-writeback` authorized-plan path, or the separately gated `zotero-relocate` attachment path described in this document. All discovery, source access, collection reads, and bibliographic identity work still go through zotero-mcp.
 
 ## Compatibility and Capability Gate
 
@@ -90,7 +107,7 @@ Before every Zotero task:
 1. Verify that the configured MCP integration is intended to be an installation of `54yyyu/zotero-mcp` and that its Zotero tools are exposed in the current Agent session. If the host does not expose package provenance, verify the expected capability surface and state that repository provenance could not be independently confirmed.
 2. Verify access to the intended Zotero library. Discover libraries before switching; do not guess a library ID or type.
 3. For read-only work, verify the specific path needed by the task, such as collection search, item metadata, annotations, attachment paths, or full text.
-4. For write work, verify the exact write tool and authorization before changing anything. Note creation/update, incremental tag updates, item metadata changes, collection membership changes, attachment uploads, annotations, and related-item operations are separate capability gates.
+4. For write work, verify the exact write tool and authorization before changing anything. Note creation/update, incremental tag updates, item metadata changes, collection membership changes, attachment uploads, annotations, related-item operations, and attachment path relocation are separate capability gates.
 5. Use only capabilities actually exposed by the connected `zotero-mcp` instance. Do not infer a tool exists from this document, an old example, or another installation.
 6. When observable, distinguish whether a capability is not installed, not exposed by the configured toolsets, not configured, unavailable in the active access mode, or unauthorized.
 
@@ -143,7 +160,7 @@ Use the following metadata write gate:
 
 Do not infer backend consistency from configuration values alone. A valid API key, an exposed write tool, or a successful single-item write proves only that one route is writable; it does not prove that local and Web state agree.
 
-> **Note on `metadata_write_backend = local`:** not reachable *through zotero-mcp* — v0.11.0 routes its writes through the Web API even against Zotero 10. The `local` write backend is reachable only via the temporary direct local path (`zotero-refresh --write-backend local`); the gate's Web-backend rows still govern anything written through zotero-mcp. See "Temporary Direct Local Writes".
+> **Note on `metadata_write_backend = local`:** not reachable *through zotero-mcp* — v0.11.0 routes its writes through the Web API even against Zotero 10. The `local` write backend is reachable only via the temporary direct local paths (`zotero-refresh --write-backend local`, reviewed `zotero-writeback`, or reviewed `zotero-relocate`); the gate's Web-backend rows still govern anything written through zotero-mcp. See "Temporary Direct Local Writes".
 
 ### Backend Consistency Gate
 
@@ -323,7 +340,8 @@ The executable schema is fail-closed:
 - credential-like fields are rejected; API keys never belong in plans or reports.
 - every desired tag must start with `llm-wiki:`.
 - existing tag objects, including automatic/manual tag metadata, are preserved.
-- tag replacement/removal, metadata edits, collection changes, notes, attachments, citation keys, and Trash are forbidden.
+- tag replacement, metadata edits, collection changes, notes, attachments, citation keys, and Trash are forbidden.
+- scoped tag removal is a separate opt-in: it requires `policy.allow_managed_removals: true` and an explicit per-item `reviewed_removals` list, and even then only managed `llm-wiki:` tags may be removed — never the protected `llm-wiki:ingested` status tag, never preserved tags (e.g. `llm-wiki:index-card`), never unmanaged/user tags, and never a tag also listed in the item's `desired_managed_tags`. Generate a whitelisted removal plan with `zotero-plan --removal-plan-out`, which proposes only retired `llm-wiki:<page_stem>` binding tags (excluding any tag that is still a live topic projection of a binding).
 - relation targets must be present in the plan and are added only as reviewed reciprocal `dc:relation` pairs.
 - writes use the live `Zotero-Server-ID`, `If-Unmodified-Since-Version`, one bounded retry after HTTP 412, and a mandatory GET-after-PATCH verification barrier.
 - reports classify items as `updated_verified`, `skipped_current`, or `failed`; partial failures remain visible and are never silently broadened.
@@ -458,7 +476,7 @@ For a Zotero-backed source, optional synchronization occurs only after wiki cove
 
 1. Resolve every `sources_meta.zotero_item_key` and compute the union of desired managed state across all wiki pages that reference the item.
 2. Add `llm-wiki:ingested` only when at least one active, coverage-verified ingest for that source has completed.
-3. Add canonical page tags such as `llm-wiki:Vision-Transformers`; do not copy all ordinary wiki tags into Zotero.
+3. Add shared topic tags by projecting the bound wiki page's curated `tags:` (e.g. a page tagged `Ubuntu` produces `llm-wiki:Ubuntu`), so items sharing a topic group together in Zotero. Wiki page tags are already the curated set produced by the ingest protocol; do not invent additional tags from Zotero-side metadata. The legacy `llm-wiki:<page-stem>` binding tag form was retired on 2026-08-28: it restated item titles without adding topic structure, and survives only as a removal-review candidate.
 4. Do not create a scope tag when an equivalent Zotero collection already expresses that scope. Treat exact collection-name tags and `llm-wiki:<collection-name>` as review-only removal candidates.
 5. Remove stale llm-wiki-managed page tags only when the complete reverse mapping has been audited. Never replace the full tag list.
 6. Create or update a short index-card note only when requested or enabled by the workflow policy.
@@ -548,9 +566,11 @@ Use llm-wiki-managed tags as explicit workflow state, not as interchangeable lab
 | Tag form | Meaning | Add when |
 | --- | --- | --- |
 | `llm-wiki:<scope>` | Reviewed cross-collection scope classification | The classification audit has passed and no equivalent collection already expresses the scope |
-| `llm-wiki:<canonical-topic>` | Stable topic allocation, normally aligned with a reusable wiki topic/page | The topic assignment has been reviewed |
+| `llm-wiki:<topic>` | Shared topic tag projected from the bound wiki page's curated `tags:` (e.g. `llm-wiki:Ubuntu`); items sharing a topic aggregate under one tag | The topic assignment has been reviewed |
 | `llm-wiki:ingested` | The source has completed the llm-wiki ingest protocol | Wiki drafting, source coverage, depth review, linking, indexing, and logging have completed |
 | `llm-wiki:write-sentinel-*` | Temporary authorization test | Only during a write probe; remove and verify removal immediately |
+
+> Retired: `llm-wiki:<page-stem>` binding tags (written before 2026-08-28) restate item titles and add no topic structure. They are removal-review candidates, applied only after the complete reverse mapping has been audited.
 
 Collection membership does not imply ingest completion. Items that have been classified or moved but not yet synthesized may receive reviewed cross-collection scope and topic tags, but must not receive `llm-wiki:ingested`. Do not duplicate an existing collection name as a scope tag. Preserve user-managed tags and use incremental additions/removals rather than replacing the complete tag list.
 
@@ -638,4 +658,4 @@ If local is authoritative, distinguish `cloud write succeeded` from `verified lo
 
 ## llm-wiki Boundary
 
-Do not add a general native Zotero client or duplicate `zotero-mcp` inside `src/llm_wiki`. `scripts/agent-bridge.py` remains the entry point for llm-wiki workflows. Zotero library discovery, reads, source access, metadata identity, and normal writes remain behind `54yyyu/zotero-mcp`; `zotero_local.py` is a temporary, loopback-only, addition-only exception for the reviewed schemas and verification barriers defined above. Do not expand it to metadata replacement, collection mutation, notes, attachments, deletion, or arbitrary API access without a new explicit architecture decision.
+Do not add a general native Zotero client or duplicate `zotero-mcp` inside `src/llm_wiki`. `scripts/agent-bridge.py` remains the entry point for llm-wiki workflows. Zotero library discovery, reads, source access, metadata identity, and normal writes remain behind `54yyyu/zotero-mcp`; `zotero_local.py` remains a temporary, loopback-only exception for the reviewed schemas and verification barriers defined above. The separately reviewed `zotero-relocate` path may update only an existing attachment's `linkMode` / `path` and the private local binding layer; it must not clone/delete items, edit notes, change collections, or perform arbitrary API access.

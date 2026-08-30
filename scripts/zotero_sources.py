@@ -3,12 +3,20 @@ Materialize private Zotero source metadata into sources/zotero symlinks.
 
 This helper does not talk to Zotero. Agents populate sources/zotero/metadata.yaml
 from a Zotero-capable MCP tool, then this script creates local symlink aliases.
+
+Symlink creation may fail (e.g. Windows without developer mode). Per-item
+degradation keeps the batch alive, controlled by --on-symlink-error:
+  metadata (default): record the mapping only; agents read local_path directly
+  copy:               materialize a read-only byte copy at the alias path
+  hardlink:           same-filesystem hardlink (no admin needed, no cross-device)
 """
 
 from __future__ import annotations
 
 import argparse
+import filecmp
 import os
+import shutil
 from pathlib import Path
 from typing import NamedTuple
 
@@ -18,6 +26,7 @@ import yaml
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_METADATA = Path("sources") / "zotero" / "metadata.yaml"
 ALLOWED_ALIAS_ROOT = Path("sources") / "zotero"
+FALLBACK_MODES = ("metadata", "copy", "hardlink")
 
 
 class ZoteroAttachment(NamedTuple):
@@ -35,6 +44,7 @@ class ZoteroAttachment(NamedTuple):
 class MaterializeResult(NamedTuple):
     created: int
     skipped: int
+    degraded: list[str]
     errors: list[str]
 
 
@@ -84,18 +94,50 @@ def _link_matches(link_path: Path, source_path: Path) -> bool:
     return link_path.is_symlink() and link_path.resolve() == source_path.resolve()
 
 
+def _copy_matches(link_path: Path, source_path: Path) -> bool:
+    """A previous copy-fallback artifact still matches the source bytes."""
+    return (
+        link_path.is_file()
+        and not link_path.is_symlink()
+        and filecmp.cmp(link_path, source_path, shallow=False)
+    )
+
+
+def _apply_fallback(
+    link_path: Path,
+    source_path: Path,
+    mode: str,
+    exc: OSError,
+) -> str:
+    """Degrade one failed symlink; returns the report line for `degraded`."""
+    alias = link_path.as_posix()
+    if mode == "copy":
+        shutil.copy2(source_path, link_path)
+        return f"{alias} -> {source_path} (copy fallback: {exc})"
+    if mode == "hardlink":
+        os.link(source_path, link_path)
+        return f"{alias} -> {source_path} (hardlink fallback: {exc})"
+    return f"{alias} -> {source_path} (metadata-only: {exc})"
+
+
 def materialize(
     metadata_path: Path,
     project_root: Path = PROJECT_ROOT,
     *,
     dry_run: bool = False,
     force: bool = False,
+    on_symlink_error: str = "metadata",
 ) -> MaterializeResult:
-    """Create symlinks declared by metadata.yaml."""
+    """Create symlinks declared by metadata.yaml, degrading per item on OSError."""
+    if on_symlink_error not in FALLBACK_MODES:
+        raise ValueError(
+            f"on_symlink_error must be one of {FALLBACK_MODES}, got {on_symlink_error!r}"
+        )
     project_root = project_root.resolve()
     metadata_path = metadata_path if metadata_path.is_absolute() else project_root / metadata_path
     created = 0
     skipped = 0
+    degraded: list[str] = []
     errors: list[str] = []
 
     for attachment in iter_attachments(metadata_path):
@@ -110,6 +152,9 @@ def materialize(
             if _link_matches(link_path, source_path):
                 skipped += 1
                 continue
+            if _copy_matches(link_path, source_path):
+                skipped += 1
+                continue
             if not force:
                 errors.append(f"existing alias differs: {link_path}")
                 continue
@@ -121,10 +166,20 @@ def materialize(
 
         if not dry_run:
             link_path.parent.mkdir(parents=True, exist_ok=True)
-            link_path.symlink_to(source_path)
+            try:
+                link_path.symlink_to(source_path)
+            except OSError as exc:
+                try:
+                    degraded.append(_apply_fallback(link_path, source_path, on_symlink_error, exc))
+                except OSError as fallback_exc:
+                    errors.append(
+                        f"symlink failed ({exc}); {on_symlink_error} fallback failed "
+                        f"({fallback_exc}): {link_path}"
+                    )
+                continue
         created += 1
 
-    return MaterializeResult(created=created, skipped=skipped, errors=errors)
+    return MaterializeResult(created=created, skipped=skipped, degraded=degraded, errors=errors)
 
 
 def cmd_materialize(args: argparse.Namespace) -> int:
@@ -133,10 +188,15 @@ def cmd_materialize(args: argparse.Namespace) -> int:
         Path(args.project_root),
         dry_run=args.dry_run,
         force=args.force,
+        on_symlink_error=getattr(args, "on_symlink_error", "metadata"),
     )
     prefix = "DRY-RUN " if args.dry_run else ""
     print(f"{prefix}created: {result.created}")
     print(f"{prefix}skipped: {result.skipped}")
+    if result.degraded:
+        print(f"{prefix}degraded:")
+        for entry in result.degraded:
+            print(f"- {entry}")
     if result.errors:
         print("errors:")
         for error in result.errors:
@@ -162,6 +222,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--force",
         action="store_true",
         help="Replace existing symlinks that point at a different source",
+    )
+    parser.add_argument(
+        "--on-symlink-error",
+        choices=FALLBACK_MODES,
+        default="metadata",
+        help="Degradation when symlink creation fails (default: metadata)",
     )
     return parser
 

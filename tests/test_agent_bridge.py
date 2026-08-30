@@ -361,7 +361,7 @@ items:
 
         assert rc == 0
         assert "Zotero Sync Plan: GNN" in out
-        assert "llm-wiki:Graph-Neural-Networks" in out
+        assert "llm-wiki:AI/ML" in out
         assert "llm-wiki:ingested" in out
         assert "GNN" in out
         assert "Read-only plan" in out
@@ -414,6 +414,104 @@ items:
             "--snapshot",
             "gnn.yaml",
             "--manifest-out",
+            "outside.yaml",
+        ])
+        out = capsys.readouterr().out
+
+        assert rc == 1
+        assert "must stay under" in out
+
+    def test_zotero_plan_removal_plan_out_scoped_to_retired_bindings(
+        self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys
+    ):
+        page = temp_wiki_root / "wiki" / "Graph-Neural-Networks.md"
+        page.write_text(
+            """---
+created: 2026-08-23
+updated: 2026-08-23
+sources: []
+source_types:
+  - academic_paper
+sources_meta:
+  - title: Graph Paper
+    type: academic_paper
+    zotero_item_key: ITEM0001
+    library_id: "0"
+coverage_verified: true
+tags:
+  - AI/ML
+status: active
+---
+
+# Graph Neural Networks
+
+Knowledge body.
+""",
+            encoding="utf-8",
+        )
+        snapshot = temp_wiki_root / "gnn.yaml"
+        snapshot.write_text(
+            """version: 1
+library_id: "0"
+collection:
+  name: GNN
+  key: A9VNJUPI
+items:
+  - item_key: ITEM0001
+    title: Graph Paper
+    item_type: conferencePaper
+    doi: ""
+    tags: [llm-wiki:Graph-Neural-Networks, llm-wiki:AI/ML, manual-note]
+""",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        rc = agent_bridge_module.main([
+            "zotero-plan",
+            "--snapshot",
+            "gnn.yaml",
+            "--removal-plan-out",
+            "temp/gnn-removal.yaml",
+        ])
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert "Retired-binding removal plan written to" in out
+        removal = temp_wiki_root / "temp" / "gnn-removal.yaml"
+        assert removal.exists()
+        text = removal.read_text(encoding="utf-8")
+        assert "mode: authorized-write" in text
+        assert "allow_managed_removals: true" in text
+        # Only the retired page-stem binding tag is whitelisted for removal;
+        # the live topic tag and the unmanaged tag are excluded.
+        assert "llm-wiki:Graph-Neural-Networks" in text
+        assert "reviewed_removals" in text
+        removals_section = text.split("reviewed_removals:", 1)[1]
+        assert "llm-wiki:AI/ML" not in removals_section
+        assert "manual-note" not in removals_section
+
+    def test_zotero_plan_removal_plan_out_rejects_path_outside_temp(
+        self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys
+    ):
+        snapshot = temp_wiki_root / "gnn.yaml"
+        snapshot.write_text(
+            """version: 1
+collection: {name: GNN, key: A9VNJUPI}
+items:
+  - item_key: ITEMX
+    title: Example
+    item_type: conferencePaper
+    doi: ""
+    tags: []
+""",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        rc = agent_bridge_module.main([
+            "zotero-plan",
+            "--snapshot",
+            "gnn.yaml",
+            "--removal-plan-out",
             "outside.yaml",
         ])
         out = capsys.readouterr().out
@@ -920,3 +1018,211 @@ The source-specific mechanism is described with enough detail for verification.
         report = temp / "ingest-report.yaml"
         assert report.exists()
         assert "passed: true" in report.read_text(encoding="utf-8")
+
+
+class TestCmdZoteroHeal:
+    def _setup_stale_binding(self, temp_wiki_root):
+        page = temp_wiki_root / "wiki" / "Deep-Learning-Paper.md"
+        page.write_text(
+            """---
+created: 2026-08-01
+updated: 2026-08-01
+sources_meta:
+  - title: Deep Learning Paper
+    type: academic_paper
+    doi: 10.1000/xyz
+    zotero_item_key: DEAD0001
+tags: []
+status: active
+---
+
+# Deep Learning Paper
+
+Knowledge body.
+""",
+            encoding="utf-8",
+        )
+        snapshot = temp_wiki_root / "snap.yaml"
+        snapshot.write_text(
+            """version: 1
+library_id: "0"
+collection:
+  name: GNN
+  key: A9VNJUPI
+items:
+  - item_key: NEWKEY01
+    title: Deep Learning Paper (reprinted)
+    item_type: journalArticle
+    doi: 10.1000/xyz
+    tags: []
+""",
+            encoding="utf-8",
+        )
+        return page
+
+    def test_heal_dry_run_reports_stale_without_mutation(
+        self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys
+    ):
+        page = self._setup_stale_binding(temp_wiki_root)
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        rc = agent_bridge_module.main(
+            ["zotero-heal", "--snapshot", "snap.yaml", "--manifest-out", "temp/heal.yaml"]
+        )
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert "DEAD0001" in out
+        assert "NEWKEY01" in out
+        manifest = temp_wiki_root / "temp" / "heal.yaml"
+        assert manifest.exists()
+        assert "mode: review-only" in manifest.read_text(encoding="utf-8")
+        # dry-run 不改页面
+        assert "DEAD0001" in page.read_text(encoding="utf-8")
+
+    def test_heal_apply_rebinds_frontmatter(
+        self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys
+    ):
+        page = self._setup_stale_binding(temp_wiki_root)
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        rc = agent_bridge_module.main(["zotero-heal", "--snapshot", "snap.yaml", "--apply"])
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        text = page.read_text(encoding="utf-8")
+        assert "NEWKEY01" in text
+        assert "DEAD0001" not in text
+        log_text = (temp_wiki_root / "log.md").read_text(encoding="utf-8")
+        assert "zotero-heal" in log_text
+
+    def test_heal_requires_snapshot(
+        self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys
+    ):
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        rc = agent_bridge_module.main(["zotero-heal", "--snapshot", "missing.yaml"])
+        assert rc == 1
+
+
+class TestCmdZoteroAlias:
+    def test_alias_render_with_default_pattern(
+        self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys
+    ):
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        rc = agent_bridge_module.main(
+            ["zotero-alias", "--title", "LoRA: Low-Rank Adaptation",
+             "--collection", "Machine Learning", "--collection", "LLM"]
+        )
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert "Machine-Learning/LLM/LoRA-Low-Rank-Adaptation" in out
+
+    def test_alias_render_with_config_pattern(
+        self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys
+    ):
+        config = temp_wiki_root / "config.yaml"
+        config.write_text(
+            config.read_text(encoding="utf-8")
+            + '\nzotero_import:\n  alias_pattern: "%y-%b"\n',
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        rc = agent_bridge_module.main(
+            ["zotero-alias", "--title", "Ignored", "--year", "2021", "--citekey", "hu2021lora"]
+        )
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert "2021-hu2021lora" in out
+
+    def test_alias_render_rejects_unknown_wildcard(
+        self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys
+    ):
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        rc = agent_bridge_module.main(["zotero-alias", "--title", "X", "--pattern", "%z"])
+        out = capsys.readouterr().out
+        assert rc == 1
+        assert "wildcard" in out
+
+
+class TestCmdZoteroRelocate:
+    def test_dry_run_reports_without_writing(self, agent_bridge_module, temp_wiki_root, monkeypatch, capsys):
+        import yaml
+        from src.llm_wiki.zotero_local import LocalItem
+
+        source = temp_wiki_root.parent / "relocate-source.pdf"
+        source.write_bytes(b"pdf bytes")
+        metadata_path = temp_wiki_root / "sources" / "zotero" / "metadata.yaml"
+        metadata_path.parent.mkdir(parents=True)
+        metadata_path.write_text(
+            yaml.safe_dump(
+                {
+                    "version": 1,
+                    "collections": [{
+                        "name": "Papers",
+                        "items": [{
+                            "title": "A Paper",
+                            "zotero_item_key": "ITEM0001",
+                            "attachments": [{
+                                "zotero_attachment_key": "ATTACH01",
+                                "local_path": str(source),
+                                "source_alias": "sources/zotero/paper.pdf",
+                                "filename": "relocate-source.pdf",
+                            }],
+                        }],
+                    }],
+                },
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
+        managed = temp_wiki_root.parent / "managed"
+        config = (temp_wiki_root / "config.yaml").read_text(encoding="utf-8")
+        (temp_wiki_root / "config.yaml").write_text(
+            config + f"\nzotero_relocation:\n  root: {str(managed)!r}\n  path_template: '%t'\n",
+            encoding="utf-8",
+        )
+
+        class FakeWriter:
+            def __init__(self, *args, **kwargs):
+                self.item = LocalItem(
+                    key="ATTACH01",
+                    version=1,
+                    data={
+                        "key": "ATTACH01",
+                        "itemType": "attachment",
+                        "linkMode": "linked_file",
+                        "path": str(source),
+                        "parentItem": "ITEM0001",
+                        "title": "A Paper",
+                        "date": "2024",
+                        "filename": "relocate-source.pdf",
+                    },
+                )
+
+            async def get_item(self, item_key):
+                return self.item
+
+            async def aclose(self):
+                return None
+
+        monkeypatch.setattr(agent_bridge_module, "PROJECT_ROOT", temp_wiki_root)
+        monkeypatch.setattr("src.llm_wiki.zotero_local.LocalZoteroWriter", FakeWriter)
+        args = _args(
+            metadata="sources/zotero/metadata.yaml",
+            root=None,
+            storage_root=None,
+            pattern=None,
+            item_keys=None,
+            attachment_keys=None,
+            apply=False,
+            delete_source=False,
+            memory_authorize=False,
+            app_name="llm-wiki",
+            report_out="temp/zotero-relocate.yaml",
+        )
+
+        rc = agent_bridge_module.cmd_zotero_relocate(args)
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert "Dry-run only" in out
+        assert (temp_wiki_root / "temp" / "zotero-relocate.yaml").exists()
+        assert not managed.exists()

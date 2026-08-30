@@ -25,6 +25,7 @@ Usage:
     python scripts/agent-bridge.py zotero-plan --snapshot temp/zotero-snapshot.yaml
     python scripts/agent-bridge.py zotero-ingest-verify --snapshot temp/zotero-snapshot.yaml --allocation temp/zotero-allocation.yaml --report-out temp/zotero-ingest-report.yaml
     python scripts/agent-bridge.py zotero-writeback --plan temp/zotero-write-plan.yaml --action audit --report-out temp/zotero-write-audit.yaml
+    python scripts/agent-bridge.py zotero-relocate --root "/absolute/path/to/managed-attachments"
     python scripts/agent-bridge.py merge --source "NewPage" --target "OldPage" \
         --strategy append_related --dry-run
 """
@@ -1018,6 +1019,7 @@ def cmd_zotero_plan(args: argparse.Namespace) -> int:
 
     from src.llm_wiki.core import WikiManager, find_wiki_root
     from src.llm_wiki.zotero_plan import (
+        build_retired_binding_removal_plan,
         build_zotero_plan,
         collect_zotero_bindings,
         load_snapshot,
@@ -1159,6 +1161,218 @@ def cmd_zotero_plan(args: argparse.Namespace) -> int:
         lines.append(_md_info(f"Review manifest written to: {resolved_manifest}"))
         lines.append("")
 
+    if args.removal_plan_out:
+        removal_path = Path(args.removal_plan_out)
+        if removal_path.is_absolute():
+            resolved_removal = removal_path.resolve()
+        else:
+            resolved_removal = (wiki_root / removal_path).resolve()
+        allowed_root = (wiki_root / "temp").resolve()
+        if resolved_removal != allowed_root and allowed_root not in resolved_removal.parents:
+            print(_md_info("Error: --removal-plan-out must stay under the project temp/ directory."))
+            return 1
+        try:
+            removal_plan = build_retired_binding_removal_plan(plan, bindings)
+        except ValueError as exc:
+            print(_md_info(f"Error: cannot build retired-binding removal plan: {exc}"))
+            return 1
+        import yaml
+        resolved_removal.parent.mkdir(parents=True, exist_ok=True)
+        resolved_removal.write_text(
+            yaml.safe_dump(removal_plan, allow_unicode=True, sort_keys=False),
+            encoding="utf-8",
+        )
+        removable_count = sum(len(item["reviewed_removals"]) for item in removal_plan["items"])
+        lines.append(_md_info(
+            f"Retired-binding removal plan written to: {resolved_removal} "
+            f"({removable_count} tag(s) across {len(removal_plan['items'])} item(s)). "
+            "Review it, then apply with `zotero-writeback --action audit|apply|verify`."
+        ))
+        lines.append("")
+
+    print("\n".join(lines))
+    return 0
+
+
+def cmd_zotero_heal(args: argparse.Namespace) -> int:
+    """Detect stale wiki->Zotero bindings and rebind via DOI/citation-key/title."""
+    LOG.info("cmd_zotero_heal: snapshot=%s apply=%s", args.snapshot, args.apply)
+
+    from src.llm_wiki.capabilities import CapabilityError, check_write_paths
+    from src.llm_wiki.config import load_config
+    from src.llm_wiki.core import WikiManager, find_wiki_root
+    from src.llm_wiki.zotero_heal import (
+        apply_heal_plan,
+        plan_heal,
+        plan_to_heal_manifest,
+    )
+    from src.llm_wiki.zotero_plan import collect_zotero_bindings, load_snapshot
+
+    wiki_root = find_wiki_root(PROJECT_ROOT)
+    if not wiki_root:
+        print(_md_info("Error: Cannot find wiki root."))
+        return 1
+
+    config = load_config(wiki_root)
+    wiki = WikiManager(wiki_root / "wiki")
+
+    snapshot_path = Path(args.snapshot)
+    if not snapshot_path.is_absolute():
+        snapshot_path = wiki_root / snapshot_path
+    if not snapshot_path.exists():
+        print(_md_info(f"Error: Snapshot not found: {snapshot_path}"))
+        return 1
+    try:
+        _library_id, collection_name, collection_key, snapshot_items = load_snapshot(snapshot_path)
+    except (OSError, ValueError, TypeError) as exc:
+        LOG.error("Cannot load Zotero snapshot: %s", exc)
+        print(_md_info(f"Error: Cannot load Zotero snapshot: {exc}"))
+        return 1
+
+    bindings = collect_zotero_bindings(wiki)
+    if args.item_keys:
+        selected = set(args.item_keys)
+        bindings = [binding for binding in bindings if binding.item_key in selected]
+
+    plan = plan_heal(
+        bindings,
+        snapshot_items,
+        collection_name=collection_name,
+        collection_key=collection_key,
+    )
+
+    lines: List[str] = []
+    title = "Zotero Binding Heal"
+    if plan.collection_name:
+        title += f": {plan.collection_name}"
+    lines.append(_md_header(title))
+    lines.append("")
+    if not args.apply:
+        lines.append(_md_info(
+            "Read-only plan. No wiki or Zotero files are mutated; re-run with `--apply` "
+            "to rebind matched stale keys in place."
+        ))
+        lines.append("")
+
+    if not plan.stale:
+        lines.append(_md_info("No stale bindings: every wiki-bound item key exists in the snapshot."))
+        lines.append("")
+    else:
+        matched_count = sum(1 for candidate in plan.stale if candidate.new_item_key)
+        lines.append(_md_header("Stale Bindings", level=3))
+        lines.append(_md_table(
+            ["Stale Key", "Page", "Matched By", "New Key", "New Title"],
+            [
+                [
+                    candidate.item_key,
+                    candidate.page_stem,
+                    candidate.matched_by or "unmatched",
+                    candidate.new_item_key or "—",
+                    candidate.new_title or "—",
+                ]
+                for candidate in plan.stale
+            ],
+        ))
+        lines.append("")
+        lines.append(_md_info(f"Stale: {len(plan.stale)} | Matched: {matched_count} | Unmatched: {len(plan.stale) - matched_count}"))
+        lines.append("")
+
+    lines.append(_md_header("Actionable Items", level=3))
+    lines.append(_md_action(
+        "Agent: review matched rebinding candidates above; unmatched stale keys need manual "
+        "Zotero lookup (the candidate pool is limited to this snapshot's collection)."
+    ))
+    lines.append("")
+
+    if args.manifest_out:
+        manifest_path = Path(args.manifest_out)
+        if manifest_path.is_absolute():
+            resolved_manifest = manifest_path.resolve()
+        else:
+            resolved_manifest = (wiki_root / manifest_path).resolve()
+        allowed_root = (wiki_root / "temp").resolve()
+        if resolved_manifest != allowed_root and allowed_root not in resolved_manifest.parents:
+            print(_md_info("Error: --manifest-out must stay under the project temp/ directory."))
+            return 1
+        resolved_manifest.parent.mkdir(parents=True, exist_ok=True)
+        import yaml
+        resolved_manifest.write_text(
+            yaml.safe_dump(plan_to_heal_manifest(plan), allow_unicode=True, sort_keys=False),
+            encoding="utf-8",
+        )
+        lines.append(_md_info(f"Review manifest written to: {resolved_manifest}"))
+        lines.append("")
+
+    if args.apply and plan.stale:
+        write_paths: List[Path] = []
+        for candidate in plan.stale:
+            if not candidate.new_item_key:
+                continue
+            page = wiki.get_page(candidate.page_stem)
+            if page is not None:
+                write_paths.append(page.path)
+        write_paths.append(wiki.log_file)
+        try:
+            check_write_paths(
+                "zotero-heal",
+                [str(path.relative_to(wiki_root)) for path in write_paths],
+                config,
+            )
+        except CapabilityError as exc:
+            LOG.error("zotero-heal apply blocked: %s", exc)
+            print(_md_info(f"Error: capability contract rejected the write set: {exc}"))
+            return 1
+        changed = apply_heal_plan(wiki, plan)
+        lines.append(_md_info(
+            f"Applied: rebound {len(changed)} page(s); see log.md for the heal record."
+        ))
+        lines.append("")
+
+    print("\n".join(lines))
+    return 0
+
+
+def cmd_zotero_alias(args: argparse.Namespace) -> int:
+    """Render a sanitized sources/zotero alias from a wildcard template."""
+    from src.llm_wiki.alias_template import render_alias_template
+    from src.llm_wiki.config import load_config
+    from src.llm_wiki.core import find_wiki_root
+
+    wiki_root = find_wiki_root(PROJECT_ROOT)
+    if not wiki_root:
+        print(_md_info("Error: Cannot find wiki root."))
+        return 1
+
+    config = load_config(wiki_root)
+    pattern = (
+        args.pattern
+        or str((config.get("zotero_import") or {}).get("alias_pattern") or "").strip()
+        or "%c/%t"
+    )
+    context = {
+        "title": args.title or "",
+        "author": args.author or "",
+        "year": args.year or "",
+        "citekey": args.citekey or "",
+        "item_type": args.item_type or "",
+        "collection_path": "/".join(args.collections or []),
+    }
+    try:
+        alias = render_alias_template(pattern, context)
+    except ValueError as exc:
+        print(_md_info(f"Error: {exc}"))
+        return 1
+
+    lines = [
+        _md_header("Zotero Alias Render"),
+        "",
+        _md_table(["Field", "Value"], [["Pattern", pattern], ["Alias", alias]]),
+        "",
+        _md_action(
+            "Agent: use this alias as `source_alias` (plus the attachment's file "
+            "extension) when authoring sources/zotero/metadata.yaml entries."
+        ),
+    ]
     print("\n".join(lines))
     return 0
 
@@ -1364,7 +1578,7 @@ def cmd_zotero_writeback(args: argparse.Namespace) -> int:
 
     config = load_config(wiki_root)
     local_cfg = (config.get("zotero_enrichment") or {}).get("local") or {}
-    writer_kwargs: Dict[str, Any] = {}
+    writer_kwargs: dict[str, Any] = {}
     base_url = str(local_cfg.get("base_url") or "").strip()
     if base_url:
         writer_kwargs["base_url"] = base_url
@@ -1404,10 +1618,17 @@ def cmd_zotero_writeback(args: argparse.Namespace) -> int:
     )
 
     lines = [_md_header(f"Zotero Write-Back: {args.action.title()}"), ""]
-    lines.append(_md_info(
-        "Restricted workflow: managed-tag additions and reviewed reciprocal Related pairs only; "
-        "metadata, collections, notes, tag removals, and Trash are outside this authorization."
-    ))
+    if plan.policy.allow_managed_removals:
+        lines.append(_md_info(
+            "Restricted workflow: managed-tag additions, reviewed reciprocal Related pairs, and "
+            "scoped reviewed managed-tag removals only; metadata, collections, notes, unmanaged/user "
+            "tags, protected tags, and Trash remain outside this authorization."
+        ))
+    else:
+        lines.append(_md_info(
+            "Restricted workflow: managed-tag additions and reviewed reciprocal Related pairs only; "
+            "metadata, collections, notes, tag removals, and Trash are outside this authorization."
+        ))
     lines.append("")
     lines.append(_md_table(
         ["Metric", "Value"],
@@ -1421,12 +1642,13 @@ def cmd_zotero_writeback(args: argparse.Namespace) -> int:
     ))
     lines.append("")
     lines.append(_md_table(
-        ["Item", "Status", "Missing Tags", "Relation Gaps", "Errors"],
+        ["Item", "Status", "Missing Tags", "Present Removals", "Relation Gaps", "Errors"],
         [
             [
                 item.item_key,
                 item.status,
                 ", ".join(item.missing_tags) or "—",
+                ", ".join(item.present_removals) or "—",
                 ", ".join(item.relation_gaps) or "—",
                 "; ".join(item.errors) or "—",
             ]
@@ -1437,6 +1659,164 @@ def cmd_zotero_writeback(args: argparse.Namespace) -> int:
     lines.append(_md_info(f"Machine-readable report written to: {report_path}"))
     print("\n".join(lines))
     return 1 if report.failed_count else 0
+
+
+def cmd_zotero_relocate(args: argparse.Namespace) -> int:
+    """Plan or apply verified Zotero attachment relocation."""
+    import asyncio
+
+    import yaml
+
+    from src.llm_wiki.capabilities import CapabilityError, check_write_paths
+    from src.llm_wiki.config import load_config
+    from src.llm_wiki.core import find_wiki_root
+    from src.llm_wiki.zotero_local import (
+        LocalWriteError,
+        LocalZoteroWriter,
+        authorize_local,
+        load_local_key,
+    )
+    from src.llm_wiki.zotero_relocate import (
+        DEFAULT_METADATA_PATH,
+        RelocationError,
+        RelocationSettings,
+        relocate,
+        report_to_manifest,
+    )
+
+    wiki_root = find_wiki_root(PROJECT_ROOT)
+    if not wiki_root:
+        print(_md_info("Error: Cannot find wiki root."))
+        return 1
+
+    def resolve_input(raw: str) -> Path:
+        path = Path(raw)
+        return path.resolve() if path.is_absolute() else (wiki_root / path).resolve()
+
+    metadata_path = resolve_input(args.metadata or str(DEFAULT_METADATA_PATH))
+    expected_metadata = (wiki_root / DEFAULT_METADATA_PATH).resolve()
+    if metadata_path != expected_metadata or not metadata_path.exists():
+        print(_md_info(
+            "Error: --metadata must point to the existing project "
+            "sources/zotero/metadata.yaml."
+        ))
+        return 1
+
+    report_path = resolve_input(args.report_out or "temp/zotero-relocate.yaml")
+    allowed_temp = (wiki_root / "temp").resolve()
+    if report_path == allowed_temp or allowed_temp not in report_path.parents:
+        print(_md_info("Error: --report-out must stay under the project temp/ directory."))
+        return 1
+
+    try:
+        config = load_config(wiki_root)
+        section = config.get("zotero_relocation") or {}
+        settings = RelocationSettings.from_mapping(
+            section,
+            project_root=wiki_root,
+            root_override=args.root,
+            storage_root_override=args.storage_root,
+            pattern_override=args.pattern,
+            delete_source_override=args.delete_source,
+        )
+        check_write_paths(
+            "zotero-relocate",
+            [Path("sources/zotero/metadata.yaml"), report_path.relative_to(wiki_root)],
+            config,
+        )
+        if args.apply and not settings.enabled:
+            raise RelocationError(
+                "zotero_relocation.enabled must be true before apply; "
+                "dry-run remains available for an explicit root"
+            )
+    except (CapabilityError, LocalWriteError, RelocationError, OSError, ValueError) as exc:
+        print(_md_info(f"Error: invalid relocation configuration: {exc}"))
+        return 1
+
+    local_cfg = (config.get("zotero_enrichment") or {}).get("local") or {}
+    writer_kwargs: dict[str, Any] = {}
+    base_url = str(local_cfg.get("base_url") or "").strip()
+    if base_url:
+        writer_kwargs["base_url"] = base_url
+    timeout = local_cfg.get("timeout_seconds")
+    if timeout is not None:
+        writer_kwargs["timeout"] = float(timeout)
+
+    async def run_relocation():
+        api_key = ""
+        if args.apply:
+            if args.memory_authorize:
+                auth_kwargs = {
+                    key: value for key, value in writer_kwargs.items() if key == "base_url"
+                }
+                api_key = await authorize_local(args.app_name, None, **auth_kwargs)
+            else:
+                api_key = load_local_key(wiki_root / "var" / "zotero-local.json")
+        writer = LocalZoteroWriter(api_key, **writer_kwargs)
+        try:
+            return await relocate(
+                metadata_path,
+                wiki_root,
+                settings,
+                writer,
+                apply=args.apply,
+                item_keys={str(key).strip().upper() for key in (args.item_keys or [])},
+                attachment_keys={
+                    str(key).strip().upper() for key in (args.attachment_keys or [])
+                },
+            )
+        finally:
+            await writer.aclose()
+
+    try:
+        report = asyncio.run(run_relocation())
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(
+            yaml.safe_dump(report_to_manifest(report), allow_unicode=True, sort_keys=False),
+            encoding="utf-8",
+        )
+    except Exception as exc:
+        LOG.exception("Zotero attachment relocation failed")
+        print(_md_info(f"Error: Zotero attachment relocation failed: {exc}"))
+        return 1
+
+    lines = [_md_header("Zotero Attachment Relocation"), ""]
+    if args.apply:
+        lines.append(_md_info("Apply mode: every Zotero path mutation was requested through the local API and verified."))
+    else:
+        lines.append(_md_info("Dry-run only: no files, Zotero items, metadata, or aliases were modified."))
+    lines.extend([
+        "",
+        _md_header("Summary", level=3),
+        _md_table(
+            ["Metric", "Value"],
+            [
+                ["Attachments", str(len(report.plans))],
+                ["Ready", str(sum(plan.status in {"ready", "ready_existing_content", "same_target"} for plan in report.plans))],
+                ["Blocked / errors", str(report.failed_count)],
+                ["Report", str(report_path)],
+            ],
+        ),
+        "",
+        _md_header("Items", level=3),
+        _md_table(
+            ["Item", "Attachment", "Status", "Target", "Reason"],
+            [
+                [
+                    result.get("item_key", ""),
+                    result.get("attachment_key", ""),
+                    result.get("status", ""),
+                    Path(result.get("target", "")).name or "—",
+                    result.get("reason", "") or result.get("cleanup_reason", "") or "—",
+                ]
+                for result in report.results
+            ],
+        ),
+        "",
+        _md_info(f"Machine-readable report written to: {report_path}"),
+    ])
+    print("\n".join(lines))
+    return 1 if args.apply and report.failed_count else 0
 
 
 def cmd_zotero_ingest_verify(args: argparse.Namespace) -> int:
@@ -1782,6 +2162,58 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--manifest-out",
         help="Write a review-only YAML mutation manifest under temp/",
     )
+    zotero_parser.add_argument(
+        "--removal-plan-out",
+        help="Write an authorized-write plan under temp/ removing only retired "
+        "llm-wiki:<page_stem> binding tags (requires snapshot; apply via zotero-writeback)",
+    )
+
+    # zotero-heal
+    heal_parser = subparsers.add_parser(
+        "zotero-heal",
+        help="Detect stale Zotero item keys in wiki bindings and rebind via DOI/citation-key/title",
+    )
+    heal_parser.add_argument(
+        "--snapshot",
+        required=True,
+        help="MCP-produced Zotero collection snapshot in YAML or JSON (candidate pool)",
+    )
+    heal_parser.add_argument(
+        "--item-key",
+        dest="item_keys",
+        action="append",
+        help="Restrict healing to a stale item key (repeatable)",
+    )
+    heal_parser.add_argument(
+        "--manifest-out",
+        help="Write a review-only heal manifest under temp/",
+    )
+    heal_parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Rewrite matched wiki frontmatter zotero_item_key values in place and log the change",
+    )
+
+    # zotero-alias
+    alias_parser = subparsers.add_parser(
+        "zotero-alias",
+        help="Render a sanitized sources/zotero alias from a wildcard template (read-only)",
+    )
+    alias_parser.add_argument("--title", help="Source title (%t)")
+    alias_parser.add_argument("--author", help="First author (%a)")
+    alias_parser.add_argument("--year", help="Publication year (%y)")
+    alias_parser.add_argument("--citekey", help="Citation key (%b)")
+    alias_parser.add_argument("--item-type", help="Zotero item type (%T)")
+    alias_parser.add_argument(
+        "--collection",
+        dest="collections",
+        action="append",
+        help="Collection name; repeat from outermost to innermost for the %c hierarchy",
+    )
+    alias_parser.add_argument(
+        "--pattern",
+        help="Wildcard pattern override (default: config zotero_import.alias_pattern or %c/%t)",
+    )
 
     # zotero-refresh
     refresh_parser = subparsers.add_parser(
@@ -1856,6 +2288,66 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Application name shown in the Zotero authorization dialog",
     )
 
+    # zotero-relocate
+    relocate_parser = subparsers.add_parser(
+        "zotero-relocate",
+        help="Plan or apply verified Zotero attachment relocation",
+    )
+    relocate_parser.add_argument(
+        "--metadata",
+        default="sources/zotero/metadata.yaml",
+        help="Private Zotero metadata file (must be project sources/zotero/metadata.yaml)",
+    )
+    relocate_parser.add_argument(
+        "--root",
+        help="Override the configured absolute managed attachment root",
+    )
+    relocate_parser.add_argument(
+        "--storage-root",
+        help="Override the absolute Zotero storage root for imported-file attachments",
+    )
+    relocate_parser.add_argument(
+        "--pattern",
+        help="Override zotero_relocation.path_template",
+    )
+    relocate_parser.add_argument(
+        "--item-key",
+        dest="item_keys",
+        action="append",
+        help="Restrict to a parent item key (repeatable)",
+    )
+    relocate_parser.add_argument(
+        "--attachment-key",
+        dest="attachment_keys",
+        action="append",
+        help="Restrict to an attachment item key (repeatable)",
+    )
+    relocate_parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Apply the relocation; without this flag the command is dry-run",
+    )
+    relocate_parser.add_argument(
+        "--delete-source",
+        action="store_true",
+        help="Request old-source cleanup (still requires allowed_source_roots)",
+    )
+    relocate_parser.add_argument(
+        "--memory-authorize",
+        action="store_true",
+        help="For apply, request a process-memory-only Zotero key",
+    )
+    relocate_parser.add_argument(
+        "--app-name",
+        default="llm-wiki",
+        help="Application name shown in the Zotero authorization dialog",
+    )
+    relocate_parser.add_argument(
+        "--report-out",
+        default="temp/zotero-relocate.yaml",
+        help="Machine-readable report path under project temp/",
+    )
+
     # zotero-ingest-verify
     ingest_verify_parser = subparsers.add_parser(
         "zotero-ingest-verify",
@@ -1882,7 +2374,12 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     args = parser.parse_args(argv)
 
-    LOG.info("Agent Bridge invoked: command=%s args=%s", args.command, vars(args))
+    log_args = vars(args).copy()
+    if args.command == "zotero-relocate":
+        for field in ("root", "storage_root", "metadata", "report_out"):
+            if log_args.get(field):
+                log_args[field] = "<redacted-path>"
+    LOG.info("Agent Bridge invoked: command=%s args=%s", args.command, log_args)
 
     dispatch = {
         "check": cmd_check,
@@ -1897,9 +2394,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         "capabilities": cmd_capabilities,
         "hot": cmd_hot,
         "zotero-plan": cmd_zotero_plan,
+        "zotero-heal": cmd_zotero_heal,
+        "zotero-alias": cmd_zotero_alias,
         "zotero-refresh": cmd_zotero_refresh,
         "zotero-local-auth": cmd_zotero_local_auth,
         "zotero-writeback": cmd_zotero_writeback,
+        "zotero-relocate": cmd_zotero_relocate,
         "zotero-ingest-verify": cmd_zotero_ingest_verify,
     }
 

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+
+import pytest
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -285,3 +287,45 @@ def test_report_manifest_keeps_safe_and_review_sections(tmp_path: Path):
     assert manifest["mode"] == "review-only"
     assert manifest["items"][0]["safe_updates"]["add_tags"] == [PUBLICATION_REVIEW_TAG]
     assert "published_version_candidate" in manifest["items"][0]["metadata_review"]
+
+
+def test_get_items_tolerant_keeps_successes_and_reports_failures():
+    from src.llm_wiki.zotero_mcp_client import ZoteroMCPError
+
+    client = ZoteroMCPClient(Path("ignored"))
+
+    async def fake_get(item_key: str):
+        if item_key == "DEAD0001":
+            raise ZoteroMCPError("not found")
+        return {"key": item_key}
+
+    client.get_item_metadata = fake_get  # type: ignore[method-assign]
+    items, failures = asyncio.run(
+        client.get_items_tolerant(["ITEM0001", "DEAD0001", "ITEM0002"], concurrency=2)
+    )
+    assert items == [{"key": "ITEM0001"}, {"key": "ITEM0002"}]
+    assert failures == [("DEAD0001", "not found")]
+
+
+def test_get_items_remains_strict_for_atomic_callers():
+    from src.llm_wiki.zotero_mcp_client import ZoteroMCPError
+
+    client = ZoteroMCPClient(Path("ignored"))
+
+    async def fake_get(item_key: str):
+        raise ZoteroMCPError("boom")
+
+    client.get_item_metadata = fake_get  # type: ignore[method-assign]
+    with pytest.raises(ZoteroMCPError):
+        asyncio.run(client.get_items(["DEAD0001"]))
+
+
+def test_failed_item_mutations_marks_pending_heal():
+    from src.llm_wiki.zotero_refresh import failed_item_mutations
+
+    mutations = failed_item_mutations([("DEAD0001", "not found")])
+    assert len(mutations) == 1
+    mutation = mutations[0]
+    assert mutation.item_key == "DEAD0001"
+    assert mutation.has_safe_changes is False
+    assert any("not found" in error for error in mutation.errors)

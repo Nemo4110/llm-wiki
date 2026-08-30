@@ -634,6 +634,18 @@ async def build_refresh_report(
     )
 
 
+def failed_item_mutations(failures: Sequence[Tuple[str, str]]) -> List[RefreshMutation]:
+    """把元数据加载失败的条目降级为待修复记录(不产生任何安全写入)。"""
+    return [
+        RefreshMutation(
+            item_key=key,
+            title="(metadata unavailable)",
+            errors=[f"metadata load failed; pending heal: {message}"],
+        )
+        for key, message in failures
+    ]
+
+
 def report_to_manifest(report: RefreshReport) -> Dict[str, Any]:
     items: List[Dict[str, Any]] = []
     for mutation in report.items:
@@ -706,7 +718,9 @@ async def run_live_refresh(
             keys = [key for key in keys if key in item_keys]
         if limit is not None:
             keys = keys[: max(0, limit)]
-        metadata = await zotero.get_items(keys, concurrency=settings.max_concurrency)
+        metadata, load_failures = await zotero.get_items_tolerant(
+            keys, concurrency=settings.max_concurrency
+        )
         items = [RefreshItem.from_zotero(data) for data in metadata]
 
         timeout = httpx.Timeout(settings.request_timeout_seconds)
@@ -731,6 +745,8 @@ async def run_live_refresh(
                     collection_name=collection_name,
                     concurrency=settings.max_concurrency,
                 )
+        if load_failures:
+            report.items.extend(failed_item_mutations(load_failures))
 
         if apply_safe:
             writer: Any = zotero
@@ -767,7 +783,7 @@ async def run_live_refresh(
                     if delay:
                         await asyncio.sleep(delay)
                     try:
-                        metadata_batch = await zotero.get_items(
+                        metadata_batch, _verify_load_failures = await zotero.get_items_tolerant(
                             list(pending),
                             concurrency=settings.max_concurrency,
                         )
