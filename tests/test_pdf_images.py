@@ -1,8 +1,8 @@
 """Tests for PDF image and figure extraction."""
 
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
 import fitz
 import pytest
@@ -13,7 +13,6 @@ from llm_wiki.pdf_images import (
     extract_vector_figures,
     parse_pages,
 )
-
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -27,7 +26,9 @@ def _make_red_pixmap(size: int = 10) -> fitz.Pixmap:
     return pix
 
 
-def _make_test_pdf(tmp_path: Path, with_image: bool = False, with_drawing: bool = False) -> Path:
+def _make_test_pdf(
+    tmp_path: Path, with_image: bool = False, with_drawing: bool = False
+) -> Path:
     """Create a minimal PDF for testing extraction paths."""
     pdf_path = tmp_path / "test.pdf"
     doc = fitz.open()

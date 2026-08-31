@@ -449,7 +449,7 @@ Zotero child notes are index cards, not wiki mirrors. Use them to store the wiki
 
 For Zotero collection batches, keep the verified MCP snapshot and complete item allocation ledger under ignored `temp/`, then run `agent-bridge.py zotero-ingest-verify` before declaring ingest coverage complete. Use the schema in `docs/examples/zotero-ingest-allocation.example.yaml` when available.
 
-Zotero MCP remains the default for reads and writes. The only temporary local exception is `agent-bridge.py zotero-writeback` with a secret-free, reviewed `mode: authorized-write` plan. It may add only `llm-wiki:*` tags and ensure reviewed reciprocal Related pairs, with optimistic concurrency and read-after-write verification. It must not remove tags, edit metadata, change collections, write notes, or touch Trash. Use `--memory-authorize` when the key should exist only for the current process.
+Zotero MCP remains the default for reads and writes. The temporary local exceptions are the secret-free, reviewed `agent-bridge.py zotero-writeback` workflow and the separately gated `agent-bridge.py zotero-relocate` attachment workflow. The former may add only `llm-wiki:*` tags and ensure reviewed reciprocal Related pairs, with optimistic concurrency and read-after-write verification. The latter may update only an existing attachment `linkMode` / `path` plus private local bindings after filesystem and post-write verification. Neither workflow may clone/delete items, edit notes, change collections, or perform arbitrary API access. Use `--memory-authorize` when the key should exist only for the current process.
 
 ### Standard Network Fetch Template
 
@@ -533,8 +533,9 @@ doc.close()
 
 # Extract identifiers
 import re
-doi = re.search(r'10\.\d{4,}/[^\s]+', text)
-arXiv = re.search(r'arXiv:\d{4}\.\d{4,}', text, re.I)
+
+doi = re.search(r"10\.\d{4,}/[^\s]+", text)
+arXiv = re.search(r"arXiv:\d{4}\.\d{4,}", text, re.I)
 # Title is usually the largest text block on page 1
 ```
 

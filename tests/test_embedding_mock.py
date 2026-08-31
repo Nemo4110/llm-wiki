@@ -139,6 +139,18 @@ class TestEmbeddingIndexSearch:
         results = index.search("容器部署", top_k=2)
         assert len(results) <= 2
 
+    def test_search_reuses_normalized_embedding_matrix(self, temp_wiki):
+        wiki, provider = temp_wiki
+        index = EmbeddingIndex(wiki, provider)
+        index.build()
+
+        index.search("微调方法", top_k=3)
+        first_matrix = index._normalized_matrix
+        index.search("容器部署", top_k=3)
+
+        assert index._normalized_matrix is first_matrix
+        assert index._vector_titles
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
@@ -155,8 +167,11 @@ class TestBM25KeywordSearch:
         # "参数效率与微调" 不是任何页面的子串,但其词项(参数/效率/微调)
         # 集中出现在 LoRA 页面
         results = index.search(
-            "参数效率与微调", top_k=3,
-            keyword_weight=1.0, vector_weight=0.0, link_weight=0.0,
+            "参数效率与微调",
+            top_k=3,
+            keyword_weight=1.0,
+            vector_weight=0.0,
+            link_weight=0.0,
         )
         ranked = dict(results)
         assert ranked.get("LoRA", 0.0) > 0.0

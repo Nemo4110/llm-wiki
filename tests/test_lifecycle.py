@@ -7,7 +7,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-import pytest
 
 from llm_wiki.core import LIFECYCLE_STATES, WikiManager
 
@@ -19,9 +18,14 @@ def _make_wiki(tmp_path, pages):
     wiki = WikiManager(wiki_dir)
     for title, body, status in pages:
         wiki.create_page(
-            title, body,
-            {"created": "2026-08-01", "updated": "2026-08-01",
-             "tags": ["test"], "status": status},
+            title,
+            body,
+            {
+                "created": "2026-08-01",
+                "updated": "2026-08-01",
+                "tags": ["test"],
+                "status": status,
+            },
         )
     return wiki
 
@@ -44,7 +48,9 @@ class TestLintLifecycle:
 
     def test_developing_shallow_is_not_mismatch(self, tmp_path):
         # developing 页面允许浅——它还在成长
-        wiki = _make_wiki(tmp_path, [("Growing", "# Growing\n\n一句话。\n", "developing")])
+        wiki = _make_wiki(
+            tmp_path, [("Growing", "# Growing\n\n一句话。\n", "developing")]
+        )
         issues = wiki.lint()
         assert issues["lifecycle_mismatch"] == []
 
@@ -63,10 +69,13 @@ class TestLintLifecycle:
         assert any("Weird" in m and "publised" in m for m in issues["invalid_status"])
 
     def test_legacy_statuses_accepted(self, tmp_path):
-        wiki = _make_wiki(tmp_path, [
-            ("A", "# A\n\n内容。\n", "draft"),
-            ("B", "# B\n\n内容。\n", "active"),
-            ("C", "# C\n\n内容。\n", "archived"),
-        ])
+        wiki = _make_wiki(
+            tmp_path,
+            [
+                ("A", "# A\n\n内容。\n", "draft"),
+                ("B", "# B\n\n内容。\n", "active"),
+                ("C", "# C\n\n内容。\n", "archived"),
+            ],
+        )
         issues = wiki.lint()
         assert issues["invalid_status"] == []

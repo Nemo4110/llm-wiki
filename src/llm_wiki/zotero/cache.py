@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Self
 
 
 class EnrichmentCache:
@@ -35,7 +35,7 @@ class EnrichmentCache:
     def close(self) -> None:
         self._connection.close()
 
-    def __enter__(self) -> "EnrichmentCache":
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
@@ -48,8 +48,8 @@ class EnrichmentCache:
         operation: str,
         *,
         max_age_days: int,
-        now: Optional[datetime] = None,
-    ) -> Optional[Any]:
+        now: datetime | None = None,
+    ) -> Any | None:
         row = self._connection.execute(
             """
             SELECT checked_at, status, value_json
@@ -63,8 +63,8 @@ class EnrichmentCache:
 
         checked_at = datetime.fromisoformat(row[0])
         if checked_at.tzinfo is None:
-            checked_at = checked_at.replace(tzinfo=timezone.utc)
-        current = now or datetime.now(timezone.utc)
+            checked_at = checked_at.replace(tzinfo=UTC)
+        current = now or datetime.now(UTC)
         if current - checked_at > timedelta(days=max_age_days):
             return None
         return json.loads(row[2])
@@ -76,9 +76,9 @@ class EnrichmentCache:
         operation: str,
         value: Any,
         *,
-        checked_at: Optional[datetime] = None,
+        checked_at: datetime | None = None,
     ) -> None:
-        timestamp = (checked_at or datetime.now(timezone.utc)).isoformat()
+        timestamp = (checked_at or datetime.now(UTC)).isoformat()
         self._connection.execute(
             """
             INSERT INTO enrichment_cache (
@@ -90,7 +90,13 @@ class EnrichmentCache:
                 value_json = excluded.value_json,
                 error = NULL
             """,
-            (item_key, provider, operation, timestamp, json.dumps(value, ensure_ascii=False)),
+            (
+                item_key,
+                provider,
+                operation,
+                timestamp,
+                json.dumps(value, ensure_ascii=False),
+            ),
         )
         self._connection.commit()
 
@@ -101,9 +107,9 @@ class EnrichmentCache:
         operation: str,
         error: str,
         *,
-        checked_at: Optional[datetime] = None,
+        checked_at: datetime | None = None,
     ) -> None:
-        timestamp = (checked_at or datetime.now(timezone.utc)).isoformat()
+        timestamp = (checked_at or datetime.now(UTC)).isoformat()
         self._connection.execute(
             """
             INSERT INTO enrichment_cache (

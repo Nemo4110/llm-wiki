@@ -9,13 +9,11 @@ import logging
 from io import StringIO
 from pathlib import Path
 
-import pytest
-
 from llm_wiki.agent_logger import (
-    setup_agent_logging,
-    get_logger,
-    _AgentLogFilter,
     _AGENT_LOG_FORMAT,
+    _AgentLogFilter,
+    get_logger,
+    setup_agent_logging,
 )
 
 

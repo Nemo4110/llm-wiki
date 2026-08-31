@@ -41,9 +41,9 @@ class TestRecordActivity:
             wiki.record_activity(f"entry-{i:02d}", [f"wiki/P{i}.md"])
 
         text = (wiki.wiki_dir / "hot.md").read_text(encoding="utf-8")
-        assert "entry-24" in text           # 最新保留
-        assert "entry-05" in text           # 第 20 条仍在
-        assert "entry-04" not in text       # 超出边界被截断
+        assert "entry-24" in text  # 最新保留
+        assert "entry-05" in text  # 第 20 条仍在
+        assert "entry-04" not in text  # 超出边界被截断
 
     def test_existing_knowledge_body_preserved(self, wiki):
         # hot.md 头部说明之后的条目区被替换,头部保留

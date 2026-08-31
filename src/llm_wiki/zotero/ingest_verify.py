@@ -4,22 +4,23 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Tuple
+from typing import Any
 
 import yaml
 
-from .zotero_plan import load_snapshot
+from .plan import load_snapshot
 
 _ALLOWED_STATUSES = {"ingested", "allocated_elsewhere", "omitted"}
 _CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _PRIVATE_PATH_RE = re.compile(
     r"(?:[A-Za-z]:\\Users\\[^\r\n]+|/(?:Users|home)/[^/\r\n]+)",
-    flags=re.I,
+    flags=re.IGNORECASE,
 )
-_TRAILING_RE = re.compile(r"[ \t]+$", flags=re.M)
-_HEADING_RE = re.compile(r"^##\s+(.+?)\s*$", flags=re.M)
+_TRAILING_RE = re.compile(r"[ \t]+$", flags=re.MULTILINE)
+_HEADING_RE = re.compile(r"^##\s+(.+?)\s*$", flags=re.MULTILINE)
 _ITEM_KEY_RE = re.compile(r"^[A-Z0-9]{8}$")
 
 
@@ -32,7 +33,7 @@ class Allocation:
     item_index: int
     item_key: str
     status: str
-    pages: Tuple[str, ...] = ()
+    pages: tuple[str, ...] = ()
     omission_reason: str = ""
 
 
@@ -50,8 +51,8 @@ class IngestVerificationReport:
     collection_key: str
     snapshot_count: int
     allocation_count: int
-    errors: Tuple[IngestIssue, ...]
-    warnings: Tuple[IngestIssue, ...]
+    errors: tuple[IngestIssue, ...]
+    warnings: tuple[IngestIssue, ...]
 
     @property
     def passed(self) -> bool:
@@ -63,7 +64,7 @@ class _PageAudit:
     stem: str
     frontmatter: Mapping[str, Any]
     text: str
-    headings: Tuple[str, ...]
+    headings: tuple[str, ...]
     knowledge_length: int
 
 
@@ -75,7 +76,9 @@ def _load_structured(path: Path) -> Mapping[str, Any]:
         else:
             data = yaml.safe_load(source.read_text(encoding="utf-8"))
     except (OSError, ValueError, TypeError, yaml.YAMLError) as exc:
-        raise IngestVerificationError("allocation ledger is unreadable or invalid YAML/JSON") from exc
+        raise IngestVerificationError(
+            "allocation ledger is unreadable or invalid YAML/JSON"
+        ) from exc
     if not isinstance(data, Mapping):
         raise IngestVerificationError("allocation ledger root must be a mapping")
     return data
@@ -87,9 +90,10 @@ def _normalize_page(value: Any) -> str:
         raise IngestVerificationError("allocation page name cannot be empty")
     path = Path(raw)
     if path.is_absolute() or ".." in path.parts:
-        raise IngestVerificationError("allocation page must be a wiki-relative page stem")
-    if raw.startswith("wiki/"):
-        raw = raw[5:]
+        raise IngestVerificationError(
+            "allocation page must be a wiki-relative page stem"
+        )
+    raw = raw.removeprefix("wiki/")
     if "/" in raw:
         raise IngestVerificationError("allocation page must not contain subdirectories")
     if raw.lower().endswith(".md"):
@@ -99,11 +103,13 @@ def _normalize_page(value: Any) -> str:
     return raw
 
 
-def load_allocation_ledger(path: Path) -> tuple[str, int, Tuple[Allocation, ...]]:
+def load_allocation_ledger(path: Path) -> tuple[str, int, tuple[Allocation, ...]]:
     data = _load_structured(path)
     unknown_root = sorted(set(data) - {"version", "collection", "allocations"})
     if unknown_root:
-        raise IngestVerificationError(f"allocation ledger contains unknown fields: {unknown_root}")
+        raise IngestVerificationError(
+            f"allocation ledger contains unknown fields: {unknown_root}"
+        )
     if data.get("version") != 1:
         raise IngestVerificationError("allocation ledger must declare version: 1")
     collection = data.get("collection") or {}
@@ -117,14 +123,18 @@ def load_allocation_ledger(path: Path) -> tuple[str, int, Tuple[Allocation, ...]
     collection_key = str(collection.get("key") or "").strip().upper()
     snapshot_count = collection.get("snapshot_count")
     if not _ITEM_KEY_RE.fullmatch(collection_key):
-        raise IngestVerificationError("allocation collection.key must be 8 ASCII letters/digits")
+        raise IngestVerificationError(
+            "allocation collection.key must be 8 ASCII letters/digits"
+        )
     if not isinstance(snapshot_count, int) or snapshot_count < 0:
-        raise IngestVerificationError("allocation collection.snapshot_count must be a non-negative integer")
+        raise IngestVerificationError(
+            "allocation collection.snapshot_count must be a non-negative integer"
+        )
 
     raw_allocations = data.get("allocations")
     if not isinstance(raw_allocations, list):
         raise IngestVerificationError("allocations must be a list")
-    allocations: List[Allocation] = []
+    allocations: list[Allocation] = []
     for index, raw in enumerate(raw_allocations):
         if not isinstance(raw, Mapping):
             raise IngestVerificationError(f"allocations[{index}] must be a mapping")
@@ -137,7 +147,9 @@ def load_allocation_ledger(path: Path) -> tuple[str, int, Tuple[Allocation, ...]
             )
         item_index = raw.get("item_index")
         if not isinstance(item_index, int) or item_index < 1:
-            raise IngestVerificationError(f"allocations[{index}].item_index must be a positive integer")
+            raise IngestVerificationError(
+                f"allocations[{index}].item_index must be a positive integer"
+            )
         item_key = str(raw.get("item_key") or "").strip().upper()
         if not _ITEM_KEY_RE.fullmatch(item_key):
             raise IngestVerificationError(f"allocations[{index}].item_key is invalid")
@@ -153,7 +165,9 @@ def load_allocation_ledger(path: Path) -> tuple[str, int, Tuple[Allocation, ...]
             raise IngestVerificationError(f"allocations[{index}].pages must be a list")
         pages = tuple(_normalize_page(value) for value in raw_pages)
         if len(pages) != len(set(pages)):
-            raise IngestVerificationError(f"allocations[{index}].pages contains duplicates")
+            raise IngestVerificationError(
+                f"allocations[{index}].pages contains duplicates"
+            )
         allocations.append(
             Allocation(
                 item_index=item_index,
@@ -194,22 +208,50 @@ def _split_frontmatter(text: str) -> tuple[Mapping[str, Any], str]:
     return frontmatter, normalized[end + 5 :]
 
 
-def _audit_page(path: Path) -> tuple[_PageAudit | None, List[IngestIssue]]:
-    issues: List[IngestIssue] = []
+def _audit_page(path: Path) -> tuple[_PageAudit | None, list[IngestIssue]]:
+    issues: list[IngestIssue] = []
     stem = path.stem
     try:
         raw = path.read_bytes()
         text = raw.decode("utf-8-sig")
     except (OSError, UnicodeDecodeError):
-        return None, [_issue("error", "unreadable-page", "allocated page is not readable UTF-8", page=stem)]
+        return None, [
+            _issue(
+                "error",
+                "unreadable-page",
+                "allocated page is not readable UTF-8",
+                page=stem,
+            )
+        ]
 
     scan_text = text.replace("\r\n", "\n").replace("\r", "\n")
     if _CONTROL_RE.search(scan_text):
-        issues.append(_issue("error", "control-character", "page contains forbidden control characters", page=stem))
+        issues.append(
+            _issue(
+                "error",
+                "control-character",
+                "page contains forbidden control characters",
+                page=stem,
+            )
+        )
     if _TRAILING_RE.search(scan_text):
-        issues.append(_issue("error", "trailing-whitespace", "page contains trailing spaces or tabs", page=stem))
+        issues.append(
+            _issue(
+                "error",
+                "trailing-whitespace",
+                "page contains trailing spaces or tabs",
+                page=stem,
+            )
+        )
     if _PRIVATE_PATH_RE.search(scan_text):
-        issues.append(_issue("error", "private-path-leak", "page contains a machine-specific user path", page=stem))
+        issues.append(
+            _issue(
+                "error",
+                "private-path-leak",
+                "page contains a machine-specific user path",
+                page=stem,
+            )
+        )
 
     try:
         frontmatter, body = _split_frontmatter(text)
@@ -217,16 +259,25 @@ def _audit_page(path: Path) -> tuple[_PageAudit | None, List[IngestIssue]]:
         issues.append(_issue("error", "invalid-frontmatter", str(exc), page=stem))
         return None, issues
 
-    if not re.search(r"^#\s+\S", body, flags=re.M):
-        issues.append(_issue("error", "missing-title", "page is missing an H1 title", page=stem))
-    h1 = re.search(r"^#\s+.+?$", body, flags=re.M)
-    first_h2 = re.search(r"^##\s+", body, flags=re.M)
+    if not re.search(r"^#\s+\S", body, flags=re.MULTILINE):
+        issues.append(
+            _issue("error", "missing-title", "page is missing an H1 title", page=stem)
+        )
+    h1 = re.search(r"^#\s+.+?$", body, flags=re.MULTILINE)
+    first_h2 = re.search(r"^##\s+", body, flags=re.MULTILINE)
     definition = ""
     if h1:
         end = first_h2.start() if first_h2 else len(body)
         definition = body[h1.end() : end].strip().lstrip(">").strip()
     if len(definition) < 20:
-        issues.append(_issue("error", "missing-definition", "page lacks a one-sentence definition", page=stem))
+        issues.append(
+            _issue(
+                "error",
+                "missing-definition",
+                "page lacks a one-sentence definition",
+                page=stem,
+            )
+        )
 
     headings = tuple(match.strip() for match in _HEADING_RE.findall(body))
     normalized_headings = {heading.casefold() for heading in headings}
@@ -237,22 +288,45 @@ def _audit_page(path: Path) -> tuple[_PageAudit | None, List[IngestIssue]]:
     }
     for code, aliases in required.items():
         if not normalized_headings & aliases:
-            issues.append(_issue("error", f"missing-{code}", f"page is missing the {code} section", page=stem))
+            issues.append(
+                _issue(
+                    "error",
+                    f"missing-{code}",
+                    f"page is missing the {code} section",
+                    page=stem,
+                )
+            )
 
     invariant_aliases = set().union(*required.values())
-    knowledge_headings = [heading for heading in headings if heading.casefold() not in invariant_aliases]
+    knowledge_headings = [
+        heading for heading in headings if heading.casefold() not in invariant_aliases
+    ]
     if not knowledge_headings:
-        issues.append(_issue("error", "missing-knowledge-content", "page has no source-dependent knowledge section", page=stem))
+        issues.append(
+            _issue(
+                "error",
+                "missing-knowledge-content",
+                "page has no source-dependent knowledge section",
+                page=stem,
+            )
+        )
     knowledge_length = 0
     for heading in knowledge_headings:
-        match = re.search(rf"^##\s+{re.escape(heading)}\s*$", body, flags=re.M)
+        match = re.search(rf"^##\s+{re.escape(heading)}\s*$", body, flags=re.MULTILINE)
         if not match:
             continue
-        next_match = re.search(r"^##\s+", body[match.end() :], flags=re.M)
+        next_match = re.search(r"^##\s+", body[match.end() :], flags=re.MULTILINE)
         end = match.end() + next_match.start() if next_match else len(body)
         knowledge_length += len(body[match.end() : end].strip())
     if knowledge_length < 40:
-        issues.append(_issue("error", "shallow-knowledge-content", "source-dependent knowledge content is too short", page=stem))
+        issues.append(
+            _issue(
+                "error",
+                "shallow-knowledge-content",
+                "source-dependent knowledge content is too short",
+                page=stem,
+            )
+        )
 
     return _PageAudit(stem, frontmatter, text, headings, knowledge_length), issues
 
@@ -263,10 +337,12 @@ def verify_collection_ingest(
     allocation_path: Path,
 ) -> IngestVerificationReport:
     """Verify one collection snapshot against its allocation ledger and wiki pages."""
-    errors: List[IngestIssue] = []
-    warnings: List[IngestIssue] = []
+    errors: list[IngestIssue] = []
+    warnings: list[IngestIssue] = []
     try:
-        _, _, snapshot_collection_key, snapshot_items = load_snapshot(Path(snapshot_path))
+        _, _, snapshot_collection_key, snapshot_items = load_snapshot(
+            Path(snapshot_path)
+        )
     except (OSError, ValueError, TypeError, yaml.YAMLError) as exc:
         return IngestVerificationReport(
             "",
@@ -276,7 +352,9 @@ def verify_collection_ingest(
             (),
         )
     try:
-        collection_key, declared_count, allocations = load_allocation_ledger(Path(allocation_path))
+        collection_key, declared_count, allocations = load_allocation_ledger(
+            Path(allocation_path)
+        )
     except IngestVerificationError as exc:
         return IngestVerificationReport(
             snapshot_collection_key,
@@ -289,20 +367,56 @@ def verify_collection_ingest(
     snapshot_count = len(snapshot_items)
     allocation_count = len(allocations)
     if collection_key != snapshot_collection_key:
-        errors.append(_issue("error", "collection-key-mismatch", "snapshot and allocation collection keys differ"))
+        errors.append(
+            _issue(
+                "error",
+                "collection-key-mismatch",
+                "snapshot and allocation collection keys differ",
+            )
+        )
     if declared_count != snapshot_count:
-        errors.append(_issue("error", "snapshot-count-mismatch", "declared snapshot_count does not match the snapshot"))
+        errors.append(
+            _issue(
+                "error",
+                "snapshot-count-mismatch",
+                "declared snapshot_count does not match the snapshot",
+            )
+        )
     if allocation_count != snapshot_count:
-        errors.append(_issue("error", "allocation-count-mismatch", "allocation count does not match the snapshot"))
+        errors.append(
+            _issue(
+                "error",
+                "allocation-count-mismatch",
+                "allocation count does not match the snapshot",
+            )
+        )
 
     keys = [allocation.item_key for allocation in allocations]
     indices = [allocation.item_index for allocation in allocations]
     if len(keys) != len(set(keys)):
-        errors.append(_issue("error", "duplicate-item-key", "allocation ledger contains duplicate item keys"))
+        errors.append(
+            _issue(
+                "error",
+                "duplicate-item-key",
+                "allocation ledger contains duplicate item keys",
+            )
+        )
     if len(indices) != len(set(indices)):
-        errors.append(_issue("error", "duplicate-item-index", "allocation ledger contains duplicate item indices"))
+        errors.append(
+            _issue(
+                "error",
+                "duplicate-item-index",
+                "allocation ledger contains duplicate item indices",
+            )
+        )
     if sorted(set(indices)) != list(range(1, snapshot_count + 1)):
-        errors.append(_issue("error", "item-index-gap", "item indices must cover 1..snapshot_count exactly"))
+        errors.append(
+            _issue(
+                "error",
+                "item-index-gap",
+                "item indices must cover 1..snapshot_count exactly",
+            )
+        )
 
     snapshot_keys = {item.item_key for item in snapshot_items}
     allocation_keys = set(keys)
@@ -316,7 +430,7 @@ def verify_collection_ingest(
         )
 
     wiki_root = Path(wiki_dir).resolve()
-    page_cache: Dict[str, _PageAudit | None] = {}
+    page_cache: dict[str, _PageAudit | None] = {}
     for allocation in allocations:
         if allocation.status == "omitted":
             if not allocation.omission_reason:
@@ -378,8 +492,12 @@ def verify_collection_ingest(
             if stem not in page_cache:
                 audit, page_issues = _audit_page(page_path)
                 page_cache[stem] = audit
-                errors.extend(issue for issue in page_issues if issue.severity == "error")
-                warnings.extend(issue for issue in page_issues if issue.severity == "warning")
+                errors.extend(
+                    issue for issue in page_issues if issue.severity == "error"
+                )
+                warnings.extend(
+                    issue for issue in page_issues if issue.severity == "warning"
+                )
             audit = page_cache[stem]
             if audit is None:
                 continue
@@ -420,7 +538,7 @@ def verify_collection_ingest(
                     )
                 )
 
-    signature_groups: Dict[Tuple[str, ...], List[_PageAudit]] = {}
+    signature_groups: dict[tuple[str, ...], list[_PageAudit]] = {}
     for audit in page_cache.values():
         if audit is not None:
             signature = tuple(heading.casefold() for heading in audit.headings)
@@ -447,10 +565,11 @@ def verify_collection_ingest(
     )
 
 
-def ingest_report_to_manifest(report: IngestVerificationReport) -> Dict[str, Any]:
+def ingest_report_to_manifest(report: IngestVerificationReport) -> dict[str, Any]:
     """Serialize the verifier result without page contents or private paths."""
-    def serialize(issue: IngestIssue) -> Dict[str, Any]:
-        row: Dict[str, Any] = {
+
+    def serialize(issue: IngestIssue) -> dict[str, Any]:
+        row: dict[str, Any] = {
             "code": issue.code,
             "message": issue.message,
         }

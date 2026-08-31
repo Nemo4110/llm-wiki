@@ -13,15 +13,14 @@
    删除已创建的文件
 """
 
+import difflib
 import hashlib
 import os
 import shutil
 import uuid
-import difflib
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import List, Optional
 
 from .agent_logger import get_logger
 
@@ -43,7 +42,7 @@ class FileOp:
     op: str
     path: Path  # 相对于事务根目录
     content: str
-    expected_sha256: Optional[str] = None
+    expected_sha256: str | None = None
 
 
 @dataclass(frozen=True)
@@ -51,7 +50,7 @@ class TxReceipt:
     """事务应用凭证"""
 
     tx_id: str
-    changed: List[Path]  # 相对路径,按 stage 顺序
+    changed: list[Path]  # 相对路径,按 stage 顺序
     journal_dir: Path
 
 
@@ -98,12 +97,14 @@ def load_bundle(manifest_path: Path, root: Path) -> "Transaction":
                 f"ops[{i}].expected_sha256 must be a quoted string "
                 f"(unquoted all-digit hashes are parsed as numbers by YAML)"
             )
-        tx.stage(FileOp(
-            op=str(raw["op"]),
-            path=Path(str(raw["path"])),
-            content=content_file.read_text(encoding="utf-8"),
-            expected_sha256=expected,
-        ))
+        tx.stage(
+            FileOp(
+                op=str(raw["op"]),
+                path=Path(str(raw["path"])),
+                content=content_file.read_text(encoding="utf-8"),
+                expected_sha256=expected,
+            )
+        )
     return tx
 
 
@@ -119,41 +120,56 @@ class OpCheck:
 class Transaction:
     """一组文件操作的原子应用器"""
 
-    def __init__(self, root: Path, journal_root: Optional[Path] = None):
+    def __init__(self, root: Path, journal_root: Path | None = None):
         self.root = Path(root).resolve()
         self.journal_root = (
-            Path(journal_root) if journal_root else self.root / ".backups" / "transactions"
+            Path(journal_root)
+            if journal_root
+            else self.root / ".backups" / "transactions"
         )
-        self._ops: List[FileOp] = []
+        self._ops: list[FileOp] = []
 
     @property
-    def ops(self) -> List[FileOp]:
+    def ops(self) -> list[FileOp]:
         """已暂存的操作(只读副本)"""
         return list(self._ops)
 
     def stage(self, op: FileOp) -> None:
         if op.op not in _VALID_OPS:
-            raise TransactionError(f"Unknown op: {op.op!r} (expected one of {_VALID_OPS})")
+            raise TransactionError(
+                f"Unknown op: {op.op!r} (expected one of {_VALID_OPS})"
+            )
         self._ops.append(op)
 
     def diff(self) -> str:
         """生成所有已暂存操作的 unified diff 预览;不写入任何文件。"""
-        chunks: List[str] = []
+        chunks: list[str] = []
         for op in self._ops:
             target = self._resolve(op.path)
-            old = target.read_text(encoding="utf-8") if op.op == OP_UPDATE and target.exists() else ""
+            old = (
+                target.read_text(encoding="utf-8")
+                if op.op == OP_UPDATE and target.exists()
+                else ""
+            )
             old_lines = old.splitlines(keepends=True)
             new_lines = op.content.splitlines(keepends=True)
-            chunks.append("".join(difflib.unified_diff(
-                old_lines, new_lines,
-                fromfile=f"a/{op.path.as_posix()}" if op.op == OP_UPDATE else "/dev/null",
-                tofile=f"b/{op.path.as_posix()}",
-            )))
+            chunks.append(
+                "".join(
+                    difflib.unified_diff(
+                        old_lines,
+                        new_lines,
+                        fromfile=f"a/{op.path.as_posix()}"
+                        if op.op == OP_UPDATE
+                        else "/dev/null",
+                        tofile=f"b/{op.path.as_posix()}",
+                    )
+                )
+            )
         return "\n".join(chunks)
 
-    def check(self) -> List[OpCheck]:
+    def check(self) -> list[OpCheck]:
         """逐项软校验,不抛出、不写入。供 dry-run 输出状态与当前哈希。"""
-        checks: List[OpCheck] = []
+        checks: list[OpCheck] = []
         for op in self._ops:
             try:
                 target = self._resolve(op.path)
@@ -173,24 +189,27 @@ class Transaction:
                 if op.expected_sha256 is None:
                     checks.append(OpCheck(op, True, f"current sha256: {current}"))
                 elif current != op.expected_sha256:
-                    checks.append(OpCheck(
-                        op, False,
-                        f"hash mismatch: expected {op.expected_sha256[:12]}..., "
-                        f"current {current[:12]}...",
-                    ))
+                    checks.append(
+                        OpCheck(
+                            op,
+                            False,
+                            f"hash mismatch: expected {op.expected_sha256[:12]}..., "
+                            f"current {current[:12]}...",
+                        )
+                    )
                 else:
                     checks.append(OpCheck(op, True, "hash verified"))
         return checks
 
     def apply(self) -> TxReceipt:
         """校验 -> 备份 -> 写入;写入失败自动回滚。"""
-        tx_id = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
+        tx_id = f"{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
         LOG.info("apply: tx=%s ops=%d", tx_id, len(self._ops))
         self._verify_all()
 
         journal_dir = self.journal_root / tx_id
         journal_dir.mkdir(parents=True, exist_ok=False)
-        written: List[FileOp] = []
+        written: list[FileOp] = []
         try:
             for op in self._ops:
                 self._journal(op, journal_dir)
@@ -203,8 +222,15 @@ class Transaction:
                 f"Transaction {tx_id} failed and was rolled back: {exc}"
             ) from exc
 
-        receipt = TxReceipt(tx_id=tx_id, changed=[op.path for op in self._ops], journal_dir=journal_dir)
-        LOG.info("apply complete: tx=%s changed=%d journal=%s", tx_id, len(receipt.changed), journal_dir)
+        receipt = TxReceipt(
+            tx_id=tx_id, changed=[op.path for op in self._ops], journal_dir=journal_dir
+        )
+        LOG.info(
+            "apply complete: tx=%s changed=%d journal=%s",
+            tx_id,
+            len(receipt.changed),
+            journal_dir,
+        )
         return receipt
 
     # ---- 内部 ----
@@ -229,7 +255,9 @@ class Transaction:
                     raise TransactionError(f"create target already exists: {op.path}")
             else:  # update
                 if op.expected_sha256 is None:
-                    raise TransactionError(f"update requires expected_sha256: {op.path}")
+                    raise TransactionError(
+                        f"update requires expected_sha256: {op.path}"
+                    )
                 if not target.exists():
                     raise TransactionError(f"update target does not exist: {op.path}")
                 actual = sha256_text(target.read_text(encoding="utf-8"))
@@ -259,7 +287,7 @@ class Transaction:
         os.replace(tmp, target)
         LOG.debug("wrote %s (%d bytes)", op.path, len(op.content))
 
-    def _rollback(self, written: List[FileOp], journal_dir: Path) -> None:
+    def _rollback(self, written: list[FileOp], journal_dir: Path) -> None:
         for op in reversed(written):
             target = self._resolve(op.path)
             if op.op == OP_CREATE:

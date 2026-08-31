@@ -20,8 +20,9 @@
    ——"内容完整"的声明与未决论断矛盾
 """
 
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Dict, List, Mapping
+from typing import Any
 
 from .agent_logger import get_logger
 
@@ -43,7 +44,7 @@ def _declared_sources(frontmatter: Mapping[str, Any]) -> set:
     return declared
 
 
-def validate_claims(page, project_root: Path = None) -> List[str]:
+def validate_claims(page, project_root: Path | None = None) -> list[str]:
     """校验单个页面的 claims,返回问题描述列表(空列表 = 通过)。
 
     project_root 保留用于与未来需要本地文件系统的校验兼容。
@@ -56,7 +57,7 @@ def validate_claims(page, project_root: Path = None) -> List[str]:
         return [f"{page.title}: claims must be a list"]
 
     declared = _declared_sources(frontmatter)
-    issues: List[str] = []
+    issues: list[str] = []
 
     for i, claim in enumerate(claims):
         label = f"{page.title} claim[{i}]"

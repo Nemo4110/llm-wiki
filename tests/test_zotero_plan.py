@@ -2,8 +2,10 @@ from pathlib import Path
 
 import pytest
 
-from src.llm_wiki.core import WikiManager
-from src.llm_wiki.zotero_plan import (
+from llm_wiki.core import WikiManager
+from llm_wiki.zotero.plan import (
+    SnapshotItem,
+    build_retired_binding_removal_plan,
     build_zotero_plan,
     collect_zotero_bindings,
     extract_doi_from_text,
@@ -40,7 +42,7 @@ coverage_verified: {str(coverage_verified).lower()}
 status: "{status}"
 ---
 
-# {stem.replace('-', ' ')}
+# {stem.replace("-", " ")}
 
 Knowledge body.
 ''',
@@ -73,7 +75,7 @@ def test_build_plan_combines_wiki_tags_and_collection_cleanup(tmp_path):
 
     snapshot = tmp_path / "gnn.yaml"
     snapshot.write_text(
-        '''version: 1
+        """version: 1
 library_id: "0"
 collection:
   name: GNN
@@ -86,7 +88,7 @@ items:
     tags:
       - GNN
       - llm-wiki:Old-Topic
-''',
+""",
         encoding="utf-8",
     )
 
@@ -101,13 +103,127 @@ items:
     )
 
     item = plan.items[0]
-    assert item.desired_tags == frozenset(
-        {"llm-wiki:GNN-Foundations", "llm-wiki:ingested"}
-    )
+    # 主题标签来自 wiki 页面 tags(默认 ["AI/ML"]);页面 stem 绑定标签已退役
+    assert item.desired_tags == frozenset({"llm-wiki:AI/ML", "llm-wiki:ingested"})
     assert item.add_tags == item.desired_tags
     assert item.remove_candidates == frozenset({"GNN", "llm-wiki:Old-Topic"})
     assert item.doi_state == "arxiv-doi"
     assert "check preprint-to-publication relation" in item.actions
+
+
+def test_topic_tags_projected_from_page_tags(tmp_path):
+    wiki_dir = tmp_path / "wiki"
+    _write_page(wiki_dir, "Restic-Backup", item_key="ITEM0001", title="Restic Paper")
+
+    snapshot = tmp_path / "snap.yaml"
+    snapshot.write_text(
+        """version: 1
+library_id: "0"
+collection:
+  name: QRF
+  key: QRFKEY01
+items:
+  - item_key: ITEM0001
+    title: Restic Paper
+    item_type: journalArticle
+    doi: ""
+    tags: []
+""",
+        encoding="utf-8",
+    )
+
+    wiki = WikiManager(wiki_dir)
+    _library_id, collection_name, _collection_key, items = load_snapshot(snapshot)
+    plan = build_zotero_plan(
+        collect_zotero_bindings(wiki), items, collection_name=collection_name
+    )
+
+    item = plan.items[0]
+    assert "llm-wiki:AI/ML" in item.desired_tags  # 页面主题标签投影
+    assert "llm-wiki:Restic-Backup" not in item.desired_tags  # 绑定标签退役
+
+
+def test_collection_equivalent_topic_tag_excluded(tmp_path):
+    wiki_dir = tmp_path / "wiki"
+    wiki_dir.mkdir(parents=True)
+    (wiki_dir / "Some-Page.md").write_text(
+        """---
+created: 2026-08-23
+updated: 2026-08-23
+sources_meta:
+  - {title: "Paper", type: "academic_paper", zotero_item_key: "ITEM0001"}
+tags:
+  - "Ubuntu"
+  - "QRF"
+status: "active"
+---
+
+# Some Page
+
+Body.
+""",
+        encoding="utf-8",
+    )
+    snapshot = tmp_path / "snap.yaml"
+    snapshot.write_text(
+        """version: 1
+library_id: "0"
+collection:
+  name: QRF
+  key: QRFKEY01
+items:
+  - item_key: ITEM0001
+    title: Paper
+    item_type: journalArticle
+    doi: ""
+    tags: []
+""",
+        encoding="utf-8",
+    )
+
+    wiki = WikiManager(wiki_dir)
+    _library_id, collection_name, _collection_key, items = load_snapshot(snapshot)
+    plan = build_zotero_plan(
+        collect_zotero_bindings(wiki), items, collection_name=collection_name
+    )
+
+    item = plan.items[0]
+    assert "llm-wiki:Ubuntu" in item.desired_tags
+    assert "llm-wiki:QRF" not in item.desired_tags  # 与集合同名,去重
+
+
+def test_stale_page_stem_tag_flagged_for_removal(tmp_path):
+    wiki_dir = tmp_path / "wiki"
+    _write_page(wiki_dir, "New-Topic", item_key="ITEM0001", title="Paper")
+
+    snapshot = tmp_path / "snap.yaml"
+    snapshot.write_text(
+        """version: 1
+library_id: "0"
+collection:
+  name: GNN
+  key: A9VNJUPI
+items:
+  - item_key: ITEM0001
+    title: Paper
+    item_type: journalArticle
+    doi: ""
+    tags:
+      - llm-wiki:New-Topic
+""",
+        encoding="utf-8",
+    )
+
+    wiki = WikiManager(wiki_dir)
+    _library_id, collection_name, _collection_key, items = load_snapshot(snapshot)
+    plan = build_zotero_plan(
+        collect_zotero_bindings(wiki), items, collection_name=collection_name
+    )
+
+    item = plan.items[0]
+    # 退役的绑定标签出现在移除审查候选中
+    assert "llm-wiki:New-Topic" in item.remove_candidates
+    assert "llm-wiki:New-Topic" not in item.desired_tags
 
 
 def test_unbound_snapshot_item_is_not_marked_ingested(tmp_path):
@@ -115,7 +231,7 @@ def test_unbound_snapshot_item_is_not_marked_ingested(tmp_path):
     (tmp_path / "wiki").mkdir()
     snapshot = tmp_path / "gnn.yaml"
     snapshot.write_text(
-        '''version: 1
+        """version: 1
 library_id: "0"
 collection:
   name: GNN
@@ -125,7 +241,7 @@ items:
     title: Unbound Graph Paper
     item_type: conferencePaper
     tags: [GNN, important]
-''',
+""",
         encoding="utf-8",
     )
 
@@ -148,7 +264,7 @@ items:
 def test_missing_doi_is_distinct_from_unobserved_doi(tmp_path):
     snapshot = tmp_path / "items.yaml"
     snapshot.write_text(
-        '''version: 1
+        """version: 1
 collection:
   name: GNN
   key: A9VNJUPI
@@ -160,7 +276,7 @@ items:
   - item_key: UNKNOWN1
     title: Unknown DOI
     item_type: journalArticle
-''',
+""",
         encoding="utf-8",
     )
     _, collection_name, collection_key, items = load_snapshot(snapshot)
@@ -179,12 +295,12 @@ items:
 def test_load_snapshot_rejects_duplicate_keys(tmp_path):
     snapshot = tmp_path / "duplicate.yaml"
     snapshot.write_text(
-        '''version: 1
+        """version: 1
 collection: {name: GNN, key: A9VNJUPI}
 items:
   - {item_key: DUPLICATE, title: One}
   - {item_key: DUPLICATE, title: Two}
-''',
+""",
         encoding="utf-8",
     )
 
@@ -310,7 +426,9 @@ items:
     by_key = {item.item_key: item for item in plan.items}
     assert by_key["PREPRINT1"].relation_candidates == ("PUBLISHED1",)
     assert by_key["PUBLISHED1"].relation_candidates == ("PREPRINT1",)
-    assert "review same-title preprint/published relation" in by_key["PREPRINT1"].actions
+    assert (
+        "review same-title preprint/published relation" in by_key["PREPRINT1"].actions
+    )
 
 
 def test_existing_relation_is_not_proposed_again(tmp_path):
@@ -375,3 +493,130 @@ items:
     assert [mutation["item_key"] for mutation in manifest["mutations"]] == ["ITEM1"]
     assert manifest["mutations"][0]["remove_tags_review"] == ["GNN"]
     assert manifest["mutations"][0]["metadata_review"]["doi_state"] == "missing"
+
+
+def test_build_plan_warns_about_stale_bindings(tmp_path):
+    wiki_dir = tmp_path / "wiki"
+    _write_page(wiki_dir, "Stale-Page", item_key="DEAD0001", title="Stale Paper")
+
+    wiki = WikiManager(wiki_dir)
+    bindings = collect_zotero_bindings(wiki)
+    # 快照中没有 DEAD0001 —— 绑定悬空
+    snapshot_items = [
+        SnapshotItem(item_key="LIVE0001", title="Other", item_type="journalArticle")
+    ]
+    plan = build_zotero_plan(bindings, snapshot_items)
+    assert any("zotero-heal" in warning for warning in plan.warnings)
+    assert any("DEAD0001" in warning for warning in plan.warnings)
+
+
+def _write_page_with_tags(
+    wiki_dir: Path, stem: str, *, item_key: str, title: str, tags
+):
+    tag_lines = "\n".join(f'  - "{tag}"' for tag in tags)
+    wiki_dir.mkdir(parents=True, exist_ok=True)
+    (wiki_dir / f"{stem}.md").write_text(
+        f'''---
+created: 2026-08-23
+updated: 2026-08-23
+sources_meta:
+  - {{title: "{title}", type: "academic_paper", zotero_item_key: "{item_key}", library_id: "0"}}
+tags:
+{tag_lines}
+coverage_verified: true
+status: "active"
+---
+
+# {stem.replace("-", " ")}
+
+Knowledge body.
+''',
+        encoding="utf-8",
+    )
+
+
+def test_build_retired_removal_plan_whitelists_only_page_stem_tags(tmp_path):
+    wiki_dir = tmp_path / "wiki"
+    _write_page(wiki_dir, "Restic-Backup", item_key="ITEM0001", title="Restic Paper")
+    _write_page_with_tags(
+        wiki_dir,
+        "Linux-Notes",
+        item_key="ITEM0002",
+        title="Linux Notes",
+        tags=["Linux"],
+    )
+    wiki = WikiManager(wiki_dir)
+    bindings = collect_zotero_bindings(wiki)
+    snapshot_items = [
+        SnapshotItem(
+            item_key="ITEM0001",
+            title="Restic Paper",
+            item_type="journalArticle",
+            tags=frozenset({"llm-wiki:Restic-Backup", "llm-wiki:Linux", "user-tag"}),
+            tags_observed=True,
+        ),
+        SnapshotItem(
+            item_key="ITEM0002",
+            title="Linux Notes",
+            item_type="journalArticle",
+            tags=frozenset(),
+            tags_observed=True,
+        ),
+    ]
+    plan = build_zotero_plan(
+        bindings, snapshot_items, collection_name="QRF", collection_key="QRFKEY01"
+    )
+
+    removal = build_retired_binding_removal_plan(plan, bindings)
+
+    assert removal["mode"] == "authorized-write"
+    assert removal["policy"]["allow_managed_removals"] is True
+    by_key = {item["item_key"]: item for item in removal["items"]}
+    # Only the retired page-stem binding tag is whitelisted; the live topic tag
+    # (llm-wiki:Linux) and the unmanaged user-tag are never proposed.
+    assert by_key["ITEM0001"]["reviewed_removals"] == ["llm-wiki:Restic-Backup"]
+    assert by_key["ITEM0001"]["desired_managed_tags"] == []
+    assert by_key["ITEM0001"]["reviewed_relations"] == []
+    # ITEM0002 carries no retired binding tag, so it is omitted entirely.
+    assert "ITEM0002" not in by_key
+
+
+def test_build_retired_removal_plan_excludes_live_topic_collision(tmp_path):
+    # A page literally named "Linux" makes llm-wiki:Linux a retired page-stem tag,
+    # but its tags:["Linux"] also project llm-wiki:Linux as a live topic. The
+    # collision must never be removed.
+    wiki_dir = tmp_path / "wiki"
+    _write_page(wiki_dir, "Restic-Backup", item_key="ITEM0001", title="Restic Paper")
+    _write_page_with_tags(
+        wiki_dir, "Linux", item_key="ITEM0002", title="Linux", tags=["Linux"]
+    )
+    wiki = WikiManager(wiki_dir)
+    bindings = collect_zotero_bindings(wiki)
+    snapshot_items = [
+        SnapshotItem(
+            item_key="ITEM0001",
+            title="Restic Paper",
+            item_type="journalArticle",
+            tags=frozenset({"llm-wiki:Restic-Backup", "llm-wiki:Linux"}),
+            tags_observed=True,
+        ),
+        SnapshotItem(
+            item_key="ITEM0002",
+            title="Linux",
+            item_type="journalArticle",
+            tags=frozenset({"llm-wiki:Linux"}),
+            tags_observed=True,
+        ),
+    ]
+    plan = build_zotero_plan(
+        bindings, snapshot_items, collection_name="QRF", collection_key="QRFKEY01"
+    )
+
+    removal = build_retired_binding_removal_plan(plan, bindings)
+
+    by_key = {item["item_key"]: item for item in removal["items"]}
+    assert by_key["ITEM0001"]["reviewed_removals"] == ["llm-wiki:Restic-Backup"]
+    # llm-wiki:Linux is a live topic projection, so it is withheld everywhere.
+    assert all(
+        "llm-wiki:Linux" not in item["reviewed_removals"] for item in removal["items"]
+    )

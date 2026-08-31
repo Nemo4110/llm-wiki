@@ -10,8 +10,8 @@ Uses PyMuPDF to:
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 import fitz
 
@@ -59,7 +59,7 @@ def parse_pages(doc: fitz.Document, pages: str | None) -> Iterable[int]:
     page = _parse_int(pages, "page")
     page_idx = page - 1
     if page_idx < 0 or page_idx >= total:
-        return range(0, 0)
+        return range(0)
     return range(page_idx, page_idx + 1)
 
 

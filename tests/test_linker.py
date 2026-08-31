@@ -10,17 +10,15 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import pytest
 
+from llm_wiki.bm25 import tokenize
+from llm_wiki.core import WikiManager, WikiPage
 from llm_wiki.linker import (
     KnowledgeLinker,
-    PageRelation,
-    RelationGraph,
     RelationType,
     _edit_distance,
-    _extract_keywords,
     _jaccard_similarity,
     _normalize_title,
 )
-from llm_wiki.core import WikiManager, WikiPage
 
 
 class TestUtilityFunctions:
@@ -28,7 +26,7 @@ class TestUtilityFunctions:
 
     def test_extract_keywords_english(self):
         text = "The Transformer architecture is a deep learning model"
-        keywords = _extract_keywords(text)
+        keywords = set(tokenize(text))
         assert "transformer" in keywords
         assert "architecture" in keywords
         assert "learning" in keywords
@@ -37,7 +35,7 @@ class TestUtilityFunctions:
 
     def test_extract_keywords_chinese(self):
         text = "Transformer 是一种深度学习模型架构"
-        keywords = _extract_keywords(text)
+        keywords = set(tokenize(text))
         assert "transformer" in keywords
         # 单字提取 + 连续序列提取
         assert "深" in keywords or "深度" in keywords
@@ -81,17 +79,38 @@ class TestKnowledgeLinker:
 
         # 创建测试页面
         pages = [
-            ("Transformer", "Transformer 是一种基于注意力机制的序列建模架构。\n\n## 核心要点\n\n- 自注意力机制\n- 多头注意力\n\n## 相关页面\n\n- [[Attention]] — 注意力机制\n\n## 来源\n\n- [论文](../sources/paper1.pdf)\n\n## 变更日志\n\n- 2026-04-10: 初始创建", ["AI/ML", "NLP"]),
-            ("Attention", "注意力机制允许模型在处理序列时聚焦于相关部分。\n\n## 核心要点\n\n- Query, Key, Value\n\n## 相关页面\n\n- [[Transformer]] — 基于注意力的架构\n\n## 来源\n\n- [论文](../sources/paper2.pdf)\n\n## 变更日志\n\n- 2026-04-10: 初始创建", ["AI/ML"]),
-            ("LoRA", "LoRA 是一种参数高效的微调方法。\n\n## 核心要点\n\n- 低秩适应\n- 参数效率\n\n## 相关页面\n\n- [[Fine-tuning]] — 全量微调\n\n## 来源\n\n- [论文](../sources/paper3.pdf)\n\n## 变更日志\n\n- 2026-04-10: 初始创建", ["AI/ML", "Fine-tuning"]),
-            ("Fine-tuning", "全量微调是更新预训练模型所有参数的方法。\n\n## 核心要点\n\n- 全部参数更新\n\n## 相关页面\n\n- [[LoRA]] — 参数高效微调\n\n## 来源\n\n- [论文](../sources/paper4.pdf)\n\n## 变更日志\n\n- 2026-04-10: 初始创建", ["AI/ML", "Fine-tuning"]),
+            (
+                "Transformer",
+                "Transformer 是一种基于注意力机制的序列建模架构。\n\n## 核心要点\n\n- 自注意力机制\n- 多头注意力\n\n## 相关页面\n\n- [[Attention]] — 注意力机制\n\n## 来源\n\n- [论文](../sources/paper1.pdf)\n\n## 变更日志\n\n- 2026-04-10: 初始创建",
+                ["AI/ML", "NLP"],
+            ),
+            (
+                "Attention",
+                "注意力机制允许模型在处理序列时聚焦于相关部分。\n\n## 核心要点\n\n- Query, Key, Value\n\n## 相关页面\n\n- [[Transformer]] — 基于注意力的架构\n\n## 来源\n\n- [论文](../sources/paper2.pdf)\n\n## 变更日志\n\n- 2026-04-10: 初始创建",
+                ["AI/ML"],
+            ),
+            (
+                "LoRA",
+                "LoRA 是一种参数高效的微调方法。\n\n## 核心要点\n\n- 低秩适应\n- 参数效率\n\n## 相关页面\n\n- [[Fine-tuning]] — 全量微调\n\n## 来源\n\n- [论文](../sources/paper3.pdf)\n\n## 变更日志\n\n- 2026-04-10: 初始创建",
+                ["AI/ML", "Fine-tuning"],
+            ),
+            (
+                "Fine-tuning",
+                "全量微调是更新预训练模型所有参数的方法。\n\n## 核心要点\n\n- 全部参数更新\n\n## 相关页面\n\n- [[LoRA]] — 参数高效微调\n\n## 来源\n\n- [论文](../sources/paper4.pdf)\n\n## 变更日志\n\n- 2026-04-10: 初始创建",
+                ["AI/ML", "Fine-tuning"],
+            ),
         ]
 
         for title, content, tags in pages:
             wiki.create_page(
                 title,
                 content,
-                {"created": "2026-04-10", "updated": "2026-04-10", "tags": tags, "status": "active"},
+                {
+                    "created": "2026-04-10",
+                    "updated": "2026-04-10",
+                    "tags": tags,
+                    "status": "active",
+                },
             )
 
         return wiki
@@ -192,7 +211,9 @@ class TestKnowledgeLinker:
             path=populated_wiki.wiki_dir / "test.md",
         )
 
-        rel_type = linker.classify_relation(fake_page, transformer, content_similarity=0.5)
+        rel_type = linker.classify_relation(
+            fake_page, transformer, content_similarity=0.5
+        )
         assert rel_type == RelationType.EXTENDS
 
     def test_build_relation_graph(self, populated_wiki):
@@ -236,15 +257,33 @@ class TestBM25Integration:
         wiki_dir.mkdir()
         wiki = WikiManager(wiki_dir)
         pages = [
-            ("Transformer", "Transformer 是一种基于注意力机制的序列建模架构。", ["AI/ML", "NLP"]),
+            (
+                "Transformer",
+                "Transformer 是一种基于注意力机制的序列建模架构。",
+                ["AI/ML", "NLP"],
+            ),
             ("Attention", "注意力机制允许模型在处理序列时聚焦于相关部分。", ["AI/ML"]),
-            ("LoRA", "LoRA 是一种参数高效的微调方法,使用低秩矩阵分解减少可训练参数。", ["AI/ML", "Fine-tuning"]),
-            ("Fine-tuning", "全量微调是更新预训练模型所有参数的方法。", ["AI/ML", "Fine-tuning"]),
+            (
+                "LoRA",
+                "LoRA 是一种参数高效的微调方法,使用低秩矩阵分解减少可训练参数。",
+                ["AI/ML", "Fine-tuning"],
+            ),
+            (
+                "Fine-tuning",
+                "全量微调是更新预训练模型所有参数的方法。",
+                ["AI/ML", "Fine-tuning"],
+            ),
         ]
         for title, content, tags in pages:
             wiki.create_page(
-                title, content,
-                {"created": "2026-04-10", "updated": "2026-04-10", "tags": tags, "status": "active"},
+                title,
+                content,
+                {
+                    "created": "2026-04-10",
+                    "updated": "2026-04-10",
+                    "tags": tags,
+                    "status": "active",
+                },
             )
         return wiki
 

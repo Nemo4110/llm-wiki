@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any, Dict, List, Mapping, Optional
+from collections.abc import Mapping
+from typing import Any
 from urllib.parse import quote
 
 import httpx
@@ -34,39 +35,50 @@ class _JSONProvider:
         self,
         url: str,
         *,
-        params: Optional[Mapping[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        last_error: Optional[Exception] = None
+        params: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        last_error: Exception | None = None
         for attempt in range(self.max_retries + 1):
             try:
                 if self.min_interval_seconds:
                     async with self._request_lock:
-                        remaining = self.min_interval_seconds - (time.monotonic() - self._last_request_at)
+                        remaining = self.min_interval_seconds - (
+                            time.monotonic() - self._last_request_at
+                        )
                         if remaining > 0:
                             await asyncio.sleep(remaining)
                         response = await self.client.get(
                             url,
                             params=dict(params or {}),
-                            headers={"User-Agent": self.user_agent, "Accept": "application/json"},
+                            headers={
+                                "User-Agent": self.user_agent,
+                                "Accept": "application/json",
+                            },
                         )
                         self._last_request_at = time.monotonic()
                 else:
                     response = await self.client.get(
                         url,
                         params=dict(params or {}),
-                        headers={"User-Agent": self.user_agent, "Accept": "application/json"},
+                        headers={
+                            "User-Agent": self.user_agent,
+                            "Accept": "application/json",
+                        },
                     )
                 if response.status_code == 404:
                     return {}
-                if response.status_code == 429 or response.status_code >= 500:
-                    if attempt < self.max_retries:
-                        retry_after = response.headers.get("Retry-After")
-                        try:
-                            delay = float(retry_after) if retry_after else 0.5 * (2 ** attempt)
-                        except ValueError:
-                            delay = 0.5 * (2 ** attempt)
-                        await asyncio.sleep(min(delay, 5.0))
-                        continue
+                if (
+                    response.status_code == 429 or response.status_code >= 500
+                ) and attempt < self.max_retries:
+                    retry_after = response.headers.get("Retry-After")
+                    try:
+                        delay = (
+                            float(retry_after) if retry_after else 0.5 * (2**attempt)
+                        )
+                    except ValueError:
+                        delay = 0.5 * (2**attempt)
+                    await asyncio.sleep(min(delay, 5.0))
+                    continue
                 response.raise_for_status()
                 payload = response.json()
                 if not isinstance(payload, dict):
@@ -75,7 +87,7 @@ class _JSONProvider:
             except (httpx.HTTPError, ValueError, ProviderError) as exc:
                 last_error = exc
                 if attempt < self.max_retries:
-                    await asyncio.sleep(0.5 * (2 ** attempt))
+                    await asyncio.sleep(0.5 * (2**attempt))
                     continue
         raise ProviderError(f"Request failed for {url}: {last_error}") from last_error
 
@@ -95,13 +107,13 @@ class CrossrefProvider(_JSONProvider):
         super().__init__(client, user_agent=user_agent, min_interval_seconds=0.25)
         self.mailto = mailto.strip()
 
-    def _params(self, values: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+    def _params(self, values: Mapping[str, Any] | None = None) -> dict[str, Any]:
         params = dict(values or {})
         if self.mailto:
             params["mailto"] = self.mailto
         return params
 
-    async def get_work(self, doi: str) -> Dict[str, Any]:
+    async def get_work(self, doi: str) -> dict[str, Any]:
         payload = await self._get_json(
             f"{self.base_url}/works/{quote(doi, safe='')}",
             params=self._params(),
@@ -115,8 +127,8 @@ class CrossrefProvider(_JSONProvider):
         *,
         author: str = "",
         rows: int = 5,
-    ) -> List[Dict[str, Any]]:
-        params: Dict[str, Any] = {
+    ) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {
             "query.bibliographic": title,
             "rows": max(1, min(rows, 10)),
         }
@@ -148,7 +160,7 @@ class OpenAlexProvider(_JSONProvider):
         self.api_key = api_key.strip()
         self.mailto = mailto.strip()
 
-    def _params(self, values: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+    def _params(self, values: Mapping[str, Any] | None = None) -> dict[str, Any]:
         params = dict(values or {})
         if self.api_key:
             params["api_key"] = self.api_key
@@ -156,22 +168,26 @@ class OpenAlexProvider(_JSONProvider):
             params["mailto"] = self.mailto
         return params
 
-    async def get_work_by_doi(self, doi: str) -> Dict[str, Any]:
+    async def get_work_by_doi(self, doi: str) -> dict[str, Any]:
         identifier = quote(f"https://doi.org/{doi}", safe="")
         return await self._get_json(
             f"{self.base_url}/works/{identifier}",
             params=self._params(),
         )
 
-    async def search_works(self, title: str, *, per_page: int = 5) -> List[Dict[str, Any]]:
+    async def search_works(
+        self, title: str, *, per_page: int = 5
+    ) -> list[dict[str, Any]]:
         payload = await self._get_json(
             f"{self.base_url}/works",
-            params=self._params({"search": title, "per-page": max(1, min(per_page, 10))}),
+            params=self._params(
+                {"search": title, "per-page": max(1, min(per_page, 10))}
+            ),
         )
         results = payload.get("results")
         return [dict(item) for item in results or [] if isinstance(item, Mapping)]
 
-    async def get_source(self, source_id: str) -> Dict[str, Any]:
+    async def get_source(self, source_id: str) -> dict[str, Any]:
         identifier = source_id.rsplit("/", 1)[-1]
         return await self._get_json(
             f"{self.base_url}/sources/{quote(identifier, safe='')}",

@@ -86,6 +86,39 @@ zotero_enrichment:
   local:
     base_url: "http://127.0.0.1:23119"
 
+zotero_relocation:
+  # 附件搬迁默认关闭；启用前先阅读 docs/ZOTERO_ATTACHMENT_RELOCATION.md。
+  enabled: false
+  # 必须是绝对路径；不能放在项目 sources/ 或 Zotero 数据库目录中。
+  # 推荐在这里配置而不是每次用 --root 传入；config.yaml 已被 gitignore，可按机器各自维护。
+  # 跨设备同步时，把它指向网盘同步目录，并用环境变量保持路径可移植，例如：
+  #   root: "${OneDrive}/zotero-attachments"   # Windows 上由 OneDrive 环境变量解析
+  # 注意:stored→linked 后文件字节可能不再由 Zotero 同步管理；每台设备都必须能访问同一网盘根目录。
+  root: ""
+  # imported_file 的 storage:filename 需要显式的 Zotero storage 根目录才能解析。
+  storage_root: ""
+  path_template: "%c/%y-%a-%t"
+  max_component_bytes: 120
+  collision_policy: "suffix"
+  max_collision_attempts: 100
+  # 旧源删除必须另外配置允许的源根目录，默认不删除。
+  delete_source: false
+  allowed_source_roots: []
+  update_metadata: true
+  materialize_aliases: true
+  on_symlink_error: "metadata"
+  # true 时写回 Zotero 的 path 为 "attachments:<相对路径>"(相对于 root),由每台设备的
+  # Zotero Linked Attachment Base Directory 各自解析——这是跨设备(Windows/Linux)唯一
+  # 可移植的形式。要求每台设备的 Base Directory 都指向本机的同一网盘根目录(即 root)。
+  # false 时写绝对路径,仅适用于单设备或各设备绝对路径完全一致的场景。
+  base_dir_relative: false
+
+zotero_import:
+  # sources/zotero/ 别名命名模板（方案五;仅别名,不含 wiki 页面命名）。
+  # 通配符: %a 主作者 %y 年份 %t 标题 %c 分类层级路径 %b CiteKey %T 条目类型, %% 为字面值。
+  # 所有替换值都经跨平台清洗(去音标/非法字符/字节截断);用 `agent-bridge.py zotero-alias` 渲染。
+  alias_pattern: "%c/%t"
+
 retrieval:
   # 混合搜索返回的 top-k 结果数
   top_k: 10

@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.llm_wiki.init_cmd import scaffold
-
+from llm_wiki.init_cmd import scaffold
 
 PRIVATE_RULES = {
     "/var/",

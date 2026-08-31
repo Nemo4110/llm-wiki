@@ -21,9 +21,22 @@ class TestDefaultContracts:
     """每个 bridge 命令都有默认契约"""
 
     def test_every_command_has_a_declaration(self):
-        for command in ("check", "status", "lint", "link", "relink", "query",
-                        "merge", "index", "apply-bundle", "zotero-plan", "zotero-refresh",
-                        "zotero-writeback", "zotero-ingest-verify"):
+        for command in (
+            "check",
+            "status",
+            "lint",
+            "link",
+            "relink",
+            "query",
+            "merge",
+            "index",
+            "apply-bundle",
+            "zotero-plan",
+            "zotero-refresh",
+            "zotero-writeback",
+            "zotero-relocate",
+            "zotero-ingest-verify",
+        ):
             cap = get_capability(command)
             assert cap.command == command
 
@@ -39,6 +52,8 @@ class TestDefaultContracts:
     def test_zotero_network_commands_are_explicit(self):
         assert get_capability("zotero-refresh").network is True
         assert get_capability("zotero-writeback").network is True
+        assert get_capability("zotero-relocate").network is True
+        assert get_capability("zotero-relocate").dry_run is True
         assert get_capability("zotero-ingest-verify").network is False
         for command in ("check", "status", "lint", "link", "merge", "apply-bundle"):
             assert get_capability(command).network is False
@@ -81,7 +96,9 @@ class TestConfigOverrides:
             check_write_paths("apply-bundle", [Path("log.md")], config)
 
     def test_widening_write_scope_rejected(self):
-        config = {"capabilities": {"apply-bundle": {"write_scope": ["wiki/", "sources/"]}}}
+        config = {
+            "capabilities": {"apply-bundle": {"write_scope": ["wiki/", "sources/"]}}
+        }
         with pytest.raises(CapabilityError, match="widen"):
             check_write_paths("apply-bundle", [Path("wiki/New.md")], config)
 

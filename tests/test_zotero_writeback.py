@@ -7,13 +7,13 @@ from dataclasses import replace
 
 import pytest
 
-from src.llm_wiki.zotero_local import (
+from llm_wiki.zotero.local import (
     LocalItem,
     LocalMutationResult,
     RelationAudit,
     RelationWriteResult,
 )
-from src.llm_wiki.zotero_writeback import (
+from llm_wiki.zotero.writeback import (
     WritePlanError,
     apply_write_plan,
     audit_write_plan,
@@ -86,15 +86,22 @@ class FakeWriter:
         }
         self.reciprocal = False
         self.write_calls = []
+        self.remove_calls = []
         self.relation_calls = []
 
     async def get_item(self, key):
         return self.items[key]
 
-    async def write_safe_mutation(self, key, *, add_tags=(), **kwargs):
+    async def write_safe_mutation(self, key, *, add_tags=(), remove_tags=(), **kwargs):
         self.write_calls.append((key, tuple(add_tags)))
+        if remove_tags:
+            self.remove_calls.append((key, tuple(remove_tags)))
         item = self.items[key]
-        tags = list(item.data.get("tags") or [])
+        tags = [
+            tag
+            for tag in (item.data.get("tags") or [])
+            if tag["tag"] not in set(remove_tags)
+        ]
         names = {tag["tag"] for tag in tags}
         for tag in add_tags:
             if tag not in names:
@@ -102,7 +109,7 @@ class FakeWriter:
         data = dict(item.data)
         data["tags"] = tags
         self.items[key] = replace(item, version=item.version + 1, data=data)
-        status = "updated_verified" if add_tags else "skipped_current"
+        status = "updated_verified" if (add_tags or remove_tags) else "skipped_current"
         return LocalMutationResult(key, status, 1, ("tags",))
 
     async def audit_relation_pair(self, source, target):
@@ -112,7 +119,6 @@ class FakeWriter:
         self.relation_calls.append((source, target))
         self.reciprocal = True
         return RelationWriteResult(source, target, (source, target))
-
 
 
 def test_load_write_plan_accepts_restricted_authorized_schema(tmp_path):
@@ -135,7 +141,9 @@ def test_load_write_plan_accepts_restricted_authorized_schema(tmp_path):
 )
 def test_load_write_plan_rejects_secrets_and_review_only_mode(tmp_path, extra, message):
     path = tmp_path / "plan.yaml"
-    write_plan(path, extra=extra, mode="review-only" if not extra else "authorized-write")
+    write_plan(
+        path, extra=extra, mode="review-only" if not extra else "authorized-write"
+    )
 
     with pytest.raises(WritePlanError, match=message):
         load_write_plan(path)
@@ -229,6 +237,160 @@ def test_apply_refuses_item_outside_expected_collection(tmp_path):
     assert by_key["ITEM0001"].status == "failed"
     assert "expected collection" in by_key["ITEM0001"].errors[0]
     assert all(call[0] != "ITEM0001" for call in writer.write_calls)
+
+
+def write_removal_plan(
+    path,
+    *,
+    removals,
+    policy_line="  allow_managed_removals: true\n",
+    desired="[]",
+    extra_item_fields="",
+):
+    removal_lines = "\n".join(f"      - {tag}" for tag in removals)
+    path.write_text(
+        f"""version: 1
+mode: authorized-write
+library_id: "0"
+collection:
+  key: COLL0001
+  name: QRF
+policy:
+  preserve_existing_tags: true
+  replace_tags: false
+  write_notes: false
+  change_collections: false
+  change_metadata: false
+  relation_policy: reviewed-only
+{policy_line}items:
+  - item_key: ITEM0002
+    expected_collections: [COLL0001]
+    desired_managed_tags: {desired}
+    reviewed_removals:
+{removal_lines}
+    reviewed_relations: []
+{extra_item_fields}""",
+        encoding="utf-8",
+    )
+
+
+class TestScopedRemovals:
+    """`reviewed_removals` unlocks tag removal only behind an explicit opt-in.
+
+    The writeback layer enforces a mechanical floor (managed prefix, never the
+    protected status/preserved tags, never an add+remove conflict). Scoping to
+    retired page-stem binding tags is the generator's job (see test_zotero_plan).
+    """
+
+    def test_rejects_removals_without_policy_optin(self, tmp_path):
+        path = tmp_path / "plan.yaml"
+        write_removal_plan(path, removals=["llm-wiki:Old-Page"], policy_line="")
+
+        with pytest.raises(WritePlanError, match="allow_managed_removals"):
+            load_write_plan(path)
+
+    def test_rejects_removal_of_unmanaged_tag(self, tmp_path):
+        path = tmp_path / "plan.yaml"
+        write_removal_plan(path, removals=["manual"])
+
+        with pytest.raises(WritePlanError, match="managed tag"):
+            load_write_plan(path)
+
+    @pytest.mark.parametrize("protected", ["llm-wiki:ingested", "llm-wiki:index-card"])
+    def test_rejects_removal_of_protected_tags(self, tmp_path, protected):
+        path = tmp_path / "plan.yaml"
+        write_removal_plan(path, removals=[protected])
+
+        with pytest.raises(WritePlanError, match="protected"):
+            load_write_plan(path)
+
+    def test_rejects_add_and_remove_conflict(self, tmp_path):
+        path = tmp_path / "plan.yaml"
+        write_removal_plan(
+            path,
+            removals=["llm-wiki:Old-Page"],
+            desired="[llm-wiki:Old-Page]",
+        )
+
+        with pytest.raises(WritePlanError, match="conflict"):
+            load_write_plan(path)
+
+    def test_accepts_valid_retired_binding_removal(self, tmp_path):
+        path = tmp_path / "plan.yaml"
+        write_removal_plan(path, removals=["llm-wiki:Old-Page"])
+
+        plan = load_write_plan(path)
+
+        assert plan.policy.allow_managed_removals is True
+        assert plan.items[0].reviewed_removals == ("llm-wiki:Old-Page",)
+
+    def test_audit_reports_present_removals_without_writing(self, tmp_path):
+        path = tmp_path / "plan.yaml"
+        write_removal_plan(path, removals=["llm-wiki:Old-Page"])
+        plan = load_write_plan(path)
+        writer = FakeWriter()
+        # ITEM0002 currently carries the retired binding tag plus ingested.
+        item = writer.items["ITEM0002"]
+        tags = list(item.data["tags"]) + [{"tag": "llm-wiki:Old-Page"}]
+        writer.items["ITEM0002"] = replace(item, data={**item.data, "tags": tags})
+
+        report = run(audit_write_plan(plan, writer))
+
+        by_key = {entry.item_key: entry for entry in report.items}
+        assert by_key["ITEM0002"].status == "ready"
+        assert by_key["ITEM0002"].present_removals == ("llm-wiki:Old-Page",)
+        assert writer.write_calls == []
+        assert writer.remove_calls == []
+
+    def test_apply_removes_authorized_tags_and_verifies(self, tmp_path):
+        path = tmp_path / "plan.yaml"
+        write_removal_plan(path, removals=["llm-wiki:Old-Page"])
+        plan = load_write_plan(path)
+        writer = FakeWriter()
+        item = writer.items["ITEM0002"]
+        tags = list(item.data["tags"]) + [{"tag": "llm-wiki:Old-Page"}]
+        writer.items["ITEM0002"] = replace(item, data={**item.data, "tags": tags})
+
+        report = run(apply_write_plan(plan, writer))
+
+        by_key = {entry.item_key: entry for entry in report.items}
+        assert by_key["ITEM0002"].status == "updated_verified"
+        assert writer.remove_calls == [("ITEM0002", ("llm-wiki:Old-Page",))]
+        remaining = {tag["tag"] for tag in writer.items["ITEM0002"].data["tags"]}
+        assert "llm-wiki:Old-Page" not in remaining
+        assert "llm-wiki:ingested" in remaining  # protected tag untouched
+
+    def test_verify_fails_when_removal_still_present(self, tmp_path):
+        path = tmp_path / "plan.yaml"
+        write_removal_plan(path, removals=["llm-wiki:Old-Page"])
+        plan = load_write_plan(path)
+        writer = FakeWriter()
+        item = writer.items["ITEM0002"]
+        tags = list(item.data["tags"]) + [{"tag": "llm-wiki:Old-Page"}]
+        writer.items["ITEM0002"] = replace(item, data={**item.data, "tags": tags})
+
+        report = run(verify_write_plan(plan, writer))
+
+        by_key = {entry.item_key: entry for entry in report.items}
+        assert by_key["ITEM0002"].status == "failed"
+        assert any(
+            "did not persist" in e or "still present" in e
+            for e in by_key["ITEM0002"].errors
+        )
+
+    def test_removal_manifest_omits_credentials(self, tmp_path):
+        path = tmp_path / "plan.yaml"
+        write_removal_plan(path, removals=["llm-wiki:Old-Page"])
+        plan = load_write_plan(path)
+        writer = FakeWriter()
+        item = writer.items["ITEM0002"]
+        tags = list(item.data["tags"]) + [{"tag": "llm-wiki:Old-Page"}]
+        writer.items["ITEM0002"] = replace(item, data={**item.data, "tags": tags})
+
+        report = run(apply_write_plan(plan, writer))
+        manifest = report_to_manifest(report)
+
+        assert "api_key" not in str(manifest).lower()
 
 
 def test_verify_reports_exact_plan_state(tmp_path):

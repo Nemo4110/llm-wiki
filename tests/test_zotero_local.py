@@ -13,8 +13,8 @@ import json
 import httpx
 import pytest
 
-from src.llm_wiki.zotero_local import LocalWriteError, LocalZoteroWriter, authorize_local
-from src.llm_wiki.zotero_refresh import parse_extra_keys
+from llm_wiki.zotero.local import LocalWriteError, LocalZoteroWriter, authorize_local
+from llm_wiki.zotero.refresh import parse_extra_keys
 
 ITEM_KEY = "TESTKEY1"
 SERVER_ID = "SID123"
@@ -103,13 +103,15 @@ def test_write_set_keys_upserts_extra_lines_without_duplicates():
     http = httpx.AsyncClient(transport=make_transport(captured))
     writer = LocalZoteroWriter(API_KEY, http=http)
 
-    run(writer.write_safe_mutation(
-        ITEM_KEY,
-        set_keys={
-            "LLM-Wiki DOI Verified": "2026-08-27",      # existing key -> replace, not duplicate
-            "LLM-Wiki Citation Checked": "2026-08-27",  # new key -> append
-        },
-    ))
+    run(
+        writer.write_safe_mutation(
+            ITEM_KEY,
+            set_keys={
+                "LLM-Wiki DOI Verified": "2026-08-27",  # existing key -> replace, not duplicate
+                "LLM-Wiki Citation Checked": "2026-08-27",  # new key -> append
+            },
+        )
+    )
 
     body = json.loads(captured[0].content)
     extra = body["extra"]
@@ -117,7 +119,9 @@ def test_write_set_keys_upserts_extra_lines_without_duplicates():
     parsed = parse_extra_keys(extra)
     assert parsed["LLM-Wiki DOI Verified"] == "2026-08-27"
     assert parsed["LLM-Wiki Citation Checked"] == "2026-08-27"
-    doi_lines = [ln for ln in extra.splitlines() if ln.startswith("LLM-Wiki DOI Verified:")]
+    doi_lines = [
+        ln for ln in extra.splitlines() if ln.startswith("LLM-Wiki DOI Verified:")
+    ]
     assert doi_lines == ["LLM-Wiki DOI Verified: 2026-08-27"]
 
 
@@ -126,7 +130,11 @@ def test_write_fields_updates_url_without_touching_tags_or_extra():
     http = httpx.AsyncClient(transport=make_transport(captured))
     writer = LocalZoteroWriter(API_KEY, http=http)
 
-    run(writer.write_safe_mutation(ITEM_KEY, fields={"url": "https://doi.org/10.1234/x"}))
+    run(
+        writer.write_safe_mutation(
+            ITEM_KEY, fields={"url": "https://doi.org/10.1234/x"}
+        )
+    )
 
     body = json.loads(captured[0].content)
     assert body["url"] == "https://doi.org/10.1234/x"
@@ -290,12 +298,24 @@ def test_existing_reciprocal_relation_pair_is_a_noop():
     target_uri = "http://zotero.org/users/1234/items/TARGET01"
     items = {
         ITEM_KEY: {
-            "key": ITEM_KEY, "version": 5, "library": {"type": "user", "id": 1234},
-            "data": {"key": ITEM_KEY, "version": 5, "relations": {"dc:relation": [target_uri]}},
+            "key": ITEM_KEY,
+            "version": 5,
+            "library": {"type": "user", "id": 1234},
+            "data": {
+                "key": ITEM_KEY,
+                "version": 5,
+                "relations": {"dc:relation": [target_uri]},
+            },
         },
         target_key: {
-            "key": target_key, "version": 9, "library": {"type": "user", "id": 1234},
-            "data": {"key": target_key, "version": 9, "relations": {"dc:relation": [source_uri]}},
+            "key": target_key,
+            "version": 9,
+            "library": {"type": "user", "id": 1234},
+            "data": {
+                "key": target_key,
+                "version": 9,
+                "relations": {"dc:relation": [source_uri]},
+            },
         },
     }
     captured = []
@@ -326,12 +346,24 @@ def test_relation_pair_repairs_only_missing_direction():
     target_uri = "http://zotero.org/users/1234/items/TARGET01"
     items = {
         ITEM_KEY: {
-            "key": ITEM_KEY, "version": 5, "library": {"type": "user", "id": 1234},
-            "data": {"key": ITEM_KEY, "version": 5, "relations": {"dc:relation": [target_uri]}},
+            "key": ITEM_KEY,
+            "version": 5,
+            "library": {"type": "user", "id": 1234},
+            "data": {
+                "key": ITEM_KEY,
+                "version": 5,
+                "relations": {"dc:relation": [target_uri]},
+            },
         },
         target_key: {
-            "key": target_key, "version": 9, "library": {"type": "user", "id": 1234},
-            "data": {"key": target_key, "version": 9, "relations": {"owl:sameAs": "https://example.test/work"}},
+            "key": target_key,
+            "version": 9,
+            "library": {"type": "user", "id": 1234},
+            "data": {
+                "key": target_key,
+                "version": 9,
+                "relations": {"owl:sameAs": "https://example.test/work"},
+            },
         },
     }
     captured = []
@@ -369,14 +401,14 @@ def test_writer_rejects_non_loopback_base_url():
 
 
 def test_load_local_key_missing_file_raises_clear_error(tmp_path):
-    from src.llm_wiki.zotero_local import load_local_key
+    from llm_wiki.zotero.local import load_local_key
 
     with pytest.raises(LocalWriteError, match="zotero-local-auth"):
         load_local_key(tmp_path / "nonexistent.json")
 
 
 def test_upsert_extra_lines_drops_duplicate_keys():
-    from src.llm_wiki.zotero_local import _upsert_extra_lines
+    from llm_wiki.zotero.local import _upsert_extra_lines
 
     extra = "LLM-Wiki DOI Status: missing\nLLM-Wiki DOI Status: stale"
     out = _upsert_extra_lines(extra, {"LLM-Wiki DOI Status": "verified"})
@@ -392,7 +424,6 @@ def test_aclose_does_not_close_injected_client():
     run(writer.aclose())
 
     assert not http.is_closed  # injected client is owned by the caller, not the writer
-
 
 
 class _FakeCrossref:
@@ -417,7 +448,7 @@ def test_run_live_refresh_local_backend_writes_via_local_writer(tmp_path, monkey
     A shared dict models the hybrid reality: the local write lands in the same
     local database the MCP read path serves, so the existing verify loop sees it.
     """
-    from src.llm_wiki import zotero_refresh as zr
+    from llm_wiki.zotero import refresh as zr
 
     key = "ITEM0001"
     db = {
@@ -450,6 +481,9 @@ def test_run_live_refresh_local_backend_writes_via_local_writer(tmp_path, monkey
         async def get_items(self, keys, *, concurrency=4):
             return [db[k] for k in keys]
 
+        async def get_items_tolerant(self, keys, *, concurrency=4):
+            return [db[k] for k in keys], []
+
         async def write_safe_mutation(self, item_key, **kwargs):
             raise AssertionError("MCP write path must NOT be used in local backend")
 
@@ -461,7 +495,9 @@ def test_run_live_refresh_local_backend_writes_via_local_writer(tmp_path, monkey
         def from_store(cls, *a, **k):
             return cls()
 
-        async def write_safe_mutation(self, item_key, *, set_keys=None, add_tags=(), remove_tags=(), fields=None):
+        async def write_safe_mutation(
+            self, item_key, *, set_keys=None, add_tags=(), remove_tags=(), fields=None
+        ):
             self.calls.append(item_key)
             data = db[item_key]
             tags = {t["tag"] for t in data.get("tags", [])}
@@ -482,18 +518,278 @@ def test_run_live_refresh_local_backend_writes_via_local_writer(tmp_path, monkey
     monkeypatch.setattr(zr, "CrossrefProvider", lambda *a, **k: _FakeCrossref())
     monkeypatch.setattr(zr, "OpenAlexProvider", lambda *a, **k: _FakeOpenAlex())
 
-    report = run(zr.run_live_refresh(
-        tmp_path,
-        collection_key="C1",
-        settings=zr.RefreshSettings(),
-        cache_path=tmp_path / "cache.sqlite",
-        mcp_config_path=tmp_path / ".mcp.json",
-        write_backend="local",
-        local_store_path=tmp_path / "var" / "zotero-local.json",
-        force=True,
-        apply_safe=True,
-    ))
+    report = run(
+        zr.run_live_refresh(
+            tmp_path,
+            collection_key="C1",
+            settings=zr.RefreshSettings(),
+            cache_path=tmp_path / "cache.sqlite",
+            mcp_config_path=tmp_path / ".mcp.json",
+            write_backend="local",
+            local_store_path=tmp_path / "var" / "zotero-local.json",
+            force=True,
+            apply_safe=True,
+        )
+    )
 
     # a DOI-missing academic item yields a safe mutation, applied via the local writer
     assert report.applied_count == 1
     assert report.items[0].applied is True
+
+
+def _items_state(source_relations=None, target_relations=None):
+    target_key = "TARGET01"
+    source_uri = f"http://zotero.org/users/1234/items/{ITEM_KEY}"
+    target_uri = f"http://zotero.org/users/1234/items/{target_key}"
+    items = {
+        ITEM_KEY: {
+            "key": ITEM_KEY,
+            "version": 5,
+            "library": {"type": "user", "id": 1234},
+            "data": {
+                "key": ITEM_KEY,
+                "version": 5,
+                "relations": {"dc:relation": list(source_relations or [])},
+            },
+        },
+        target_key: {
+            "key": target_key,
+            "version": 9,
+            "library": {"type": "user", "id": 1234},
+            "data": {
+                "key": target_key,
+                "version": 9,
+                "relations": {"dc:relation": list(target_relations or [])},
+            },
+        },
+    }
+    return items, target_key, source_uri, target_uri
+
+
+def _relation_handler(items, captured, fail_patch_for=(), fail_times=None):
+    """MockTransport handler; fail_patch_for keys get HTTP 500 on PATCH (fail_times bounds it)."""
+    fails = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/":
+            return httpx.Response(200, headers={"Zotero-Server-ID": SERVER_ID})
+        key = request.url.path.rsplit("/", 1)[-1]
+        if key not in items:
+            return httpx.Response(404)
+        if request.method == "GET":
+            return httpx.Response(200, json=items[key])
+        if request.method == "PATCH":
+            captured.append((key, json.loads(request.content)))
+            if key in fail_patch_for and (
+                fail_times is None or fails["n"] < fail_times
+            ):
+                fails["n"] += 1
+                return httpx.Response(500, text="boom")
+            body = json.loads(request.content)
+            items[key]["data"].update(body)
+            items[key]["version"] += 1
+            items[key]["data"]["version"] = items[key]["version"]
+            return httpx.Response(204)
+        return httpx.Response(404)
+
+    return handler
+
+
+def test_write_retries_conflicts_with_bounded_backoff():
+    state = {"item": json.loads(json.dumps(BASE_ITEM))}
+    conflicts = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/":
+            return httpx.Response(200, headers={"Zotero-Server-ID": SERVER_ID})
+        if request.method == "GET":
+            return httpx.Response(200, json=state["item"])
+        if request.method == "PATCH":
+            if conflicts["n"] < 2:
+                conflicts["n"] += 1
+                return httpx.Response(412)
+            body = json.loads(request.content)
+            state["item"]["data"].update(body)
+            state["item"]["version"] += 1
+            state["item"]["data"]["version"] = state["item"]["version"]
+            return httpx.Response(204)
+        return httpx.Response(404)
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    writer = LocalZoteroWriter(API_KEY, http=http, retry_delays=(0, 0, 0))
+
+    result = run(writer.write_safe_mutation(ITEM_KEY, add_tags=["llm-wiki:ingested"]))
+
+    assert result.status == "updated_verified"
+    assert result.attempts == 3
+
+
+def test_write_exhausts_bounded_retries():
+    attempts = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/":
+            return httpx.Response(200, headers={"Zotero-Server-ID": SERVER_ID})
+        if request.method == "GET":
+            return httpx.Response(200, json=json.loads(json.dumps(BASE_ITEM)))
+        if request.method == "PATCH":
+            attempts["n"] += 1
+            return httpx.Response(412)
+        return httpx.Response(404)
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    writer = LocalZoteroWriter(API_KEY, http=http, retry_delays=(0, 0))
+
+    with pytest.raises(LocalWriteError, match="conflicted"):
+        run(writer.write_safe_mutation(ITEM_KEY, add_tags=["llm-wiki:ingested"]))
+    assert attempts["n"] == 3  # 1 次初始 + 2 次退避重试
+
+
+def test_relation_pair_compensates_when_second_direction_fails():
+    items, target_key, _source_uri, target_uri = _items_state()
+    captured = []
+    handler = _relation_handler(items, captured, fail_patch_for={target_key})
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    writer = LocalZoteroWriter(API_KEY, http=http, retry_delays=(0,))
+
+    with pytest.raises(LocalWriteError):
+        run(writer.ensure_relation_pair(ITEM_KEY, target_key))
+
+    # 第一次 source PATCH 添加 target_uri;第二次 source PATCH 补偿移除
+    source_patches = [body for key, body in captured if key == ITEM_KEY]
+    assert len(source_patches) == 2
+    added = source_patches[0]["relations"]["dc:relation"]
+    removed = source_patches[1]["relations"].get("dc:relation", [])
+    assert target_uri in added
+    assert target_uri not in removed
+    final = items[ITEM_KEY]["data"]["relations"].get("dc:relation", [])
+    assert target_uri not in final
+
+
+def test_relation_pair_reports_residue_when_compensation_fails():
+    items, target_key, _source_uri, _target_uri = _items_state()
+    captured = []
+    # target 永远 500;source 第二次 PATCH(补偿)也失败
+    fail_calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/":
+            return httpx.Response(200, headers={"Zotero-Server-ID": SERVER_ID})
+        key = request.url.path.rsplit("/", 1)[-1]
+        if key not in items:
+            return httpx.Response(404)
+        if request.method == "GET":
+            return httpx.Response(200, json=items[key])
+        if request.method == "PATCH":
+            captured.append((key, json.loads(request.content)))
+            if key == target_key:
+                return httpx.Response(500, text="boom")
+            if key == ITEM_KEY:
+                fail_calls["n"] += 1
+                if fail_calls["n"] > 1:  # 补偿写入失败
+                    return httpx.Response(500, text="boom")
+            body = json.loads(request.content)
+            items[key]["data"].update(body)
+            items[key]["version"] += 1
+            items[key]["data"]["version"] = items[key]["version"]
+            return httpx.Response(204)
+        return httpx.Response(404)
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    writer = LocalZoteroWriter(API_KEY, http=http, retry_delays=(0,))
+
+    with pytest.raises(LocalWriteError, match="compensation"):
+        run(writer.ensure_relation_pair(ITEM_KEY, target_key))
+
+
+def test_repoint_attachment_preserves_item_identity_and_protected_fields(tmp_path):
+    item = json.loads(json.dumps(BASE_ITEM))
+    item["data"].update(
+        {
+            "itemType": "attachment",
+            "linkMode": "imported_file",
+            "path": "storage:paper.pdf",
+            "parentItem": "PARENT01",
+            "filename": "paper.pdf",
+            "contentType": "application/pdf",
+            "relations": {"dc:relation": ["http://zotero.org/users/1/items/OTHER001"]},
+        }
+    )
+    captured = []
+    target = tmp_path / "managed" / "paper.pdf"
+    http = httpx.AsyncClient(transport=make_transport(captured, item=item))
+    writer = LocalZoteroWriter(API_KEY, http=http)
+
+    result = run(
+        writer.repoint_attachment(
+            ITEM_KEY, str(target), expected_parent_item="PARENT01"
+        )
+    )
+
+    assert result.status.startswith("updated")
+    assert result.before_link_mode == "imported_file"
+    assert result.before_path == "storage:paper.pdf"
+    body = json.loads(captured[0].content)
+    assert body == {"linkMode": "linked_file", "path": str(target)}
+
+
+def test_repoint_attachment_rejects_non_attachment_item(tmp_path):
+    captured = []
+    http = httpx.AsyncClient(transport=make_transport(captured))
+    writer = LocalZoteroWriter(API_KEY, http=http)
+
+    # tmp_path is absolute on every platform; the item-type check must be reached.
+    with pytest.raises(LocalWriteError, match="not a Zotero attachment"):
+        run(writer.repoint_attachment(ITEM_KEY, str(tmp_path / "paper.pdf")))
+
+
+def _attachment_item():
+    item = json.loads(json.dumps(BASE_ITEM))
+    item["data"].update(
+        {
+            "itemType": "attachment",
+            "linkMode": "imported_file",
+            "path": "storage:paper.pdf",
+            "parentItem": "PARENT01",
+            "filename": "paper.pdf",
+            "contentType": "application/pdf",
+        }
+    )
+    return item
+
+
+def test_repoint_attachment_accepts_base_relative_target():
+    captured = []
+    http = httpx.AsyncClient(
+        transport=make_transport(captured, item=_attachment_item())
+    )
+    writer = LocalZoteroWriter(API_KEY, http=http)
+
+    result = run(
+        writer.repoint_attachment(
+            ITEM_KEY, "attachments:Papers/paper.pdf", expected_parent_item="PARENT01"
+        )
+    )
+
+    assert result.status.startswith("updated")
+    body = json.loads(captured[0].content)
+    assert body == {"linkMode": "linked_file", "path": "attachments:Papers/paper.pdf"}
+
+
+def test_repoint_attachment_rejects_unsafe_base_relative_target():
+    captured = []
+    http = httpx.AsyncClient(
+        transport=make_transport(captured, item=_attachment_item())
+    )
+    writer = LocalZoteroWriter(API_KEY, http=http)
+
+    for bad in (
+        "attachments:../evil.pdf",
+        "attachments:",
+        "attachments:C:\\evil.pdf",
+        "attachments:/absolute/evil.pdf",
+        "relative/no-prefix.pdf",
+    ):
+        with pytest.raises(LocalWriteError):
+            run(writer.repoint_attachment(ITEM_KEY, bad))
+    assert captured == []

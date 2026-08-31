@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import pytest
 
 from llm_wiki.depth_lint import DepthLintConfig, analyze_depth, extract_knowledge_body
@@ -220,6 +218,4 @@ def test_symlinked_source_is_counted(tmp_path):
     )
 
     assert issue is not None
-    assert issue.metrics.local_source_chars == len(
-        "sensitive external material" * 100
-    )
+    assert issue.metrics.local_source_chars == len("sensitive external material" * 100)

@@ -44,8 +44,12 @@ class TestBM25Ranking:
     @pytest.fixture
     def corpus(self):
         docs = [
-            tokenize("LoRA low-rank adaptation for fine-tuning large language models 低秩 适应 微调"),
-            tokenize("Transformer self-attention mechanism for sequence modeling 注意力 机制"),
+            tokenize(
+                "LoRA low-rank adaptation for fine-tuning large language models 低秩 适应 微调"
+            ),
+            tokenize(
+                "Transformer self-attention mechanism for sequence modeling 注意力 机制"
+            ),
             tokenize("Docker container image registry deployment 容器 部署"),
         ]
         return BM25(docs)

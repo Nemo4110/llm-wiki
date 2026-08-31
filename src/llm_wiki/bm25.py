@@ -12,31 +12,119 @@
 
 import math
 import re
-from typing import Dict, List
 
 # 与 linker 共用同一份停用词表(linker 从此处导入,避免重复维护)
 STOP_WORDS = {
-    "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
-    "have", "has", "had", "do", "does", "did", "will", "would", "could",
-    "should", "may", "might", "must", "shall", "can", "need", "dare",
-    "ought", "used", "to", "of", "in", "for", "on", "with", "at", "by",
-    "from", "as", "into", "through", "during", "before", "after", "above",
-    "below", "between", "under", "and", "but", "or", "yet", "so", "if",
-    "because", "although", "though", "while", "where", "when", "that",
-    "which", "who", "whom", "whose", "what", "this", "these", "those",
-    "的", "了", "在", "是", "我", "有", "和", "就", "不", "人", "都",
-    "一", "一个", "上", "也", "很", "到", "说", "要", "去", "你",
-    "会", "着", "没有", "看", "好", "自己", "这", "那", "啊",
+    "the",
+    "a",
+    "an",
+    "is",
+    "are",
+    "was",
+    "were",
+    "be",
+    "been",
+    "being",
+    "have",
+    "has",
+    "had",
+    "do",
+    "does",
+    "did",
+    "will",
+    "would",
+    "could",
+    "should",
+    "may",
+    "might",
+    "must",
+    "shall",
+    "can",
+    "need",
+    "dare",
+    "ought",
+    "used",
+    "to",
+    "of",
+    "in",
+    "for",
+    "on",
+    "with",
+    "at",
+    "by",
+    "from",
+    "as",
+    "into",
+    "through",
+    "during",
+    "before",
+    "after",
+    "above",
+    "below",
+    "between",
+    "under",
+    "and",
+    "but",
+    "or",
+    "yet",
+    "so",
+    "if",
+    "because",
+    "although",
+    "though",
+    "while",
+    "where",
+    "when",
+    "that",
+    "which",
+    "who",
+    "whom",
+    "whose",
+    "what",
+    "this",
+    "these",
+    "those",
+    "的",
+    "了",
+    "在",
+    "是",
+    "我",
+    "有",
+    "和",
+    "就",
+    "不",
+    "人",
+    "都",
+    "一",
+    "一个",
+    "上",
+    "也",
+    "很",
+    "到",
+    "说",
+    "要",
+    "去",
+    "你",
+    "会",
+    "着",
+    "没有",
+    "看",
+    "好",
+    "自己",
+    "这",
+    "那",
+    "啊",
 }
 
 _EN_WORD = re.compile(r"[a-zA-Z]{2,}")
 _ZH_RUN = re.compile(r"[一-鿿]+")
 
 
-def tokenize(text: str) -> List[str]:
+def tokenize(text: str) -> list[str]:
     """中英文混合分词,输出保序 token 列表(含重复,供词频统计)。"""
-    tokens: List[str] = [
-        w for w in (m.group(0).lower() for m in _EN_WORD.finditer(text))
+    tokens: list[str] = [
+        w
+        for w in (m.group(0).lower() for m in _EN_WORD.finditer(text))
         if w not in STOP_WORDS
     ]
     for run in _ZH_RUN.findall(text):
@@ -51,16 +139,16 @@ def tokenize(text: str) -> List[str]:
 class BM25:
     """BM25Okapi:对固定语料做多查询打分。"""
 
-    def __init__(self, docs: List[List[str]], k1: float = 1.5, b: float = 0.75):
+    def __init__(self, docs: list[list[str]], k1: float = 1.5, b: float = 0.75):
         self.k1 = k1
         self.b = b
         self.n_docs = len(docs)
         self.doc_len = [len(d) for d in docs]
         self.avgdl = sum(self.doc_len) / self.n_docs if self.n_docs else 0.0
-        self.df: Dict[str, int] = {}
-        self.tf: List[Dict[str, int]] = []
+        self.df: dict[str, int] = {}
+        self.tf: list[dict[str, int]] = []
         for doc in docs:
-            freq: Dict[str, int] = {}
+            freq: dict[str, int] = {}
             for token in doc:
                 freq[token] = freq.get(token, 0) + 1
             self.tf.append(freq)
@@ -72,9 +160,14 @@ class BM25:
         n = self.df.get(term, 0)
         return math.log(1 + (self.n_docs - n + 0.5) / (n + 0.5))
 
-    def scores(self, query: List[str]) -> List[float]:
+    def scores(self, query: list[str]) -> list[float]:
         """对语料中每篇文档打分,与构造顺序一致。"""
-        results: List[float] = []
+        unique_terms = [t for t in dict.fromkeys(query) if t in self.df]
+        if not unique_terms:
+            return [0.0] * self.n_docs
+
+        term_weights = {term: self.idf(term) * (self.k1 + 1) for term in unique_terms}
+        results: list[float] = []
         for i in range(self.n_docs):
             score = 0.0
             length_norm = (
@@ -82,10 +175,11 @@ class BM25:
                 if self.avgdl > 0
                 else self.k1
             )
-            for term in dict.fromkeys(query):  # 去重且保序,确定性
-                f = self.tf[i].get(term, 0)
+            tf_i = self.tf[i]
+            for term, weight in term_weights.items():
+                f = tf_i.get(term, 0)
                 if f == 0:
                     continue
-                score += self.idf(term) * (f * (self.k1 + 1)) / (f + length_norm)
+                score += weight * f / (f + length_norm)
             results.append(score)
         return results

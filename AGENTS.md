@@ -215,8 +215,11 @@ Every wiki task falls into exactly one of three categories. **The category deter
 | **A** | Zotero sync plan | No | `agent-bridge.py zotero-plan` | Manually compare wiki provenance with MCP reads |
 | **A** | Zotero enrichment dry-run | No | `agent-bridge.py zotero-refresh` | Review provider results and the generated manifest |
 | **A** | Zotero collection ingest verification | No | `agent-bridge.py zotero-ingest-verify` | Manually audit allocation, provenance, and page invariants |
+| **C** | Zotero stale binding heal | Agent reviews | `agent-bridge.py zotero-heal` | Manually rebind frontmatter item keys |
+| **A** | Zotero alias render | No | `agent-bridge.py zotero-alias` | Hand-sanitize a source_alias string |
 | **C** | Apply safe Zotero enrichment | Agent reviews | `zotero-refresh --apply-safe` | Use MCP tools manually if the worker cannot verify write-back |
 | **C** | Authorized Zotero tag/relation write-back | Agent + user review | `agent-bridge.py zotero-writeback` | Use reviewed incremental MCP writes when the local exception is unavailable |
+| **C** | Controlled Zotero attachment relocation | Agent + user review | `agent-bridge.py zotero-relocate` | Review dry-run, require local authorization, and stop when the attachment API gate is unavailable |
 | **B** | Ingest material | **Yes** | Protocol mode (direct file ops) | N/A |
 | **B** | Query & synthesize | **Yes** | Protocol mode (direct file ops) | N/A |
 | **C** | Apply link results | **Agent judges** | `merge` (after reviewing diff) | Manual edit |
@@ -369,7 +372,7 @@ python scripts/agent-bridge.py zotero-plan --snapshot temp/zotero-snapshot.yaml 
 ```
 
 3. Review managed-tag additions, collection-equivalent removal candidates, DOI states, and preprint publication checks.
-4. Apply approved mutations through Zotero MCP by default. When the user has explicitly authorized the documented Zotero 10 loopback exception, promote only reviewed additions/relations into an `authorized-write` plan and use `zotero-writeback`; then re-read the write backend and pass the synchronization barrier.
+4. Apply approved mutations through Zotero MCP by default. When the user has explicitly authorized the documented Zotero 10 loopback exception, promote only reviewed additions/relations into an `authorized-write` plan and use `zotero-writeback`; for attachment relocation, use the separately gated `zotero-relocate` workflow described in the canonical protocol; then re-read the write backend and pass the synchronization barrier.
 
 The planner never connects to Zotero and never mutates Zotero or wiki files. An omitted `doi` means unobserved; `doi: ""` means the Zotero DOI field was read and is missing. A `--manifest-out` target must stay under `temp/`; the emitted `mode: review-only` manifest is not an executable mutation script, and `remove_tags_review` / `relation_candidates_review` still require Agent and MCP review.
 
@@ -393,6 +396,15 @@ python scripts/agent-bridge.py zotero-ingest-verify \
 
 The verifier checks snapshot/allocation counts, unique item keys and indices, omission reasons, non-omitted `sources_meta.zotero_item_key` coverage, duplicate provenance rows, YAML/frontmatter validity, page invariants, control characters, trailing whitespace, private path leakage, and advisory batch-template collapse.
 
+For stale binding repair — Zotero item merges, re-imports, or attachment conversions that leave a dangling `zotero_item_key` in wiki frontmatter — run:
+
+```bash
+python scripts/agent-bridge.py zotero-heal --snapshot temp/zotero-snapshot.yaml \
+  --manifest-out temp/zotero-heal.yaml
+```
+
+The healer is dry-run by default: it detects wiki-bound item keys absent from the snapshot and re-addresses them via DOI, then citation key, then normalized title (unique matches only). Review the manifest, then re-run with `--apply` to rewrite the affected pages' `sources_meta[].zotero_item_key` in place (file names never change) and append a `log.md` record. It never writes to Zotero. The candidate pool is limited to the snapshot's collection; unmatched keys need manual lookup.
+
 For an explicitly reviewed local write-back, copy only approved additions and Related pairs into a secret-free `mode: authorized-write` plan (see `docs/examples/zotero-write-plan.example.yaml`), then run audit, apply, and verify as separate phases:
 
 ```bash
@@ -404,7 +416,9 @@ python scripts/agent-bridge.py zotero-writeback --plan temp/zotero-write-plan.ya
   --action verify --report-out temp/zotero-write-verify.yaml
 ```
 
-This restricted path adds managed `llm-wiki:*` tags and ensures user-reviewed reciprocal Related pairs only. It preserves full existing tag objects, uses live server identity plus version guards, retries one HTTP 412 from fresh state, and requires GET-after-PATCH verification. It cannot remove tags, edit metadata, change collections, write notes, or touch Trash. With `--memory-authorize`, the API key is not serialized.
+This restricted path adds managed `llm-wiki:*` tags and ensures user-reviewed reciprocal Related pairs only. It preserves full existing tag objects, uses live server identity plus version guards, retries one HTTP 412 from fresh state, and requires GET-after-PATCH verification. It cannot edit metadata, change collections, write notes, or touch Trash. Tag removal is a scoped opt-in: a plan must set `policy.allow_managed_removals: true` and list each tag under an item's `reviewed_removals`, and only managed `llm-wiki:*` tags other than the protected `llm-wiki:ingested` and preserved tags may be removed (never unmanaged/user tags). Generate a whitelisted removal plan with `zotero-plan --removal-plan-out` (retired `llm-wiki:<page_stem>` binding tags only). With `--memory-authorize`, the API key is not serialized.
+
+For controlled attachment relocation, configure the managed root once in `config.yaml` under `zotero_relocation.root` instead of passing `--root` on every run; `config.yaml` is gitignored, so each machine keeps its own value, and `--root` remains only a one-off override. For cross-device sync, point `root` at a cloud-synced folder and use environment-variable interpolation to keep the path portable (for example `root: "${OneDrive}/zotero-attachments"`). When devices run different operating systems (for example Windows and Linux), absolute paths can never match: set `zotero_relocation.base_dir_relative: true` so the path written back to Zotero is the portable `attachments:<relative>` form, and point Zotero's Linked Attachment Base Directory at the synced root on each device. Remind the user that a stored→linked conversion may stop Zotero File Sync from managing the file bytes, so every device must be able to reach the same synced root.
 
 ---
 
@@ -588,7 +602,7 @@ python -m src.llm_wiki --verbose link --source "X" --mode light
 
 ### Zotero-Linked Sources
 
-All Zotero source discovery, attachment access, private bindings, provenance fields, and write-back rules are defined in [`docs/ZOTERO_MCP_INTEGRATION.md`](docs/ZOTERO_MCP_INTEGRATION.md). Use only `54yyyu/zotero-mcp` for Zotero operations, except the temporary opt-in Zotero 10 loopback write paths (`zotero-refresh --write-backend local` and restricted `zotero-writeback`) documented there.
+All Zotero source discovery, attachment access, private bindings, provenance fields, and write-back rules are defined in [`docs/ZOTERO_MCP_INTEGRATION.md`](docs/ZOTERO_MCP_INTEGRATION.md). Use only `54yyyu/zotero-mcp` for Zotero operations, except the temporary opt-in Zotero 10 loopback write paths (`zotero-refresh --write-backend local`, restricted `zotero-writeback`, and separately gated `zotero-relocate`) documented there.
 
 ### Standard Network Fetch Template
 
